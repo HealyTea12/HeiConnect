@@ -9,9 +9,9 @@ buildtype=$1 # Release or Debug
 git submodule update --init --recursive
 
 NCORES=4
-unamestr=`uname`
+unamestr=$(uname)
 if [[ "$unamestr" == "Linux" ]]; then
-        NCORES=`grep -c ^processor /proc/cpuinfo`
+        NCORES=$(lscpu -p=Core,Socket | grep -v '^#' | wc -l) # Count logical cores
 fi
 
 if [[ "$unamestr" == "Darwin" ]]; then

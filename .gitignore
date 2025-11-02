@@ -6,3 +6,4 @@ output
 *.gz
 *.log
 augmented_graph.graph
+.vscode

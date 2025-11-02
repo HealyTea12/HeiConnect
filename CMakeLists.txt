@@ -1,13 +1,27 @@
 cmake_minimum_required(VERSION 3.14)
 project(HeiConnect VERSION 0.1.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+cmake_policy(SET CMP0144 NEW)
+
+set(DOWNLOAD_EXTRACT_TIMESTAMP true)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(ENABLE_VERBOSE_LOG "Enable --verbose logging flag" ON)
 
 if(ENABLE_VERBOSE_LOG)
   add_compile_definitions(DBG)
 endif()
+
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/03597a01ee50ed33e9dfd640b249b4be3799d395.zip
+)
+# For Windows: Prevent overriding the parent project's compiler/linker settings
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
 
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR})
 
@@ -41,6 +55,9 @@ find_package(Boost REQUIRED)
 
 include_directories(
   ./src
+  ./extern
+  ./
+  ./extern/VieCut/lib
 )
 
 
@@ -77,15 +94,17 @@ find_path(GUROBI_INCLUDE_DIRS
   PATH_SUFFIXES include)
 
 find_library(GUROBI_LIBRARY
-  NAMES gurobi gurobi100 gurobi91 gurobi110
+  NAMES gurobi gurobi120
   HINTS ${GUROBI_DIR} $ENV{GUROBI_HOME}
   PATH_SUFFIXES lib)
 
 find_library(GUROBI_CXX_LIBRARY
-  NAMES gurobi_c++
+  NAMES libgurobi_c++
   HINTS ${GUROBI_DIR} $ENV{GUROBI_HOME}
   PATH_SUFFIXES lib)
 set(GUROBI_CXX_DEBUG_LIBRARY ${GUROBI_CXX_LIBRARY})
+
+find_package(OpenMP REQUIRED)
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(GUROBI DEFAULT_MSG GUROBI_LIBRARY)
@@ -100,3 +119,41 @@ add_executable(graphchecker app/graphchecker.cpp )
 target_compile_definitions(graphchecker PRIVATE "-DMODE_GRAPHCHECKER")
 target_link_libraries(graphchecker ${OpenMP_CXX_LIBRARIES})
 install(TARGETS graphchecker DESTINATION bin)
+
+enable_testing()
+
+add_executable(
+  bfs_test
+  tests/test_bfs.cpp
+)
+target_link_libraries(
+  bfs_test
+  GTest::gtest_main
+)
+add_executable(
+  set_cover_test
+  tests/test_set_cover.cpp
+  src/set_cover/set_cover.cpp
+  src/set_cover/utils.cpp
+)
+target_link_libraries(
+  set_cover_test
+  GTest::gtest_main
+  OpenMP::OpenMP_CXX
+)
+add_executable(
+  mincut_test
+  tests/test_mincut.cpp
+  src/min_cut/simple_mincut.cpp
+  src/set_cover/graph.cpp
+)
+target_link_libraries(
+  mincut_test
+  GTest::gtest_main
+  OpenMP::OpenMP_CXX
+)
+
+include(GoogleTest)
+gtest_discover_tests(bfs_test)
+gtest_discover_tests(set_cover_test)
+gtest_discover_tests(mincut_test)
