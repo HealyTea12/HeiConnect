@@ -1,3 +1,4 @@
+#pragma once
 #include <unordered_set>
 #include <vector>
 #include <stdexcept>
@@ -6,9 +7,9 @@
 
 struct SetCover
 {
-    const std::vector<size_t> &a;
-    const std::vector<size_t> &b;
-    const std::vector<double> &costs;
+    const std::vector<size_t> a;
+    const std::vector<size_t> b;
+    const std::vector<double> costs;
     SetCover(const std::vector<size_t> &a,
              const std::vector<size_t> &b,
              const std::vector<double> &costs)
@@ -55,5 +56,3 @@ public:
         : SetCoverSolver(set_cover) {};
     void solve() override;
 };
-
-// maybe should be in utils

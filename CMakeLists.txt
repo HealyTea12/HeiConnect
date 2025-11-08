@@ -134,12 +134,16 @@ add_executable(
   set_cover_test
   tests/test_set_cover.cpp
   src/set_cover/set_cover.cpp
-  src/set_cover/utils.cpp
+  src/min_cut/simple_mincut.cpp
+  src/set_cover/graph.cpp
+  src/set_cover/transform_single.cpp
+  src/set_cover/read_file.cpp
 )
 target_link_libraries(
   set_cover_test
   GTest::gtest_main
   OpenMP::OpenMP_CXX
+  pugixml
 )
 add_executable(
   mincut_test

@@ -100,20 +100,8 @@ WeightedCRFGraph generate_links(const WeightedCRFGraph &graph, double (*edge_wei
 
 // Adds edges (for instance from the set cover solution) to the mutable graph
 // static_assert(MutableGraph<mutable_graph>);
-template <MutableGraph MutableGraph>
-void add_links(MutableGraph &mutable_graph,
-               const WeightedCRFGraph &link_graph,
-               const std::unordered_set<size_t> &selected_edges)
-{
-    for (size_t u = 0; u < link_graph.graph.vertices.size() - 1; ++u)
-    {
-        for (size_t idx = link_graph.graph.vertices[u]; idx < link_graph.graph.vertices[u + 1]; ++idx)
-        {
-            size_t v = link_graph.graph.edges[idx];
-            if (selected_edges.find(idx) != selected_edges.end())
-            {
-                mutable_graph.add_edge(u, v);
-            }
-        }
-    }
-}
+WeightedCRFGraph add_links(const WeightedCRFGraph &graph,
+                           const WeightedCRFGraph &link_graph,
+                           const std::unordered_set<size_t> &selected_edges);
+
+WeightedCRFGraph make_bidirectional(const WeightedCRFGraph &graph);

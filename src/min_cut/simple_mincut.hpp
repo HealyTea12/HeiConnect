@@ -1,7 +1,5 @@
 #pragma once
 
-#include <vector>
-
 #include "set_cover/graph.hpp"
 
 // Stoer-Wagner global min-cut algorithm

@@ -1,3 +1,4 @@
+#pragma once
 #include "extern/VieCut/lib/data_structure/mutable_graph.h"
 #include "set_cover/graph.hpp"
 

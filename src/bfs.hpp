@@ -1,31 +1,63 @@
+#pragma once
 #include <vector>
+#include <concepts>
 #include <queue>
 #include "graph.hpp"
 
-template <typename node_T>
-void bfs_single_threaded(
-    const std::vector<size_t> &vertices,
-    const std::vector<node_T> &edges,
-    const node_T root,
-    void (*const on_visited)(node_T, node_T),
-    void (*const on_not_visited)(node_T, node_T))
+struct Noop
 {
-    std::queue<node_T> queue = {root};
-    while (!queue.empty())
+    template <typename... Args>
+    void operator()(Args &&...) const noexcept {}
+};
+
+struct AlwaysFalse
+{
+    template <typename... Args>
+    bool operator()(Args &&...) const noexcept
     {
-        std::vector<bool> visited{vertices.size(), false};
-        node_T current = queue.front();
-        queue.pop();
-        for (size_t i{vertices[current]}; i < vertices[current + 1]; ++i)
+        return false;
+    }
+};
+
+template <
+    typename NodeID,
+    typename EdgeID,
+    typename onVisited = Noop,
+    typename onNotVisited,
+    typename Skip = AlwaysFalse>
+void bfs_single_threaded(
+    const std::vector<EdgeID> &vertices,
+    const std::vector<NodeID> &edges,
+    const NodeID root,
+    const onVisited &on_visited = {},
+    const onNotVisited &on_not_visited = {},
+    Skip skip = {})
+    requires std::integral<NodeID> &&
+             std::integral<EdgeID> &&
+             std::is_invocable_v<onVisited, NodeID, NodeID> &&
+             std::is_invocable_v<onNotVisited, NodeID, NodeID>
+{
+    std::vector<bool> visited = std::vector<bool>(vertices.size(), false);
+    std::queue<NodeID> q;
+    visited[root] = true;
+    q.push(root);
+    while (!q.empty())
+    {
+        NodeID current = q.front();
+        q.pop();
+        for (size_t i{vertices[current]}; i < vertices[current + 1]; i++)
         {
-            node_T neighbor = edges[i];
+            NodeID neighbor = edges[i];
+            if (skip(current, neighbor))
+                continue;
             if (!visited[neighbor])
-            { // not visited
+            {
+                visited[neighbor] = true;
                 on_not_visited(current, neighbor);
-                queue.push(neighbor);
+                q.push(neighbor);
             }
             else
-            { // visited
+            {
                 on_visited(current, neighbor);
             }
         }
@@ -47,6 +79,7 @@ void bfs_parallel(
     int size_current_frontier = 0;
     int size_next_frontier = 0;
     current_frontier[size_current_frontier++] = root;
+    auto d = std::vector<int>(Vertices.size() - 1, -1);
 
 #pragma omp parallel firstprivate(current_frontier, next_frontier)
     {
@@ -55,12 +88,12 @@ void bfs_parallel(
         while (size_current_frontier)
         {
 #pragma omp for nowait
-            for (int i{0}; i < size_current_frontier; i++)
+            for (int i = 0; i < size_current_frontier; i++)
             {
                 int u = current_frontier[i];
                 for (int j{Vertices[u]}; j < Vertices[u + 1]; j++)
                 {
-                    v = Edges[j];
+                    auto v = Edges[j];
                     if (d[v] < 0)
                     { // not visited
                         local_next_frontier[local_count++] = v;
@@ -99,29 +132,31 @@ void bfs_parallel(
 }
 
 template <typename node_T, typename edge_T>
-std::unordered_set<node_T> bfs_ignore_edges(
-    const std::vector<edge_T> &Vertices,
-    const std::vector<node_T> &Edges,
-    const node_T root,
-    const std::pair<node_T, node_T> &ignore_edges...)
+std::vector<bool> bfs_blacklist(
+    const std::vector<edge_T> &vertices,
+    const std::vector<node_T> &edges,
+    node_T start_node,
+    std::initializer_list<std::pair<node_T, node_T>> blacklist_edges)
 {
-    std::unordered_set<node_T> visited;
-    bfs_single_threaded<node_T>(
-        Vertices,
-        Edges,
-        root,
-        [&](node_T u, node_T v)
+    std::vector<bool> visited{vertices.size(), false};
+    std::queue<node_T> q;
+    visited[start_node] = true;
+    q.push(start_node);
+    while (!q.empty())
+    {
+        node_T current = q.front();
+        q.pop();
+        for (size_t i{vertices[current]}; i < vertices[current + 1]; i++)
         {
-            // on visited
-        },
-        [&](node_T u, node_T v)
-        {
-            // on not visited
-            if (!((u == ignore_edges.first && v == ignore_edges.second) ||
-                  (u == ignore_edges.second && v == ignore_edges.first)))
+            node_T neighbor = edges[i];
+            if (!visited[neighbor] &&
+                (std::find(blacklist_edges.begin(), blacklist_edges.end(), std::make_pair(current, neighbor)) == blacklist_edges.end()) &&
+                (std::find(blacklist_edges.begin(), blacklist_edges.end(), std::make_pair(neighbor, current)) == blacklist_edges.end()))
             {
-                visited.insert(v);
+                visited[neighbor] = true;
+                q.push(neighbor);
             }
-        });
+        }
+    }
     return visited;
 }

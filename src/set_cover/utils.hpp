@@ -17,15 +17,15 @@ concept MinMax = requires(T a, T b) {
 
 template <typename T>
     requires MinMax<T>
-size_t argmin(const std::vector<T> &v)
+std::vector<T>::size_type argmin(const std::vector<T> &v)
 {
     if (v.empty())
         throw std::invalid_argument("argmin: input vector must not be empty");
 
     const size_t n = v.size();
     const int num_threads = omp_get_max_threads();
-    std::vector<T> local_min(num_threads, std::numeric_limits<T>::max());
-    std::vector<size_t> local_min_indices(num_threads, 0);
+    auto local_min = std::vector<T>(num_threads, std::numeric_limits<T>::max());
+    auto local_min_indices = std::vector<size_t>(num_threads, 0);
 
 #pragma omp parallel
     {
@@ -62,10 +62,9 @@ T max(const std::vector<T> &v)
     if (v.empty())
         throw std::invalid_argument("max: input vector must not be empty");
 
-    // Use a thread-local maximum and combine them safely
     T global_max = std::numeric_limits<T>::lowest();
 
-#pragma omp parallel
+#pragma omp parallel shared(v)
     {
         T thread_max = std::numeric_limits<T>::lowest();
 #pragma omp for nowait
@@ -92,8 +91,8 @@ size_t argmax(const std::vector<T> &v)
 
     const size_t n = v.size();
     const int num_threads = omp_get_max_threads();
-    std::vector<T> local_max(num_threads, std::numeric_limits<T>::lowest());
-    std::vector<size_t> local_max_indices(num_threads, 0);
+    auto local_max = std::vector<T>(num_threads, std::numeric_limits<T>::lowest());
+    auto local_max_indices = std::vector<size_t>(num_threads, 0);
 
 #pragma omp parallel
     {
