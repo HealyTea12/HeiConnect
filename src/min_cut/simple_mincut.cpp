@@ -1,7 +1,8 @@
-#include "simple_mincut.hpp"
+#include "HeiConnect/min_cut/simple_mincut.hpp"
+
 #include <limits>
 
-double global_mincut_simple(const WeightedCRFGraph &graph)
+double global_mincut_simple(const WeightedCRFGraph<> &graph)
 {
     // nodes that have not yet been contracted
     std::vector<bool> active_nodes(graph.graph.vertices.size() - 1, true);
