@@ -1,6 +1,6 @@
 #pragma once
 
-#include "data_structures/immutable_graph.hpp"
+#include "HeiConnect/data_structures/immutable_graph.hpp"
 
 // Stoer-Wagner global min-cut algorithm
 // Assumptions: undirected graph, no self-loops, positive edge weights

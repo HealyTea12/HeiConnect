@@ -1,10 +1,11 @@
 
 #include <gtest/gtest.h>
-#include "set_cover/set_cover.hpp"
-#include "set_cover/graph.hpp"
-#include "set_cover/transform_single.hpp"
-#include "set_cover/read_file.hpp"
-#include "min_cut/simple_mincut.hpp"
+
+#include "HeiConnect/set_cover/set_cover.hpp"
+#include "HeiConnect/data_structures/immutable_graph.hpp"
+#include "HeiConnect/set_cover/transform_single.hpp"
+#include "HeiConnect/min_cut/simple_mincut.hpp"
+#include "HeiConnect/viecut_runner.hpp" // Really would like not to need this
 
 TEST(Utils, Max)
 {
@@ -46,7 +47,7 @@ TEST(AddLinks, General)
 
     std::unordered_set<size_t> selected_edges = {0, 1}; // select edge 1->0
 
-    auto new_graph = add_links(wgraph, wlink_graph, selected_edges);
+    auto new_graph = wgraph.add_links(wlink_graph, selected_edges);
 
     // new graph should have edges: 0->1,0->2,1->0,1->2,2->0,2->1
     std::vector<size_t> expected_vertices = {0, 2, 4, 6};
@@ -61,7 +62,7 @@ TEST(AddLinks, General)
 TEST(ReadFromFileGraphML, General)
 {
     auto src_dir = std::filesystem::current_path().parent_path();
-    auto graph = read_from_file_graphML(src_dir / "tests/data/k4.xml");
+    auto graph = WeightedCRFGraph<>::read_from_file_graphML(src_dir / "tests/data/k4.xml");
     ASSERT_EQ(graph.graph.vertices.size(), 5);
     ASSERT_EQ(graph.graph.edges.size(), 12);
     ASSERT_EQ(graph.weights.size(), 12);
@@ -86,33 +87,54 @@ TEST(ReadFromFileGraphML, General)
 TEST(GraphAugmentationToSetCover, FromFile)
 {
     auto src_dir = std::filesystem::current_path().parent_path();
-    auto graph = read_from_file_graphML(src_dir / "graphs/dimacs10/clustering/email.cactus.xml");
-    ASSERT_FALSE(graph.graph.vertices.empty());
-    ASSERT_FALSE(graph.graph.edges.empty());
+    std::filesystem::recursive_directory_iterator it(src_dir / "graphs");
+    for (const auto &entry : it)
+    {
+        if (entry.is_directory() || entry.path().extension() != ".graph")
+            continue;
+        std::cout << "Testing graph: " << entry.path() << std::endl;
+        std::stringstream command{};
+        command << src_dir / "extern" / "VieCut" / "build" / "mincut"
+                << " " << entry.path()
+                << " cactus -t " << entry.path().string() + ".cactus";
+        system(command.str().c_str());
 
-    auto link_graph = generate_links(graph, [](size_t u, size_t v)
-                                     { return 1.0; });
-    auto set_cover_instance = construct_set_cover(
-        graph.graph.vertices,
-        graph.graph.edges,
-        graph.weights,
-        link_graph.graph.vertices,
-        link_graph.graph.edges,
-        link_graph.weights);
+        auto cactus_path = entry.path().parent_path() / (entry.path().filename().string() + ".cactus");
+        auto graph = WeightedCRFGraph<>::read_from_file_graphML(cactus_path);
+        ASSERT_FALSE(graph.graph.vertices.empty());
+        ASSERT_FALSE(graph.graph.edges.empty());
 
-    ASSERT_TRUE(set_cover_instance.a.size() == link_graph.graph.edges.size() + 1);
-    auto solver = SetCoverSolverGreedyParallel(set_cover_instance);
-    solver.solve();
-    auto solution = solver.get_solution();
-    ASSERT_FALSE(solution.empty());
-    // calculate min_cut of original graph
-    auto original_min_cut = global_mincut_simple(graph);
-    // construct new graph with add links from solution
-    auto new_graph = add_links(graph,
-                               link_graph,
-                               solution);
-    new_graph = make_bidirectional(new_graph);
-    auto new_min_cut = global_mincut_simple(new_graph);
-    // check if min_cut has increased
-    ASSERT_GT(new_min_cut, original_min_cut);
+        auto link_graph = graph.generate_links([](size_t u, size_t v)
+                                               { return 1.0; });
+        if (link_graph.graph.edges.empty())
+        {
+            std::cout << "Graph " << entry.path() << " is complete, skipping." << std::endl;
+            continue;
+        }
+        std::cout << "Constructing set cover...\n";
+        auto set_cover_instance = construct_set_cover(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+
+        ASSERT_TRUE(set_cover_instance.a.size() == link_graph.graph.edges.size() + 1);
+        std::cout << "Solving set cover...\n";
+        auto solver = SetCoverSolverGreedyParallel(set_cover_instance);
+        solver.solve();
+        auto solution = solver.get_solution();
+        ASSERT_FALSE(solution.empty());
+        // calculate min_cut of original graph
+        auto original_min_cut = global_mincut_simple(graph);
+        // construct new graph with add links from solution
+        auto new_graph = graph.add_links(
+            link_graph,
+            solution);
+        new_graph = new_graph.make_bidirectional();
+        auto new_min_cut = global_mincut_simple(new_graph);
+        // check if min_cut has increased
+        ASSERT_GT(new_min_cut, original_min_cut);
+    }
 }

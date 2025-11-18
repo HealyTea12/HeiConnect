@@ -10,9 +10,11 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 set(test-source-pattern "test_*.cpp")
 file(GLOB test_sources "${test-source-pattern}")
+message(STATUS "Found test sources: ${test_sources}")
 
 add_executable(
     heiconnect_tests
+    test_set_cover.cpp
     ${test_sources}
 )
 target_link_libraries(

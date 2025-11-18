@@ -3,7 +3,7 @@
 #include <omp.h>
 #include <bits/stdc++.h>
 
-#include "set_cover/utils.hpp"
+#include "minmax.hpp"
 #include "set_cover/set_cover.hpp"
 
 std::unordered_set<size_t> SetCoverSolver::get_solution() const noexcept
@@ -68,3 +68,8 @@ void SetCoverSolverGreedyParallel::solve()
         this->add_set(best_set);
     }
 };
+
+void SetCoverSolverILP::solve()
+{
+    return;
+}

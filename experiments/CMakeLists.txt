@@ -1,0 +1,9 @@
+add_executable(experiments)
+target_sources(experiments
+PRIVATE
+    exp.cpp
+)
+target_link_libraries(experiments
+PUBLIC 
+    heiconnect
+)

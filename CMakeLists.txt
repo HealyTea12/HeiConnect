@@ -19,6 +19,7 @@ endif()
 option(ENABLE_VERBOSE_LOG "Enable --verbose logging flag" ON)
 option(HEICONNECT_BUILD_TESTS "Build tests" ON )
 option(HEICONNECT_BUILD_APP "Build application" OFF )
+option(HEICONNECT_BUILD_EXPERIMENTS "Build experiments" OFF )
 
 include(FetchContent)
 
@@ -46,13 +47,14 @@ target_include_directories(heiconnect
 )
 target_sources(heiconnect 
 PRIVATE 
-  src/approx.cpp src/graph.cpp src/greedy.cpp src/ilp.cpp src/ring_graph.cpp src/util.cpp src/watanabe.cpp
+  src/approx.cpp src/graph.cpp src/greedy.cpp src/ilp.cpp src/ring_graph.cpp src/util.cpp
   src/set_cover/set_cover.cpp  src/min_cut/simple_mincut.cpp )
 target_link_libraries(heiconnect
+PUBLIC
+  pugixml
 PRIVATE
   gurobi
   Boost::boost
-  pugixml
   OpenMP::OpenMP_CXX
 )
 
@@ -63,5 +65,7 @@ endif()
 if(HEICONNECT_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
-
-
+# this could be completely separate
+if(HEICONNECT_BUILD_EXPERIMENTS)
+  add_subdirectory(experiments)
+endif()

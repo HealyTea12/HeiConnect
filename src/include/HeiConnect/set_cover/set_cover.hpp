@@ -3,7 +3,7 @@
 #include <vector>
 #include <stdexcept>
 
-#include "minmax.hpp"
+#include "HeiConnect/minmax.hpp"
 
 struct SetCover
 {
@@ -53,6 +53,14 @@ class SetCoverSolverGreedyParallel : public SetCoverSolver
 {
 public:
     SetCoverSolverGreedyParallel(const SetCover &set_cover)
+        : SetCoverSolver(set_cover) {};
+    void solve() override;
+};
+
+class SetCoverSolverILP : public SetCoverSolver
+{
+public:
+    SetCoverSolverILP(const SetCover &set_cover)
         : SetCoverSolver(set_cover) {};
     void solve() override;
 };

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
-#include "min_cut/simple_mincut.hpp"
+
+#include "HeiConnect/min_cut/simple_mincut.hpp"
 
 TEST(MinCutTest, SimpleGraph)
 {

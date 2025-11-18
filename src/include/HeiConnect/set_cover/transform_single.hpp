@@ -5,9 +5,9 @@
 #include <unordered_set>
 #include <cassert>
 
-#include "min_cut/simple_mincut.hpp"
-#include "set_cover/set_cover.hpp"
-#include "bfs.hpp"
+#include "HeiConnect/min_cut/simple_mincut.hpp"
+#include "HeiConnect/set_cover/set_cover.hpp"
+#include "HeiConnect/bfs.hpp"
 
 // node_T/edge_T is a generic type that indexes nodes/edges e.g unsigned int
 template <typename node_T>
@@ -133,8 +133,39 @@ SetCover construct_set_cover(
     }
 
     // iterate over all edges to find min cuts
-    auto min_cut = global_mincut_simple({{vertices, edges},
-                                         weights}); // should substitute with cactus min cut
+    // auto min_cut = global_mincut_simple({{vertices, edges},
+    //                                     weights}); // should substitute with cactus min cut
+    // this part is awful
+    auto min_cut = std::numeric_limits<double>::max();
+    for (node_T u{}; u < vertices.size() - 1; u++)
+    {
+        for (edge_T e{vertices[u]}; e < vertices[u + 1]; e++)
+        {
+            if (!cycle_edges[e] && weights[e] < min_cut)
+            {
+                min_cut = weights[e];
+            }
+        }
+    }
+    for (const auto &cycle : cycles)
+    {
+        for (auto i = 0; i < cycle.size() - 1; i++)
+        {
+            auto edge1 = cycle[i];
+            auto edge1_idx = get_edge_index(vertices, edges, edge1.first, edge1.second);
+            for (auto j = i + 1; j < cycle.size(); j++)
+            {
+                auto edge2 = cycle[j];
+                auto edge_idx = get_edge_index(vertices, edges, edge2.first, edge2.second);
+                double cycle_cut = weights[edge1_idx] + weights[edge_idx];
+                if (cycle_cut < min_cut)
+                {
+                    min_cut = cycle_cut;
+                }
+            }
+        }
+    }
+
     std::vector<bool> min_cuts{};
     size_t n_min_cuts{};
     size_t n_vertices = vertices.size() - 1;
@@ -177,32 +208,39 @@ SetCover construct_set_cover(
             {
                 auto edge1 = cycle[i];
                 auto edge2 = cycle[j];
-                min_cuts.resize((n_min_cuts + 1) * vertices.size(), false);
-                min_cuts[n_min_cuts * n_vertices + edge1.first] = true;
-                bfs_single_threaded(
-                    vertices,
-                    edges,
-                    edge1.first,
-                    [](node_T from, node_T to) noexcept {},
-                    [&min_cuts, n_min_cuts, n_vertices](node_T from, node_T to) noexcept
-                    {
-                        min_cuts[n_min_cuts * n_vertices + to] = true;
-                    },
-                    [&edge1, &edge2](node_T from, node_T to) noexcept
-                    {
-                        if ((from == edge1.first && to == edge1.second) ||
-                            (from == edge2.first && to == edge2.second) ||
-                            (from == edge2.second && to == edge2.first))
-                            return true;
-                        return false;
-                    });
+                auto edge1_idx = get_edge_index(vertices, edges, edge1.first, edge1.second);
+                auto edge2_idx = get_edge_index(vertices, edges, edge2.first, edge2.second);
+                double cycle_cut = weights[edge1_idx] + weights[edge2_idx];
+                if (cycle_cut == min_cut)
+                {
+                    min_cuts.resize((n_min_cuts + 1) * vertices.size(), false);
+                    min_cuts[n_min_cuts * n_vertices + edge1.first] = true;
+                    bfs_single_threaded(
+                        vertices,
+                        edges,
+                        edge1.first,
+                        [](node_T from, node_T to) noexcept {},
+                        [&min_cuts, n_min_cuts, n_vertices](node_T from, node_T to) noexcept
+                        {
+                            min_cuts[n_min_cuts * n_vertices + to] = true;
+                        },
+                        [&edge1, &edge2](node_T from, node_T to) noexcept
+                        {
+                            if ((from == edge1.first && to == edge1.second) ||
+                                (from == edge2.first && to == edge2.second) ||
+                                (from == edge2.second && to == edge2.first))
+                                return true;
+                            return false;
+                        });
+                    n_min_cuts++;
+                }
             }
         }
     }
     // for each link, determine which cuts it crosses
     std::vector<size_t> a = std::vector<size_t>(link_edges.size() + 1, static_cast<size_t>(0));
     std::vector<size_t> b{};
-    for (size_t i{}; i < link_vertices.size(); i++)
+    for (size_t i{}; i < link_vertices.size() - 1; i++)
     {
         for (size_t j{link_vertices[i]}; j < link_vertices[i + 1]; j++)
         {
@@ -211,7 +249,7 @@ SetCover construct_set_cover(
             {
                 if (min_cuts[k * n_vertices + link.u] != min_cuts[k * n_vertices + link.v])
                 {
-                    b.push_back(k);
+                    b.emplace_back(k);
                 }
             }
             a[j + 1] = b.size();
