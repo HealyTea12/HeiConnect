@@ -61,32 +61,32 @@ void SetCoverSolverGreedySingleThreadedPQ::solve()
         pq.push({ratio, i});
     }
     // compare based on the ratios
-    auto compare = [](std::pair<sdouble, size_t> a, std::pair<double, size_t> b)
+    auto compare = [](std::pair<double, size_t> a, std::pair<double, size_t> b)
     {
         return a.first < b.first;
-    }
+    };
     // stop when all elements are covered or we've chosen all available sets while (m_total_covered_elements < NUM_ELEMENTS && m_solution.size() != set_cover.a.size() - 1)
     while (m_total_covered_elements < NUM_ELEMENTS && m_solution.size() != set_cover.a.size() - 1)
     {
         auto best_set = pq.top();
         pq.pop();
         // check if ratio has changed
-        size_t best_set = best_set.second;
+        size_t best_set_idx = best_set.second;
         size_t covered = 0;
-        for (auto i = set_cover.a[best_set]; i < set_cover.a[best_set + 1]; i++)
+        for (auto i = set_cover.a[best_set_idx]; i < set_cover.a[best_set_idx + 1]; i++)
         {
             if (m_covered_elements[set_cover.b[i]] == 0)
                 covered += 1;
         }
-        double ratio = covered / set_cover.costs[best_set];
+        double ratio = covered / set_cover.costs[best_set_idx];
         // if changed that put back in and try again
         if (ratio < best_set.first)
         {
-            pq.push({ration, best_set});
+            pq.push({ratio, best_set_idx});
             continue;
         }
         // otherwise add the set to the solution
-        this->add_set(best_set);
+        this->add_set(best_set_idx);
     }
 };
 
@@ -113,8 +113,8 @@ void SetCoverSolverSharpGreedy::solve()
             if (cheapest_set == std::numeric_limits<size_t>::max())
             {
                 throw std::runtime_error(
-                    "SetCoverSolverSharpGreedy: No set covers element " + std::to_string(e) + ". \n 
-                    Problem instance is unsolvable.");
+                    "SetCoverSolverSharpGreedy: No set covers element " + std::to_string(e) + ". \n" +
+                    "Problem instance is unsolvable.");
             }
             this->add_set(cheapest_set);
         }

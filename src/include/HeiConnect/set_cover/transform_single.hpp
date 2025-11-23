@@ -4,6 +4,7 @@
 #include <queue>
 #include <unordered_set>
 #include <cassert>
+#include <omp.h>
 
 #include "HeiConnect/min_cut/simple_mincut.hpp"
 #include "HeiConnect/set_cover/set_cover.hpp"
@@ -70,6 +71,8 @@ SetCover construct_set_cover(
     std::vector<int> distances = std::vector<int>(vertices.size(), 0);
     std::vector<bool> visited_nodes = std::vector<bool>(vertices.size(), false);
     std::vector<node_T> parent = std::vector<node_T>(vertices.size(), 0);
+
+    double start = omp_get_wtime();
     // BFS to find cycles and rooted tree
     std::queue<std::pair<node_T, int>> q;
     node_T root = static_cast<node_T>(0);
@@ -100,8 +103,11 @@ SetCover construct_set_cover(
             }
         }
     }
+    double end = omp_get_wtime();
+    std::cout << "BFS to find cycles took " << (end - start) << " seconds." << std::endl;
     // for each cycle edge, reconstruct the cycle
     // could rethink data struct
+    start = omp_get_wtime();
     auto cycles = std::vector<std::vector<std::pair<node_T, node_T>>>(cycle_edge_vec.size());
     assert(cycle_edge_vec.size() == cycles.size());
     for (size_t i{}; i < cycle_edge_vec.size(); i++)
@@ -131,11 +137,13 @@ SetCover construct_set_cover(
             v = parent[v];
         }
     }
-
+    end = omp_get_wtime();
+    std::cout << "Cycle reconstruction took " << (end - start) << " seconds." << std::endl;
     // iterate over all edges to find min cuts
     // auto min_cut = global_mincut_simple({{vertices, edges},
     //                                     weights}); // should substitute with cactus min cut
     // this part is awful
+    start = omp_get_wtime();
     auto min_cut = std::numeric_limits<double>::max();
     for (node_T u{}; u < vertices.size() - 1; u++)
     {
@@ -165,7 +173,11 @@ SetCover construct_set_cover(
             }
         }
     }
+    end = omp_get_wtime();
+    std::cout << "Cactus min cut computation took " << (end - start) << " seconds." << std::endl;
 
+    // find and partition min cuts
+    start = omp_get_wtime();
     std::vector<bool> min_cuts{};
     size_t n_min_cuts{};
     size_t n_vertices = vertices.size() - 1;
@@ -200,6 +212,9 @@ SetCover construct_set_cover(
             }
         }
     }
+    end = omp_get_wtime();
+    std::cout << "Min cut tree edge partitioning took " << (end - start) << " seconds." << std::endl;
+    start = omp_get_wtime();
     for (const auto &cycle : cycles)
     {
         for (size_t i{}; i < cycle.size() - 1; i++)
@@ -237,24 +252,32 @@ SetCover construct_set_cover(
             }
         }
     }
+    end = omp_get_wtime();
+    std::cout << "min cut cycle edge partitioning took " << (end - start) << " seconds." << std::endl;
     // for each link, determine which cuts it crosses
+    start = omp_get_wtime();
     std::vector<size_t> a = std::vector<size_t>(link_edges.size() + 1, static_cast<size_t>(0));
     std::vector<size_t> b{};
-    for (size_t i{}; i < link_vertices.size() - 1; i++)
+    b.reserve(link_edges.size() * n_min_cuts);
+    for (size_t u{}; u < link_vertices.size() - 1; u++)
     {
-        for (size_t j{link_vertices[i]}; j < link_vertices[i + 1]; j++)
+        for (size_t e{link_vertices[u]}; e < link_vertices[u + 1]; e++)
         {
-            auto link = Edge{i, link_edges[j], link_weights[j]};
+            // auto link = Edge{u, link_edges[e], link_weights[e]};
+            node_T v = link_edges[e];
             for (size_t k{}; k < n_min_cuts; k++)
             {
-                if (min_cuts[k * n_vertices + link.u] != min_cuts[k * n_vertices + link.v])
+                if (min_cuts[k * n_vertices + u] != min_cuts[k * n_vertices + v])
                 {
                     b.emplace_back(k);
                 }
             }
-            a[j + 1] = b.size();
         }
+        a[u + 1] = b.size();
     }
+    end = omp_get_wtime();
+    std::cout << "Link cut determination/setcover construction took " << (end - start) << " seconds." << std::endl;
+    // this is probably copying, we should change to move
     return SetCover{a, b, link_weights};
 }
 

@@ -89,7 +89,7 @@ void SetCoverSolver<Derived>::remove_set(size_t set_index) noexcept
     m_solution.erase(set_index);
 }
 
-class SetCoverSolverGreedySingleThreadedPQ : public SetCoverSolver<SetCoverSolverGreedySingleThreaded>
+class SetCoverSolverGreedySingleThreadedPQ : public SetCoverSolver<SetCoverSolverGreedySingleThreadedPQ>
 {
 public:
     void solve();
