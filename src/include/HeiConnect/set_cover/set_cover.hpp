@@ -22,6 +22,7 @@ struct SetCover
     };
 };
 
+template <typename Derived>
 class SetCoverSolver
 {
 public:
@@ -34,7 +35,10 @@ public:
         m_covered_elements = std::vector<int>(NUM_ELEMENTS, 0);
     }
     ~SetCoverSolver() = default;
-    virtual void solve() = 0;
+    void solve()
+    {
+        static_cast<Derived *>(this)->solve();
+    };
     std::unordered_set<size_t> get_solution() const noexcept;
 
 protected:
@@ -46,21 +50,67 @@ protected:
     SetCover set_cover;
     size_t m_total_covered_elements = 0;
     std::unordered_set<size_t> m_solution{};
+    std::vector<bool> m_chosen_sets;
+    bool m_feasible = false;
     std::vector<int> m_covered_elements;
 };
 
-class SetCoverSolverGreedyParallel : public SetCoverSolver
+template <typename Derived>
+std::unordered_set<size_t> SetCoverSolver<Derived>::get_solution() const noexcept
+{
+    return m_solution;
+}
+
+template <typename Derived>
+void SetCoverSolver<Derived>::add_set(size_t set_index) noexcept
+{
+    for (size_t j{set_cover.a[set_index]}; j < set_cover.a[set_index + 1]; j++)
+    {
+        if (m_covered_elements[set_cover.b[j]] == 0)
+        {
+            m_total_covered_elements += 1;
+        }
+        m_covered_elements[set_cover.b[j]] += 1;
+    }
+    m_solution.insert(set_index);
+}
+
+template <typename Derived>
+void SetCoverSolver<Derived>::remove_set(size_t set_index) noexcept
+{
+    for (size_t j{set_cover.a[set_index]}; j < set_cover.a[set_index + 1]; j++)
+    {
+        m_covered_elements[set_cover.b[j]] -= 1;
+        if (m_covered_elements[set_cover.b[j]] == 0)
+        {
+            m_total_covered_elements -= 1;
+        }
+    }
+    m_solution.erase(set_index);
+}
+
+class SetCoverSolverGreedySingleThreadedPQ : public SetCoverSolver<SetCoverSolverGreedySingleThreaded>
 {
 public:
-    SetCoverSolverGreedyParallel(const SetCover &set_cover)
-        : SetCoverSolver(set_cover) {};
-    void solve() override;
+    void solve();
+};
+class SetCoverSolverGreedyParallel : public SetCoverSolver<SetCoverSolverGreedyParallel>
+{
+public:
+    void solve();
 };
 
-class SetCoverSolverILP : public SetCoverSolver
+class SetCoverSolverSharpGreedy : public SetCoverSolver<SetCoverSolverSharpGreedy>
 {
 public:
-    SetCoverSolverILP(const SetCover &set_cover)
-        : SetCoverSolver(set_cover) {};
-    void solve() override;
+    void solve();
+};
+
+class SetCoverSolverILP : public SetCoverSolver<SetCoverSolverILP>
+{
+private:
+    std::vector<bool> m_chosen_sets;
+
+public:
+    void solve();
 };

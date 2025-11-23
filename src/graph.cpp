@@ -303,6 +303,8 @@ namespace graph
             {
               if (flip(mt_fraction) <= fraction)
               {
+                // std::cout << "Adding link between " << f << " and " << s
+                //           << " with weight " << weight << std::endl;
                 add_link(i, j, f, s, weight);
               }
               goto out;

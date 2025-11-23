@@ -14,36 +14,46 @@
 
 using namespace graph;
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
   config::Params params{argc, argv};
 
   compute_cactus(params.original_graph, params.cactus);
 
   GraphPair g;
   TIMEIT("Read graph", g.read_graph(params.original_graph, params.cactus));
-  if (params.seed >= 0) {
+  if (params.seed >= 0)
+  {
     TIMEIT("Generate links",
            g.add_links(params.seed, params.link_fraction, params.distribution));
-  } else {
+  }
+  else
+  {
     TIMEIT("Generate links", g.add_links(params.links));
   }
 
   std::list<graph::Edge> solution;
   bool convert_links = true;
 
-  switch (params.algorithm) {
+  switch (params.algorithm)
+  {
   case config::Algorithm::GWC:
-  case config::Algorithm::GWC_SAMPLING: {
+  case config::Algorithm::GWC_SAMPLING:
+  {
     convert_links = true;
     DynamicCactus g_dynamic;
     g_dynamic.read_from_file(params.cactus);
     g_dynamic.copy_links(g);
-    if (params.algorithm == config::Algorithm::GWC_SAMPLING) {
+    if (params.algorithm == config::Algorithm::GWC_SAMPLING)
+    {
       solution = solver::greedy_dynamic_sampling(g_dynamic);
-    } else {
+    }
+    else
+    {
       solution = solver::greedy_dynamic_bounds(g_dynamic);
     }
-  } break;
+  }
+  break;
   case config::Algorithm::EILP:
     convert_links = false;
     solution = solver::ilp(g, params.use_initial, params.count);
@@ -67,14 +77,16 @@ int main(int argc, char **argv) {
   case config::Algorithm::MST_CONNECT:
     solution = solver::greedy_mst_max_flow(g).first;
     break;
-  case config::Algorithm::MST_CONNECT_HEURISTIC: {
+  case config::Algorithm::MST_CONNECT_HEURISTIC:
+  {
     DynamicCactus g_dynamic;
     g_dynamic.read_from_file(params.cactus);
     g_dynamic.copy_links(g);
     solution = solver::greedy_mst_max_flow_heuristic(g, g_dynamic);
     break;
   }
-  case config::Algorithm::MST_CONNECT_ORDER_HEURISTIC: {
+  case config::Algorithm::MST_CONNECT_ORDER_HEURISTIC:
+  {
     DynamicCactus g_dynamic;
     g_dynamic.read_from_file(params.cactus);
     g_dynamic.copy_links(g);
@@ -103,36 +115,45 @@ int main(int argc, char **argv) {
     convert_links = false;
     solution = solver::approximate_1_5_e(g, params.epsilon);
     break;
-  case config::Algorithm::SMC: {
+  case config::Algorithm::SMC:
+  {
     convert_links = true;
     DynamicCactus g_dynamic;
     g_dynamic.read_from_file(params.cactus);
     g_dynamic.copy_links(g);
     solution = watanabe::smc(g_dynamic);
-  } break;
-  case config::Algorithm::FSM: {
+  }
+  break;
+  case config::Algorithm::FSM:
+  {
     convert_links = true;
     DynamicCactus g_dynamic;
     g_dynamic.read_from_file(params.cactus);
     g_dynamic.copy_links(g);
     solution = watanabe::fsm(g_dynamic);
-  } break;
-  case config::Algorithm::HBD: {
+  }
+  break;
+  case config::Algorithm::HBD:
+  {
     convert_links = true;
     DynamicCactus g_dynamic;
     g_dynamic.read_from_file(params.cactus);
     g_dynamic.copy_links(g);
     solution = watanabe::hbd(g_dynamic);
-  } break;
+  }
+  break;
   default:
     throw std::invalid_argument("Algorithm not covered");
   }
 
   // convert to original edge
-  if (convert_links) {
-    for (auto &x : solution) {
+  if (convert_links)
+  {
+    for (auto &x : solution)
+    {
       auto &orig = g.cactus.links[x.first][x.second];
-      if (orig.first == 0 || orig.second == 0) {
+      if (orig.first == 0 || orig.second == 0)
+      {
         WARN("Could not convert link "
              << x.first << "-" << x.second
              << "to the original graph, this may be caused by a bug");
@@ -142,17 +163,23 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (params.output.has_value()) {
-    if (params.output_links) {
+  if (params.output.has_value())
+  {
+    if (params.output_links)
+    {
       std::ofstream link_output_file;
       link_output_file.open(*params.output);
-      for (auto &x : solution) {
+      for (auto &x : solution)
+      {
         link_output_file << x.first << " " << x.second << " " << x.weight
                          << std::endl;
       }
       link_output_file.close();
-    } else {
-      for (auto x : solution) {
+    }
+    else
+    {
+      for (auto x : solution)
+      {
         g.original_graph.add_link(x);
       }
       g.original_graph.write_to_file(*params.output);
@@ -162,7 +189,8 @@ int main(int argc, char **argv) {
   INFO("Found solution with " << solution.size() << " links");
   INFO("Augmentation weight: " << std::accumulate(
            solution.begin(), solution.end(), 0.,
-           [](double v, graph::Edge &e) { return v + e.weight; }));
+           [](double v, graph::Edge &e)
+           { return v + e.weight; }));
 
   return 0;
 }

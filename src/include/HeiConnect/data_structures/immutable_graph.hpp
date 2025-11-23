@@ -263,6 +263,65 @@ public:
         doc.save_file(path.c_str());
     }
 
+    void write_to_file_graphML(const std::filesystem::path &path,
+                               const std::unordered_map<size_t, std::vector<size_t>> &map_to_original_graph) const
+    {
+        pugi::xml_document doc;
+        auto decl = doc.append_child(pugi::node_declaration);
+        decl.append_attribute("version") = "1.0";
+        decl.append_attribute("encoding") = "UTF-8";
+
+        auto graphml = doc.append_child("graphml");
+        graphml.append_attribute("xmlns") = "http://graphml.graphdrawing.org/xmlns";
+        graphml.append_attribute("xmlns:xsi") = "http://www.w3.org/2001/XMLSchema-instance";
+        graphml.append_attribute("xsi:schemaLocation") =
+            "http://graphml.graphdrawing.org/xmlns "
+            "http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd";
+
+        auto graph_node = graphml.append_child("graph");
+        graph_node.append_attribute("edgedefault") = "undirected";
+
+        for (size_t u = 0; u < graph.vertices.size() - 1; ++u)
+        {
+            auto node = graph_node.append_child("node");
+            node.append_attribute("id") = std::to_string(u).c_str();
+            auto contained_vertices = node.append_child("data");
+            contained_vertices.append_attribute("key") = "containedVertices";
+            if (map_to_original_graph.find(u) != map_to_original_graph.end())
+            {
+                std::string vertices_str;
+                for (auto &v : map_to_original_graph.at(u))
+                {
+                    vertices_str += std::to_string(v) + ",";
+                }
+                // remove last comma
+                if (!vertices_str.empty())
+                {
+                    vertices_str.pop_back();
+                }
+                contained_vertices.text().set(vertices_str.c_str());
+            }
+            else
+            {
+                contained_vertices.text().set("");
+            }
+        }
+
+        for (size_t u = 0; u < graph.vertices.size() - 1; ++u)
+        {
+            for (size_t e = graph.vertices[u]; e < graph.vertices[u + 1]; ++e)
+            {
+                auto edge = graph_node.append_child("edge");
+                edge.append_attribute("source") = std::to_string(u).c_str();
+                edge.append_attribute("target") = std::to_string(graph.edges[e]).c_str();
+                auto weight_key = edge.append_child("data");
+                weight_key.append_attribute("key") = "weight";
+                weight_key.text().set(std::to_string(weights[e]).c_str());
+            }
+        }
+        doc.save_file(path.c_str());
+    }
+
     /// Generate a graph consisting of all non-existing edges in the input graph.
     /// The weights of the new edges are determined by the provided edge_weight function.
     /// @param graph
@@ -297,7 +356,8 @@ public:
         return WeightedCRFGraph{{new_vertices, new_edges}, weights};
     }
 
-    WeightedCRFGraph add_links(
+    WeightedCRFGraph
+    add_links(
         const WeightedCRFGraph &link_graph,
         const std::unordered_set<size_t> &selected_edges) const
     {
