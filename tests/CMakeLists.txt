@@ -15,6 +15,7 @@ message(STATUS "Found test sources: ${test_sources}")
 add_executable(
     heiconnect_tests
     test_set_cover.cpp
+    test_graph_augmentation.cpp
     ${test_sources}
 )
 target_link_libraries(

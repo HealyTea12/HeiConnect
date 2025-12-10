@@ -137,7 +137,7 @@ public:
             throw std::runtime_error("Could not open file for writing: " + path.string());
         }
         size_t n = graph.vertices.size() - 1;
-        size_t m = graph.edges.size();
+        size_t m = graph.edges.size() / 2; // undirected graph
         file << n << " " << m << " 1\n";
         for (size_t u = 0; u < n; ++u)
         {
@@ -252,6 +252,8 @@ public:
         {
             for (size_t e = graph.vertices[u]; e < graph.vertices[u + 1]; ++e)
             {
+                if (u > graph.edges[e]) // to avoid writing both directions
+                    continue;
                 auto edge = graph_node.append_child("edge");
                 edge.append_attribute("source") = std::to_string(u).c_str();
                 edge.append_attribute("target") = std::to_string(graph.edges[e]).c_str();
@@ -311,6 +313,8 @@ public:
         {
             for (size_t e = graph.vertices[u]; e < graph.vertices[u + 1]; ++e)
             {
+                if (u > graph.edges[e]) // to avoid writing both directions
+                    continue;
                 auto edge = graph_node.append_child("edge");
                 edge.append_attribute("source") = std::to_string(u).c_str();
                 edge.append_attribute("target") = std::to_string(graph.edges[e]).c_str();
@@ -340,7 +344,7 @@ public:
             {
                 neighbours.insert(graph.edges[idx]);
             }
-            for (size_t i = 0; i < graph.vertices.size() - 1; i++)
+            for (size_t i = u + 1; i < graph.vertices.size() - 1; i++)
             {
                 if (i == u)
                     continue;

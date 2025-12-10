@@ -10,12 +10,13 @@ struct SetCover
     const std::vector<size_t> a;
     const std::vector<size_t> b;
     const std::vector<double> costs;
-    SetCover(const std::vector<size_t> &a,
-             const std::vector<size_t> &b,
-             const std::vector<double> &costs)
-        : a(a), b(b), costs(costs)
+
+    SetCover(std::vector<size_t> a,
+             std::vector<size_t> b,
+             std::vector<double> costs)
+        : a(std::move(a)), b(std::move(b)), costs(std::move(costs))
     {
-        if (a.size() - 1 != costs.size())
+        if (this->a.size() - 1 != this->costs.size())
         {
             throw std::invalid_argument("SetCover: size of a and costs must be equal. Every subset should have a cost.");
         }
@@ -40,6 +41,15 @@ public:
         static_cast<Derived *>(this)->solve();
     };
     std::unordered_set<size_t> get_solution() const noexcept;
+    double get_solution_cost() const
+    {
+        double total_cost = 0.0;
+        for (const auto &set_index : m_solution)
+        {
+            total_cost += set_cover.costs[set_index];
+        }
+        return total_cost;
+    }
 
 protected:
     void add_set(size_t set_index) noexcept;

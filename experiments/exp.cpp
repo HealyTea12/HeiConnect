@@ -11,19 +11,19 @@
 #include "HeiConnect/data_structures/graph_utils.hpp"
 #include "dataset_manager.hpp"
 
-void write_cycle_graphs(std::filesystem::path graph_dir)
+void write_cycle_graphs(std::filesystem::path graph_dir, size_t start, size_t stop, size_t step)
 {
     auto a = 0;
     std::vector<size_t> cycle_sizes = {};
-    for (size_t n = 200; n <= 200; n += 10)
+    for (size_t n = start; n <= stop; n += step)
         cycle_sizes.push_back(n);
     for (size_t n_nodes : cycle_sizes)
     {
-        auto cycle_graph = create_cycle_graph(n_nodes);
+        auto cycle_graph = create_cycle_graph_undirected(n_nodes);
         std::unordered_map<size_t, std::vector<size_t>> map_to_original_graph{};
         for (size_t i = 0; i < n_nodes; ++i)
         {
-            map_to_original_graph[i + 1] = {i + 1};
+            map_to_original_graph[i] = {i};
         }
         cycle_graph.write_to_file_graphML(graph_dir / ("cycle_" + std::to_string(n_nodes) + ".xml"), map_to_original_graph);
         cycle_graph.write_to_file_metis(graph_dir / ("cycle_" + std::to_string(n_nodes) + ".graph"));
@@ -46,7 +46,7 @@ void experiment(std::filesystem::path graph_dir)
         try
         {
             WeightedCRFGraph<> graph = WeightedCRFGraph<>::read_from_file_graphML(file.path());
-            if (graph.graph.vertices.size() - 1 > 200)
+            if (graph.graph.vertices.size() - 1 > 1000)
                 continue;
             auto link_graph = graph.generate_links([](size_t u, size_t v)
                                                    { return 1.0; });
@@ -63,9 +63,10 @@ void experiment(std::filesystem::path graph_dir)
                     link_graph.graph.edges,
                     link_graph.weights);
                 timer.add_checkpoint("Reduction");
-                SetCoverSolverGreedyParallel solver{sc};
+                SetCoverSolverGreedySingleThreadedPQ solver{sc};
                 solver.solve();
                 auto solution = solver.get_solution();
+                std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
             }
 
             auto g = graph::GraphPair{};
@@ -89,7 +90,14 @@ void experiment(std::filesystem::path graph_dir)
                     "Cycle " + std::to_string(graph.graph.vertices.size() - 1),
                     output_dir / "direct_greedy"};
                 auto solution = solver::greedy_heuristic_strong(g);
+                auto solution_cost = 0.0;
+                for (const auto &edge : solution)
+                {
+                    solution_cost += edge.weight;
+                }
+                std::cout << "Solution cost: " << solution_cost << std::endl;
             };
+            std::cout << "----------------------------------------" << std::endl;
         }
         catch (const std::exception &e)
         {
@@ -98,11 +106,14 @@ void experiment(std::filesystem::path graph_dir)
     }
 }
 
-int main()
+int main(int argc, char **argv)
 {
+    size_t start = argv[1] ? std::stoul(argv[1]) : 200;
+    size_t stop = argv[2] ? std::stoul(argv[2]) : 200;
+    size_t step = argv[3] ? std::stoul(argv[3]) : 10;
     auto graph_dir = std::filesystem::temp_directory_path() / "graphs";
     std::filesystem::create_directory(graph_dir);
-    write_cycle_graphs(graph_dir);
+    write_cycle_graphs(graph_dir, start, stop, step);
     experiment(
         graph_dir
         // std::filesystem::current_path() / "../graphs/misc"
