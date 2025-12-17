@@ -8,3 +8,4 @@ output
 augmented_graph.graph
 .vscode
 graphs/
+.venv/

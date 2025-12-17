@@ -4,7 +4,7 @@
 #include "HeiConnect/data_structures/immutable_graph.hpp"
 #include "HeiConnect/graph.hpp"
 
-inline WeightedCRFGraph<> create_cycle_graph(size_t n_nodes)
+WeightedCRFGraph<> create_cycle_graph(size_t n_nodes)
 {
     auto vertices = std::vector<size_t>(n_nodes + 1, 0);
     std::vector<size_t> edges{};
@@ -18,7 +18,7 @@ inline WeightedCRFGraph<> create_cycle_graph(size_t n_nodes)
     return WeightedCRFGraph<>{CRFGraph<>{vertices, edges}, weights};
 }
 
-inline WeightedCRFGraph<> create_cycle_graph_undirected(size_t n_nodes)
+WeightedCRFGraph<> create_cycle_graph_undirected(size_t n_nodes)
 {
     auto vertices = std::vector<size_t>(n_nodes + 1, 0);
     std::vector<size_t> edges{};
@@ -35,7 +35,7 @@ inline WeightedCRFGraph<> create_cycle_graph_undirected(size_t n_nodes)
 }
 
 // Creates a star graph with one center node (node 0) connected to n_leaves leaf nodes.
-inline WeightedCRFGraph<> create_star_graph(size_t n_leaves)
+WeightedCRFGraph<> create_star_graph(size_t n_leaves)
 {
     auto vertices = std::vector<size_t>(n_leaves + 2, 0);
     auto edges = std::vector<size_t>(2 * n_leaves, 0);
@@ -50,7 +50,7 @@ inline WeightedCRFGraph<> create_star_graph(size_t n_leaves)
     return WeightedCRFGraph<>{{vertices, edges}, weights};
 }
 
-inline WeightedCRFGraph<> create_random_tree(size_t n_nodes, unsigned int seed = 42)
+WeightedCRFGraph<> create_random_tree(size_t n_nodes, unsigned int seed = 42)
 {
     std::vector<bool> connected = std::vector<bool>(n_nodes, false);
     // tree has n - 1 edges

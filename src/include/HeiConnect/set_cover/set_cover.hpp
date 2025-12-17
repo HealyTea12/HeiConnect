@@ -54,6 +54,7 @@ public:
 protected:
     void add_set(size_t set_index) noexcept;
     void remove_set(size_t set_index) noexcept;
+    void trim_solution();
 
 protected:
     size_t NUM_ELEMENTS;
@@ -99,6 +100,11 @@ void SetCoverSolver<Derived>::remove_set(size_t set_index) noexcept
     m_solution.erase(set_index);
 }
 
+template <typename Derived>
+void SetCoverSolver<Derived>::trim_solution()
+{
+    return;
+}
 class SetCoverSolverGreedySingleThreadedPQ : public SetCoverSolver<SetCoverSolverGreedySingleThreadedPQ>
 {
 public:
@@ -121,6 +127,12 @@ class SetCoverSolverILP : public SetCoverSolver<SetCoverSolverILP>
 private:
     std::vector<bool> m_chosen_sets;
 
+public:
+    void solve();
+};
+
+class SetCoverSolverGreedyWideSingleThreaded : public SetCoverSolver<SetCoverSolverGreedyWideSingleThreaded>
+{
 public:
     void solve();
 };
