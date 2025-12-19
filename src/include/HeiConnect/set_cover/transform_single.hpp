@@ -396,7 +396,6 @@ SetCover construct_set_cover_csr_ull( // with ull min_cuts
     const std::vector<ull> &min_cuts,
     size_t n_min_cuts)
 {
-    std::cout << n_min_cuts << " min cuts found." << std::endl;
     auto start = omp_get_wtime();
     std::vector<size_t> a = std::vector<size_t>(link_edges.size() + 1, static_cast<size_t>(0));
     std::vector<size_t> b = std::vector<size_t>(0ULL);
@@ -435,7 +434,42 @@ SetCover construct_set_cover_csr_ull( // with ull min_cuts
     std::cout << "Total time constructing set cover: " << (end - start) << " seconds." << std::endl;
     std::cout << "Average time processing link: " << (end - start) / link_edges.size() << " seconds." << std::endl;
     std::cout << "Size of b set: " << b.size() << std::endl;
-    return SetCover{std::move(a), std::move(b), std::move(link_weights)};
+    return SetCover{std::move(a), std::move(b), std::move(link_weights), n_min_cuts};
+}
+
+template <class node_T, class edge_T>
+    requires std::integral<node_T> && std::integral<edge_T>
+SetCoverBit construct_set_cover_bit_matrix_ull(
+    const std::vector<edge_T> &vertices,
+    const std::vector<node_T> &edges,
+    const std::vector<double> &weights,
+    const std::vector<size_t> &link_vertices,
+    const std::vector<size_t> &link_edges,
+    const std::vector<double> &link_weights,
+    const std::vector<ull> &min_cuts,
+    size_t n_min_cuts)
+{
+    const unsigned long B = 8 * sizeof(ull);
+    const unsigned long N_ROWS = link_edges.size();
+    const unsigned long N_COLS = (n_min_cuts - 1) / B + 1;
+    std::vector<ull> set_cover = std::vector<ull>(N_ROWS * N_COLS, 0ULL);
+    size_t current_link_idx = 0;
+    for (size_t u{}; u < link_vertices.size() - 1; u++)
+    {
+        for (size_t e{link_vertices[u]}; e < link_vertices[u + 1]; e++)
+        {
+            node_T v = link_edges[e];
+            for (auto w = 0; w < N_COLS; ++w)
+            {
+                ull wu = min_cuts[u * N_COLS + w];
+                ull wv = min_cuts[v * N_COLS + w];
+                ull x = wu ^ wv;
+                set_cover[current_link_idx * N_COLS + w] = x;
+            }
+            current_link_idx++;
+        }
+    }
+    return SetCoverBit{std::move(set_cover), N_ROWS, N_COLS, std::move(link_weights)};
 }
 
 template <class node_T, class edge_T>
@@ -606,7 +640,7 @@ std::vector<T> transpose(const std::vector<T> &input, size_t n_rows, size_t n_co
 
 template <typename node_T, typename edge_T>
     requires std::integral<node_T> && std::integral<edge_T>
-SetCover construct_set_cover(
+std::tuple<std::vector<ull>, ull> generate_min_cut_matrix(
     const std::vector<edge_T> &vertices,
     const std::vector<node_T> &edges,
     const std::vector<double> &weights,
@@ -614,7 +648,6 @@ SetCover construct_set_cover(
     const std::vector<size_t> &link_edges,
     const std::vector<double> &link_weights)
 {
-    // auto cycle_edges = std::unordered_set<std::pair<node_T, node_T>>{0, pair_hash};
     // for checking during the second BFS
     auto cycle_edges = std::vector<bool>(edges.size(), false);
     std::vector<std::pair<node_T, node_T>> cycle_edge_vec{};
@@ -768,10 +801,31 @@ SetCover construct_set_cover(
         n_min_cuts);
     end = omp_get_wtime();
     std::cout << "Min cut vertex partitioning took " << (end - start) << " seconds." << std::endl;
+    return {min_cuts, n_min_cuts};
+}
+
+template <typename node_T, typename edge_T>
+    requires std::integral<node_T> && std::integral<edge_T>
+SetCover construct_set_cover(
+    const std::vector<edge_T> &vertices,
+    const std::vector<node_T> &edges,
+    const std::vector<double> &weights,
+    const std::vector<size_t> &link_vertices,
+    const std::vector<size_t> &link_edges,
+    const std::vector<double> &link_weights)
+{
+    // generate min cut matrix
+    auto [min_cuts, n_min_cuts] = generate_min_cut_matrix(
+        vertices,
+        edges,
+        weights,
+        link_vertices,
+        link_edges,
+        link_weights);
 
     // for each link, determine which cuts it crosses
-    start = omp_get_wtime();
-    auto set_cover = construct_set_cover_csr_ull<node_T, edge_T>(
+    double start = omp_get_wtime();
+    auto set_cover = construct_set_cover_csr_ull(
         vertices,
         edges,
         weights,
@@ -780,8 +834,43 @@ SetCover construct_set_cover(
         link_weights,
         min_cuts,
         n_min_cuts);
-    end = omp_get_wtime();
+    double end = omp_get_wtime();
     std::cout << "Constructing set cover in CSR form took " << (end - start) << " seconds." << std::endl;
+    return set_cover;
+}
+
+template <typename node_T, typename edge_T>
+    requires std::integral<node_T> && std::integral<edge_T>
+SetCoverBit construct_set_cover_bit_matrix(
+    const std::vector<edge_T> &vertices,
+    const std::vector<node_T> &edges,
+    const std::vector<double> &weights,
+    const std::vector<size_t> &link_vertices,
+    const std::vector<size_t> &link_edges,
+    const std::vector<double> &link_weights)
+{
+    // generate min cut matrix
+    auto [min_cuts, n_min_cuts] = generate_min_cut_matrix(
+        vertices,
+        edges,
+        weights,
+        link_vertices,
+        link_edges,
+        link_weights);
+
+    // for each link, determine which cuts it crosses
+    double start = omp_get_wtime();
+    auto set_cover = construct_set_cover_bit_matrix_ull(
+        vertices,
+        edges,
+        weights,
+        link_vertices,
+        link_edges,
+        link_weights,
+        min_cuts,
+        n_min_cuts);
+    double end = omp_get_wtime();
+    std::cout << "Constructing set cover in BIT MATRIX form took " << (end - start) << " seconds." << std::endl;
     return set_cover;
 }
 

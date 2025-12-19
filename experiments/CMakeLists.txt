@@ -1,9 +1,31 @@
+find_package(Boost REQUIRED COMPONENTS program_options)
+add_executable(generate_datasets)
+target_sources(generate_datasets
+PRIVATE
+    generate_datasets.cpp)
+target_link_libraries(
+    generate_datasets
+PRIVATE
+    heiconnect
+    Boost::program_options
+)
 add_executable(experiments)
 target_sources(experiments
 PRIVATE
     exp.cpp
 )
 target_link_libraries(experiments
-PUBLIC 
+PRIVATE
     heiconnect
+    Boost::program_options
+)
+add_executable(sc_red_bm)
+target_sources(sc_red_bm
+PRIVATE
+    set_cover_reduction_BM.cpp
+)
+target_link_libraries(sc_red_bm
+PRIVATE
+    heiconnect
+    Boost::program_options
 )
