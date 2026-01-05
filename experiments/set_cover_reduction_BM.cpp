@@ -31,6 +31,12 @@ int main(int argc, char **argv)
                 link_graph.weights);
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in CSR form took " << (end - start) << " seconds." << std::endl;
+            timer.add_checkpoint("reduction");
+            SetCoverSolverGreedySingleThreadedPQ<SetCover> solver{set_cover};
+            solver.solve();
+            timer.add_checkpoint("solving");
+            auto solution = solver.get_solution();
+            std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
         }
         if (type == "bit")
         {
@@ -47,6 +53,12 @@ int main(int argc, char **argv)
                 link_graph.weights);
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in BIT MATRIX form took " << (end - start) << " seconds." << std::endl;
+            timer.add_checkpoint("reduction");
+            SetCoverSolverGreedySingleThreadedPQ<SetCoverBit> solver{set_cover_bit};
+            solver.solve();
+            timer.add_checkpoint("solving");
+            auto solution = solver.get_solution();
+            std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
         }
     }
 }

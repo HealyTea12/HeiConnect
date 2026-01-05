@@ -17,6 +17,7 @@
 enum class Algorithms
 {
     SetCoverGreedySingleThreadedPQ,
+    SetCoverGreedySingleThreadedPQBit,
     SetCoverSharpGreedy,
     SetCoverILP,
     DirectGreedy,
@@ -25,8 +26,9 @@ enum class Algorithms
     DirectILP
 };
 
-std::array<std::string, 7> algorithm_names = {
+std::array<std::string, 8> algorithm_names = {
     "SetCoverGreedySingleThreadedPQ",
+    "SetCoverGreedySingleThreadedPQBit",
     "SetCoverSharpGreedy",
     "SetCoverILP",
     "DirectGreedy",
@@ -74,12 +76,37 @@ void experiment(std::filesystem::path graph_dir, std::filesystem::path output_fi
                         link_graph.graph.edges,
                         link_graph.weights);
                     timer.add_checkpoint("Reduction");
-                    SetCoverSolverGreedySingleThreadedPQ solver{std::move(sc)};
+                    SetCoverSolverGreedySingleThreadedPQ<SetCover> solver{std::move(sc)};
                     solver.solve();
                     auto solution = solver.get_solution();
                     std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
                 }
             }
+            else if (algorithm == Algorithms::SetCoverGreedySingleThreadedPQBit)
+            {
+                WeightedCRFGraph<> graph = WeightedCRFGraph<>::read_from_file_graphML(file.path());
+                auto link_graph = graph.generate_links([](size_t u, size_t v)
+                                                       { return 1.0; });
+
+                {
+                    auto timer = Timer{
+                        file.path().filename().string(),
+                        output_file};
+                    auto sc = construct_set_cover_bit_matrix(
+                        graph.graph.vertices,
+                        graph.graph.edges,
+                        graph.weights,
+                        link_graph.graph.vertices,
+                        link_graph.graph.edges,
+                        link_graph.weights);
+                    timer.add_checkpoint("Reduction");
+                    SetCoverSolverGreedySingleThreadedPQ<SetCoverBit> solver{std::move(sc)};
+                    solver.solve();
+                    auto solution = solver.get_solution();
+                    std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+                }
+            }
+
             else if (algorithm == Algorithms::DirectGreedy)
             {
 
@@ -160,7 +187,7 @@ void experiment(std::filesystem::path graph_dir, std::filesystem::path output_fi
                         link_graph.weights);
                     timer.add_checkpoint("Reduction");
                     // ILP solver
-                    SetCoverSolverILP solver{std::move(sc)};
+                    SetCoverSolverILP<SetCover> solver{std::move(sc)};
                     solver.solve();
                     auto ilp_solution = solver.get_solution();
                     double total_cost = 0.0;
@@ -208,7 +235,7 @@ void experiment(std::filesystem::path graph_dir, std::filesystem::path output_fi
                         link_graph.graph.edges,
                         link_graph.weights);
                     timer.add_checkpoint("Reduction");
-                    SetCoverSolverSharpGreedy solver{std::move(sc)};
+                    SetCoverSolverSharpGreedy<SetCover> solver{std::move(sc)};
                     solver.solve();
                     solver.trim_solution();
                     auto solution = solver.get_solution();

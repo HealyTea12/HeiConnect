@@ -15,6 +15,10 @@ find_library(GUROBI_LIBRARY
 
 
 if(CXX)
+    find_path(GUROBI_INCLUDE_DIRS_CXX
+        NAMES gurobi_c++.h
+        HINTS ${GUROBI_DIR} $ENV{GUROBI_HOME}
+        PATH_SUFFIXES include)
     if(MSVC)
         if(MSVC_TOOLSET_VERSION EQUAL 142)
             set(MSVC_YEAR "2019")
@@ -44,10 +48,12 @@ endif()
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(GUROBI DEFAULT_MSG GUROBI_LIBRARY GUROBI_CXX_LIBRARY GUROBI_INCLUDE_DIRS)
+message(STATUS "Found GUROBI: ${GUROBI_LIBRARY} ${GUROBI_CXX_LIBRARY}")
+message(STATUS "Found GUROBI include dirs: ${GUROBI_INCLUDE_DIRS} ${GUROBI_INCLUDE_DIRS_CXX}")
 
 if (GUROBI_FOUND)
     add_library(gurobi STATIC IMPORTED)
     set_target_properties(gurobi PROPERTIES IMPORTED_LOCATION ${GUROBI_CXX_LIBRARY})
     target_link_libraries(gurobi INTERFACE ${GUROBI_LIBRARY})
-    target_include_directories(gurobi INTERFACE ${GUROBI_INCLUDE_DIRS})
+    target_include_directories(gurobi INTERFACE ${GUROBI_INCLUDE_DIRS} ${GUROBI_INCLUDE_DIRS_CXX})
 endif()

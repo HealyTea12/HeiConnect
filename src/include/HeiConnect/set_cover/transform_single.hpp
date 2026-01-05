@@ -437,6 +437,7 @@ SetCover construct_set_cover_csr_ull( // with ull min_cuts
     return SetCover{std::move(a), std::move(b), std::move(link_weights), n_min_cuts};
 }
 
+// haven't bothered making a char version of this one since ull is faster
 template <class node_T, class edge_T>
     requires std::integral<node_T> && std::integral<edge_T>
 SetCoverBit construct_set_cover_bit_matrix_ull(
@@ -469,7 +470,7 @@ SetCoverBit construct_set_cover_bit_matrix_ull(
             current_link_idx++;
         }
     }
-    return SetCoverBit{std::move(set_cover), N_ROWS, N_COLS, std::move(link_weights)};
+    return SetCoverBit{std::move(set_cover), N_ROWS, n_min_cuts, std::move(link_weights)};
 }
 
 template <class node_T, class edge_T>

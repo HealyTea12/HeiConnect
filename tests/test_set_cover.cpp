@@ -28,7 +28,7 @@ TEST(SetCoverTest, SetCoverBasic)
     std::vector<double> costs = {3.0, 2.0, 4.0};
     SetCover sc{a, b, costs, 4};
 
-    SetCoverSolverGreedyParallel solver(sc);
+    SetCoverSolverGreedyParallel<SetCover> solver(sc);
     solver.solve();
     auto solution = solver.get_solution();
 
