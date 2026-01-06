@@ -19,6 +19,7 @@ enum class Algorithms
     SetCoverGreedySingleThreadedPQ,
     SetCoverGreedySingleThreadedPQBit,
     SetCoverSharpGreedy,
+    SetCoverGreedyCheapest,
     SetCoverILP,
     DirectGreedy,
     GWC,
@@ -26,10 +27,11 @@ enum class Algorithms
     DirectILP
 };
 
-std::array<std::string, 8> algorithm_names = {
+std::array<std::string, 9> algorithm_names = {
     "SetCoverGreedySingleThreadedPQ",
     "SetCoverGreedySingleThreadedPQBit",
     "SetCoverSharpGreedy",
+    "SetCoverGreedyCheapest",
     "SetCoverILP",
     "DirectGreedy",
     "GWC",
@@ -104,6 +106,32 @@ void experiment(std::filesystem::path graph_dir, std::filesystem::path output_fi
                     solver.solve();
                     auto solution = solver.get_solution();
                     std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+                }
+            }
+            else if (algorithm == Algorithms::SetCoverGreedyCheapest)
+            {
+                WeightedCRFGraph<> graph = WeightedCRFGraph<>::read_from_file_graphML(file.path());
+                auto link_graph = graph.generate_links([](size_t u, size_t v)
+                                                       { return 1.0; });
+
+                {
+                    auto timer = Timer{
+                        file.path().filename().string(),
+                        output_file};
+                    auto sc = construct_set_cover(
+                        graph.graph.vertices,
+                        graph.graph.edges,
+                        graph.weights,
+                        link_graph.graph.vertices,
+                        link_graph.graph.edges,
+                        link_graph.weights);
+                    timer.add_checkpoint("Reduction");
+                    SetCoverSolverGreedyCheapest<SetCover> solver{std::move(sc)};
+                    solver.solve();
+                    auto solution = solver.get_solution();
+                    std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+                    solver.trim_solution();
+                    std::cout << "Trimmed solution cost: " << solver.get_solution_cost() << std::endl;
                 }
             }
 
@@ -217,6 +245,7 @@ void experiment(std::filesystem::path graph_dir, std::filesystem::path output_fi
                     std::cout << "Solution cost: " << solution_cost << std::endl;
                 };
             }
+            /*
             else if (algorithm == Algorithms::SetCoverSharpGreedy)
             {
                 WeightedCRFGraph<> graph = WeightedCRFGraph<>::read_from_file_graphML(file.path());
@@ -242,6 +271,7 @@ void experiment(std::filesystem::path graph_dir, std::filesystem::path output_fi
                     std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
                 }
             }
+            */
             std::cout << "----------------------------------------" << std::endl;
         }
         catch (const std::exception &e)

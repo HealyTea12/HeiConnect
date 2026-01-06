@@ -194,10 +194,10 @@ public:
     // Those whose elements are still covered by other sets in the solution.
     void trim_solution()
     {
+        using WeightType = decltype(set_cover.get_set_cost(0));
+        using SetType = decltype(set_cover.get_num_sets()); // should be defined in SetCoverType
         while (true)
         {
-            using WeightType = std::ranges::range_value_t<decltype(set_cover.costs)>;
-            using SetType = std::ranges::range_value_t<decltype(set_cover.a)>;
             WeightType current_removable_weight{0};
             SetType current_removable_set{0};
 
@@ -206,13 +206,13 @@ public:
                 bool can_remove = true;
                 for (auto j{set_cover.set_begin(set)}; j != set_cover.set_end(set); j++)
                 {
-                    if (m_covered_elements[*j] <= 1)
+                    if (m_covered_elements[*j] == 1)
                     {
                         can_remove = false;
                         break;
                     }
                 }
-                if (can_remove > current_removable_weight)
+                if (can_remove && set_cover.get_set_cost(set) > current_removable_weight)
                 {
                     current_removable_weight = set_cover.get_set_cost(set);
                     current_removable_set = set;
@@ -483,8 +483,16 @@ public:
     }
 };
 
+template <typename SetCoverType>
+concept ElementIterableCon = requires(SetCoverType t, size_t e) {
+    { t.element_begin(e) } -> std::input_iterator;
+    { t.element_end(e) } -> std::input_iterator;
+};
+
 // assumes that a represents the elements, and b the sets covering them
+// for this algorithm to work correctly, the represenation needs to be inverted, which is confusing
 template <typename SetCoverType = SetCover>
+    requires SetCoverCon<SetCoverType> && ElementIterableCon<SetCoverType>
 class SetCoverSolverSharpGreedy : public SetCoverSolver<SetCoverSolverSharpGreedy<SetCoverType>, SetCoverType>
 {
 public:
@@ -508,7 +516,8 @@ public:
                     continue;
                 auto cheapest_set_cost = std::numeric_limits<double>::max();
                 size_t cheapest_set = std::numeric_limits<size_t>::max();
-                for (auto i = set_cover.set_begin(e); i != set_cover.set_end(e); i++)
+                // iterate over all sets containing element e (needs to be implemented)
+                for (auto i = set_cover.element_begin(e); i != set_cover.element_end(e); i++)
                 {
                     auto set = *i;
                     if (set_cover.get_set_cost(set) < cheapest_set_cost)
@@ -525,6 +534,61 @@ public:
                 }
                 this->add_set(cheapest_set);
             }
+        }
+    }
+};
+
+template <typename SetCoverType = SetCover>
+class SetCoverSolverGreedyCheapest : public SetCoverSolver<SetCoverSolverGreedyCheapest<SetCoverType>, SetCoverType>
+{
+public:
+    using Base = SetCoverSolver<SetCoverSolverGreedyCheapest<SetCoverType>, SetCoverType>;
+    using Base::add_set;
+    using Base::m_chosen_sets;
+    using Base::m_covered_elements;
+    using Base::m_feasible;
+    using Base::m_solution;
+    using Base::m_total_covered_elements;
+    using Base::NUM_ELEMENTS;
+    using Base::remove_set;
+    using Base::set_cover;
+    using Base::SetCoverSolver;
+
+    void solve()
+    {
+        while (m_total_covered_elements < set_cover.get_num_elements() && m_solution.size() < set_cover.get_num_sets())
+        {
+            double min_set_cost = std::numeric_limits<double>::max();
+            size_t best_set = std::numeric_limits<size_t>::max();
+            for (size_t s{0}; s < set_cover.get_num_sets(); s++)
+            {
+                if (m_solution.find(s) != m_solution.end())
+                    continue;
+                // check if it covers something
+                bool covers_new = false;
+                for (auto e = set_cover.set_begin(s); e != set_cover.set_end(s); e++)
+                {
+                    if (m_covered_elements[*e] == 0)
+                    {
+                        covers_new = true;
+                        break;
+                    }
+                }
+                if (!covers_new)
+                    continue;
+                double set_cost = set_cover.get_set_cost(s);
+                if (set_cost < min_set_cost)
+                {
+                    min_set_cost = set_cost;
+                    best_set = s;
+                }
+            }
+            if (best_set == std::numeric_limits<size_t>::max())
+            {
+                m_feasible = false;
+                return;
+            }
+            add_set(best_set);
         }
     }
 };
