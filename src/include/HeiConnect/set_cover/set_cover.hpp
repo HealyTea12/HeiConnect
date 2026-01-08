@@ -174,8 +174,53 @@ struct SetCoverBit
 
 static_assert(SetCoverCon<SetCoverBit>);
 
+class SetCoverPseudo
+{
+public:
+    const std::vector<ull> min_cuts;
+    const ull n_min_cuts;
+    const std::vector<size_t> link_vertices;
+    const std::vector<size_t> link_edges;
+    const std::vector<double> link_weights;
+    const size_t n_cols;
+    SetCoverPseudo(
+        const std::vector<ull> min_cuts,
+        ull n_min_cuts,
+        const std::vector<size_t> link_vertices,
+        const std::vector<size_t> link_edges,
+        const std::vector<double> link_weights)
+        : min_cuts(std::move(min_cuts)),
+          n_min_cuts(n_min_cuts),
+          link_vertices(std::move(link_vertices)),
+          link_edges(std::move(link_edges)),
+          link_weights(std::move(link_weights)),
+          n_cols(min_cuts.size() / (link_vertices.size() - 1)) {};
+    size_t get_num_sets() const noexcept
+    {
+        return link_weights.size();
+    }
+    size_t get_num_elements() const noexcept
+    {
+        return n_min_cuts;
+    }
+    double get_set_cost(size_t set_index) const
+    {
+        return link_weights[set_index];
+    }
+    BitSetIterator set_begin(size_t set_index)
+    {
+        throw std::logic_error("SetCoverPseudo does not fully implement interface yet.");
+    };
+    BitSetIterator set_end(size_t set_index)
+    {
+        throw std::logic_error("SetCoverPseudo does not fully implement interface yet.");
+    }
+};
+
+static_assert(SetCoverCon<SetCoverPseudo>);
+
 template <typename Derived, typename SetCoverType = SetCover>
-    requires(std::same_as<SetCoverType, SetCover> || std::same_as<SetCoverType, SetCoverBit>)
+    requires(SetCoverCon<SetCoverType>)
 class SetCoverSolver
 {
 public:
@@ -479,6 +524,113 @@ public:
             }
             m_total_covered_elements += covered;
             m_solution.insert(best_set_idx);
+        }
+    }
+};
+
+// Partial specialization for SetCoverPseudo
+template <>
+class SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo>
+    : public SetCoverSolver<SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo>, SetCoverPseudo>
+{
+public:
+    using Base = SetCoverSolver<SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo>, SetCoverPseudo>;
+    using Base::add_set;
+    using Base::m_covered_elements;
+    using Base::m_total_covered_elements;
+    using Base::NUM_ELEMENTS;
+    using Base::remove_set;
+    using Base::set_cover;
+    using Base::SetCoverSolver;
+    // std::unordered_set<std::pair<size_t, size_t>> m_solution{};
+
+    size_t cover_count(ull u, ull v, const std::vector<ull> &covered_elements)
+    {
+        const ull *u_data = &set_cover.min_cuts[u * set_cover.n_cols];
+        const ull *v_data = &set_cover.min_cuts[v * set_cover.n_cols];
+        size_t n_covered_cuts = 0;
+#ifdef __AVX512VPOPCNTDQ__
+        for (size_t k{0}; k + 7 < set_cover.n_cols; k += 8)
+        {
+            __m512i vec_u = _mm512_loadu_si512(u_data + k);
+            __m512i vec_v = _mm512_loadu_si512(v_data + k);
+            __m512i vec_covered = _mm512_loadu_si512(&covered_elements[k]);
+            __m512i vec_covered_cuts = _mm512_xor_si512(vec_u, vec_v);
+            __m512i vec_new_bits = _mm512_andnot_si512(vec_covered, vec_covered_cuts);
+            __m512i vec_popcnt = _mm512_popcnt_epi64(vec_new_bits);
+            n_covered_cuts += _mm512_reduce_add_epi64(vec_popcnt);
+        }
+        for (size_t k = (set_cover.n_cols / 8) * 8; k < set_cover.n_cols; k++)
+        {
+            ull covered_cuts = u_data[k] ^ v_data[k];
+            n_covered_cuts += std::popcount(covered_cuts & ~covered_elements[k]);
+        }
+#elif __AVX2__
+        for (size_t k{0}; k + 3 < set_cover.n_cols; k += 4)
+        {
+            __m256i u_vec = _mm256_loadu_si256((__m256i *)(u_data + k));
+            __m256i v_vec = _mm256_loadu_si256((__m256i *)(v_data + k));
+            __m256i covered_vec = _mm256_loadu_si256((__m256i *)(&covered_elements[k]));
+            __m256i covered_cuts = _mm256_xor_si256(u_vec, v_vec);
+            __m256i new_bits = _mm256_andnot_si256(covered_vec, covered_cuts);
+            n_covered_cuts += std::popcount(((ull *)&new_bits)[0]);
+            n_covered_cuts += std::popcount(((ull *)&new_bits)[1]);
+            n_covered_cuts += std::popcount(((ull *)&new_bits)[2]);
+            n_covered_cuts += std::popcount(((ull *)&new_bits)[3]);
+        }
+        for (size_t k = (set_cover.n_cols / 4) * 4; k < set_cover.n_cols; k++)
+        {
+            ull covered_cuts = u_data[k] ^ v_data[k];
+            n_covered_cuts += std::popcount(covered_cuts & ~covered_elements[k]);
+        }
+#else
+        for (size_t k{0}; k < set_cover.n_cols; k++)
+        {
+            ull covered_cuts = u_data[k] ^ v_data[k];
+            n_covered_cuts += std::popcount(covered_cuts & ~covered_elements[k]);
+        }
+#endif
+        return n_covered_cuts;
+    }
+
+    // we should reuse this code and avoid copying it
+    void solve()
+    {
+        std::priority_queue<std::pair<double, std::tuple<size_t, size_t, size_t>>> pq;
+        std::vector<ull> covered_elements = std::vector<ull>(set_cover.n_cols, 0);
+        covered_elements[set_cover.n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover.get_num_elements() % (8 * sizeof(ull)));
+        for (size_t u{0}; u < set_cover.link_vertices.size() - 1; u++)
+        {
+            for (size_t e{set_cover.link_vertices[u]}; e < set_cover.link_vertices[u + 1]; e++)
+            {
+                ull v = set_cover.link_edges[e];
+                size_t covered = cover_count(u, v, covered_elements);
+                double cost_benefit_ratio = static_cast<double>(covered) / set_cover.get_set_cost(e);
+                pq.push({cost_benefit_ratio, {u, v, e}});
+            }
+        }
+        // stop when all elements are covered or we've chosen all available sets while (m_total_covered_elements < NUM_ELEMENTS && m_solution.size() != set_cover.a.size() - 1)
+        while (m_total_covered_elements < set_cover.get_num_elements() && m_solution.size() != set_cover.get_num_sets())
+        {
+            auto best_set = pq.top();
+            pq.pop();
+            // check if ratio has changed
+            auto best_set_idx = best_set.second;
+            size_t covered = cover_count(std::get<0>(best_set_idx), std::get<1>(best_set_idx), covered_elements);
+            double ratio = static_cast<double>(covered) / set_cover.get_set_cost(std::get<2>(best_set_idx));
+            // if changed that put back in and try again
+            if (ratio < best_set.first)
+            {
+                pq.push({ratio, best_set_idx});
+                continue;
+            }
+            // otherwise add the set to the solution
+            for (size_t k{0}; k < set_cover.n_cols; k++)
+            {
+                covered_elements[k] |= set_cover.min_cuts[std::get<0>(best_set_idx) * set_cover.n_cols + k] ^ set_cover.min_cuts[std::get<1>(best_set_idx) * set_cover.n_cols + k];
+            }
+            m_total_covered_elements += covered;
+            m_solution.insert(std::get<2>(best_set_idx));
         }
     }
 };

@@ -875,6 +875,26 @@ SetCoverBit construct_set_cover_bit_matrix(
     return set_cover;
 }
 
+// Constructs "set cover" by only calculating the min cut partitions into a matrix
+template <typename node_T, typename edge_T>
+    requires std::integral<node_T> && std::integral<edge_T>
+SetCoverPseudo construct_set_cover_pseudo(
+    const std::vector<edge_T> &vertices,
+    const std::vector<node_T> &edges,
+    const std::vector<double> &weights,
+    const std::vector<size_t> &link_vertices,
+    const std::vector<size_t> &link_edges,
+    const std::vector<double> &link_weights)
+{
+    auto [min_cuts, n_min_cuts] = generate_min_cut_matrix(
+        vertices,
+        edges,
+        weights,
+        link_vertices,
+        link_edges,
+        link_weights);
+    return SetCoverPseudo{min_cuts, n_min_cuts, link_vertices, link_edges, link_weights};
+}
 // template <typename node_T, typename edge_T>
 //     requires std::integral<node_T> && std::integral<edge_T>
 // SetCover construct_set_cover1(

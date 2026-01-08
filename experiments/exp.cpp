@@ -18,6 +18,7 @@ enum class Algorithms
 {
     SetCoverGreedySingleThreadedPQ,
     SetCoverGreedySingleThreadedPQBit,
+    SetCoverGreedySingleThreadedPQPseudo,
     SetCoverSharpGreedy,
     SetCoverGreedyCheapest,
     SetCoverILP,
@@ -27,9 +28,10 @@ enum class Algorithms
     DirectILP
 };
 
-std::array<std::string, 9> algorithm_names = {
+std::array<std::string, 10> algorithm_names = {
     "SetCoverGreedySingleThreadedPQ",
     "SetCoverGreedySingleThreadedPQBit",
+    "SetCoverGreedySingleThreadedPQPseudo",
     "SetCoverSharpGreedy",
     "SetCoverGreedyCheapest",
     "SetCoverILP",
@@ -103,6 +105,30 @@ void experiment(std::filesystem::path graph_dir, std::filesystem::path output_fi
                         link_graph.weights);
                     timer.add_checkpoint("Reduction");
                     SetCoverSolverGreedySingleThreadedPQ<SetCoverBit> solver{std::move(sc)};
+                    solver.solve();
+                    auto solution = solver.get_solution();
+                    std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+                }
+            }
+            else if (algorithm == Algorithms::SetCoverGreedySingleThreadedPQPseudo)
+            {
+                WeightedCRFGraph<> graph = WeightedCRFGraph<>::read_from_file_graphML(file.path());
+                auto link_graph = graph.generate_links([](size_t u, size_t v)
+                                                       { return 1.0; });
+
+                {
+                    auto timer = Timer{
+                        file.path().filename().string(),
+                        output_file};
+                    auto sc = construct_set_cover_pseudo(
+                        graph.graph.vertices,
+                        graph.graph.edges,
+                        graph.weights,
+                        link_graph.graph.vertices,
+                        link_graph.graph.edges,
+                        link_graph.weights);
+                    timer.add_checkpoint("Reduction");
+                    SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo> solver{std::move(sc)};
                     solver.solve();
                     auto solution = solver.get_solution();
                     std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
