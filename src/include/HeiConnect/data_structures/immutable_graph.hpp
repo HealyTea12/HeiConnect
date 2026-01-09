@@ -27,6 +27,15 @@ struct WeightedCRFGraph
     std::vector<WeightType> weights;
 
 public:
+    bool is_edge(NodeID u, NodeID v) const
+    {
+        for (EdgeID e{graph.vertices[u]}; e < graph.vertices[u + 1]; ++e)
+        {
+            if (graph.edges[e] == v)
+                return true;
+        }
+        return false;
+    }
     WeightedCRFGraph make_bidirectional() const
     {
         auto new_vertices = std::vector<size_t>(graph.vertices.size(), 0);

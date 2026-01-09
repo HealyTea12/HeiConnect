@@ -4,7 +4,43 @@
 
 namespace po = boost::program_options;
 
-void write_cycle_graphs(std::filesystem::path graph_dir, size_t start, size_t stop, size_t step)
+using ull = unsigned long long;
+
+static void write_links(std::filesystem::path filename,
+                        std::vector<std::tuple<ull, ull, double>> &links)
+{
+    std::ofstream file{filename};
+    for (const auto &[u, v, w] : links)
+    {
+        file << u << " " << v << " " << w << "\n";
+    }
+}
+
+static std::vector<std::tuple<ull, ull, double>> create_links_undirected(
+    const WeightedCRFGraph<> &graph,
+    std::function<double(ull, ull, const WeightedCRFGraph<> &)> weight_function)
+{
+    std::vector<std::tuple<ull, ull, double>> links{};
+    for (ull u = 0; u < graph.graph.vertices.size() - 1; ++u)
+    {
+        for (ull v = 0; v < graph.graph.vertices.size() - 1; ++v)
+        {
+            // better not to keep assumptions about the graph being undirected when not necessary, this part of
+            // the code is not performance critical
+            bool edge_in_graph = graph.is_edge(u, v) || graph.is_edge(v, u);
+            if (u < v && !edge_in_graph)
+            {
+                double weight = weight_function(u, v, graph);
+                assert(weight > 0);
+                links.emplace_back(u, v, weight);
+            }
+        }
+    }
+    return links;
+}
+
+static void write_cycle_graphs(std::filesystem::path graph_dir, size_t start, size_t stop, size_t step,
+                               std::function<double(ull, ull, const WeightedCRFGraph<> &)> weight_function)
 {
     auto a = 0;
     std::vector<size_t> cycle_sizes = {};
@@ -20,10 +56,13 @@ void write_cycle_graphs(std::filesystem::path graph_dir, size_t start, size_t st
         }
         cycle_graph.write_to_file_graphML(graph_dir / ("cycle_" + std::to_string(n_nodes) + ".xml"), map_to_original_graph);
         cycle_graph.write_to_file_metis(graph_dir / ("cycle_" + std::to_string(n_nodes) + ".graph"));
+        auto links = create_links_undirected(cycle_graph, weight_function);
+        write_links(graph_dir / ("cycle_" + std::to_string(n_nodes) + ".links"), links);
     }
 }
 
-void write_star_graphs(std::filesystem::path graph_dir, size_t start, size_t stop, size_t step)
+static void write_star_graphs(std::filesystem::path graph_dir, size_t start, size_t stop, size_t step,
+                              std::function<double(ull, ull, const WeightedCRFGraph<> &)> weight_function)
 {
     std::vector<size_t> star_sizes = {};
     for (size_t n = start; n <= stop; n += step)
@@ -38,26 +77,70 @@ void write_star_graphs(std::filesystem::path graph_dir, size_t start, size_t sto
         }
         star_graph.write_to_file_graphML(graph_dir / ("star_" + std::to_string(n_leaves) + ".xml"), map_to_original_graph);
         star_graph.write_to_file_metis(graph_dir / ("star_" + std::to_string(n_leaves) + ".graph"));
+        auto links = create_links_undirected(star_graph, weight_function);
+        write_links(graph_dir / ("star_" + std::to_string(n_leaves) + ".links"), links);
     }
 }
+
+static std::array<std::string, 2> graph_types = {
+    "cycle",
+    "star"};
+static std::array<std::string, 3> link_distributions = {
+    "none",
+    "constant",
+    "uniform",
+};
 
 int main(int argc, char **argv)
 {
     po::options_description desc("Options");
-    desc.add_options()("help", "help message")("output_dir,o", po::value<std::string>())("start,s", po::value<size_t>(), "start")("stop", po::value<size_t>(), "stop")("step", po::value<size_t>(), "step")("graph_type,g", po::value<std::string>()->default_value("cycle"), "graph type: cycle or star");
+    desc.add_options()("help", "help message")                                                          // This comments are for keeping the editor from putting everything in one line
+        ("output_dir,o", po::value<std::string>())                                                      //
+        ("start,s", po::value<size_t>(), "start")                                                       //
+        ("stop", po::value<size_t>(), "stop")                                                           //
+        ("step", po::value<size_t>(), "step")                                                           //
+        ("graph_type,g", po::value<std::string>()->default_value("cycle"), "graph type: cycle or star") //
+        ("link_distribution,l", po::value<std::string>()->default_value("none"));
+
+    // constant ld
+    desc.add_options()("constant_weight,c", po::value<double>()->default_value(1.0), "constant link weight (only for constant link distribution)");
+    // uniform ld
+    desc.add_options()("uniform_min_weight", po::value<double>()->default_value(0.0), "minimum uniform link weight (only for uniform link distribution)");
+    desc.add_options()("uniform_max_weight", po::value<double>()->default_value(1.0), "maximum uniform link weight (only for uniform link distribution)");
 
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
     po::notify(vm);
-    if (vm.count("help") || !vm.count("output_dir") || !vm.count("start") || !vm.count("stop") || !vm.count("step"))
+    if (vm.count("help") ||
+        !vm.count("output_dir") ||
+        !vm.count("start") ||
+        !vm.count("stop") ||
+        !vm.count("step"))
     {
         std::cout << desc << std::endl;
         return 1;
     }
+    std::string_view ld{vm["link_distribution"].as<std::string>()};
+    if (std::find(link_distributions.begin(), link_distributions.end(), ld) == link_distributions.end())
+    {
+        std::cerr << "Invalid link distribution: " << ld << ".\n Must be";
+        for (const auto &dist : link_distributions)
+        {
+            std::cerr << " '" << dist << "'";
+        }
+        std::cerr << std::endl;
+        return 1;
+    }
+
     auto graph_type = vm["graph_type"].as<std::string>();
     if (graph_type != "cycle" && graph_type != "star")
     {
-        std::cerr << "Invalid graph type: " << graph_type << ". Must be 'cycle' or 'star'." << std::endl;
+        std::cerr << "Invalid link distribution: " << ld << ".\n Must be";
+        for (const auto &gt : graph_types)
+        {
+            std::cerr << " '" << gt << "'";
+        }
+        std::cerr << std::endl;
         return 1;
     }
     std::cout << "Output dir: " << vm["output_dir"].as<std::string>() << "\n";
@@ -71,15 +154,52 @@ int main(int argc, char **argv)
         std::cerr << "Error creating output directory: " << e.what() << std::endl;
         return 1;
     }
+    std::function<double(ull, ull, const WeightedCRFGraph<> &)> weight_function;
+    if (ld == "none")
+    {
+        // very misleading i know
+        weight_function = [](ull u, ull v, const WeightedCRFGraph<> &graph)
+        {
+            return 1.0;
+        };
+    }
+    else if (ld == "constant")
+    {
+        double constant_weight = vm["constant_weight"].as<double>();
+        weight_function = [constant_weight](ull u, ull v, const WeightedCRFGraph<> &graph)
+        {
+            return constant_weight;
+        };
+    }
+    else if (ld == "uniform")
+    {
+        double min_weight = vm["uniform_min_weight"].as<double>();
+        double max_weight = vm["uniform_max_weight"].as<double>();
+        if (min_weight >= max_weight)
+        {
+            throw po::invalid_option_value("uniform_min_weight must be less than uniform_max_weight");
+        }
+        if (min_weight < 0.0 || max_weight <= 0.0)
+        {
+            throw po::invalid_option_value("uniform link weights must be positive");
+        }
+        // Capture by value or use shared_ptr to avoid dangling references
+        auto mt = std::make_shared<std::mt19937>(42);
+        auto dist = std::make_shared<std::uniform_real_distribution<double>>(min_weight + 1e-6, max_weight);
+        weight_function = [mt, dist](ull u, ull v, const WeightedCRFGraph<> &graph) mutable
+        {
+            return (*dist)(*mt);
+        };
+    }
     size_t start = vm["start"].as<size_t>();
     size_t stop = vm["stop"].as<size_t>();
     size_t step = vm["step"].as<size_t>();
     if (graph_type == "cycle")
     {
-        write_cycle_graphs(graph_dir, start, stop, step);
+        write_cycle_graphs(graph_dir, start, stop, step, weight_function);
     }
     else if (graph_type == "star")
     {
-        write_star_graphs(graph_dir, start, stop, step);
+        write_star_graphs(graph_dir, start, stop, step, weight_function);
     }
 }

@@ -2,6 +2,9 @@
 #include <filesystem>
 #include <numeric>
 
+#include <sys/wait.h>
+#include <sys/resource.h>
+
 #include "boost/program_options.hpp"
 
 #include "HeiConnect/graph.hpp"
@@ -13,6 +16,43 @@
 #include "HeiConnect/data_structures/graph_utils.hpp"
 #include "HeiConnect/ilp.hpp"
 #include "dataset_manager.hpp"
+
+// could make this into RAII wrapper
+template <class ChildFn>
+static long run_isolated_and_measure_memeory_usage(ChildFn child_function)
+{
+    pid_t pid = fork();
+    if (pid == -1)
+    {
+        throw std::runtime_error("Failed to fork process...");
+    }
+    else if (pid == 0)
+    {
+        try
+        {
+            // Child process
+            child_function();
+            std::exit(0);
+        }
+        catch (std::exception &e)
+        {
+            std::exit(1);
+        }
+    }
+    else
+    {
+        // Parent process: pid is id of child process
+        int status;
+        struct rusage rusage{};
+        pid_t wpid = wait4(pid, &status, 0, &rusage);
+
+        const long page_size = sysconf(_SC_PAGESIZE); // bytes
+        const long peak_kb = rusage.ru_maxrss;        // kilobytes
+        const long peak_bytes = peak_kb * 1024L;
+        const long peak_pages = (peak_bytes + page_size - 1) / page_size;
+        return peak_pages;
+    }
+}
 
 enum class Algorithms
 {
@@ -117,21 +157,28 @@ void experiment(std::filesystem::path graph_dir, std::filesystem::path output_fi
                                                        { return 1.0; });
 
                 {
-                    auto timer = Timer{
-                        file.path().filename().string(),
-                        output_file};
-                    auto sc = construct_set_cover_pseudo(
-                        graph.graph.vertices,
-                        graph.graph.edges,
-                        graph.weights,
-                        link_graph.graph.vertices,
-                        link_graph.graph.edges,
-                        link_graph.weights);
-                    timer.add_checkpoint("Reduction");
-                    SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo> solver{std::move(sc)};
-                    solver.solve();
-                    auto solution = solver.get_solution();
-                    std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+                    auto memeory_usage_pages = run_isolated_and_measure_memeory_usage([&]()
+                                                                                      {
+                        auto timer = Timer{
+                            file.path().filename().string(),
+                            output_file};
+                        auto sc = construct_set_cover_pseudo(
+                            graph.graph.vertices,
+                            graph.graph.edges,
+                            graph.weights,
+                            link_graph.graph.vertices,
+                            link_graph.graph.edges,
+                            link_graph.weights);
+                        timer.add_checkpoint("Reduction");
+                        SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo> solver{std::move(sc)};
+                        solver.solve();
+                        auto solution = solver.get_solution();
+                        std::ofstream ofs{output_file.string(), std::ios::app};
+                        std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+                        ofs << "Solution cost: " << solver.get_solution_cost() << std::endl; });
+                    std::cout << "Peak memory usage (pages): " << memeory_usage_pages << std::endl;
+                    std::ofstream ofs{output_file.string(), std::ios::app};
+                    ofs << "Peak memory usage (pages): " << memeory_usage_pages << std::endl;
                 }
             }
             else if (algorithm == Algorithms::SetCoverGreedyCheapest)
@@ -317,7 +364,11 @@ int main(int argc, char **argv)
         available_algorihtms_to_use << name << ";\n";
     }
     po::options_description desc("Options");
-    desc.add_options()("help", "help message")("output_file,o", po::value<std::string>())("algorithm,a", po::value<std::string>(), available_algorihtms_to_use.str().c_str())("input_dir,i", po::value<std::string>(), "input graphp directory (recursive scan for .graph and .xml files)");
+    desc.add_options()                                                                       //
+        ("help", "help message")                                                             //                                          //
+        ("output_file,o", po::value<std::string>())                                          //
+        ("algorithm,a", po::value<std::string>(), available_algorihtms_to_use.str().c_str()) //
+        ("input_dir,i", po::value<std::string>(), "input graphp directory (recursive scan for .graph and .xml files)");
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
     po::notify(vm);
