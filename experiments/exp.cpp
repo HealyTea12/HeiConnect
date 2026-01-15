@@ -21,11 +21,12 @@ void run_experiment(const std::filesystem::path &graph_dir,
         std::cout << "Processing graph: " << file.path() << std::endl;
         try
         {
-            std::ofstream ofs{output_file.string(), std::ios::app};
             auto memory_usage = run_isolated_and_measure_memory_usage([&]()
-                                                                      { runner->run(file.path());
-                                                                        runner->print_results(std::cout);
-                                                                        runner->print_results(ofs); });
+                                                                      { 
+                runner->run(file.path());
+                std::ofstream ofs{output_file.string(), std::ios::app};
+                runner->print_results(std::cout);
+                runner->print_results(ofs); });
             log_to_file_and_stdout("Peak memory usage (pages): " + std::to_string(memory_usage), output_file);
             log_separator(output_file);
         }
