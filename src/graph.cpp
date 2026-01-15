@@ -326,6 +326,7 @@ namespace graph
     std::ifstream file{link_file};
     int u, v;
     double weight;
+    file >> u >> v >> weight; // skip header
     while ((file >> u >> v >> weight))
     {
       int cactus_u = cactus_id(u), cactus_v = cactus_id(v);

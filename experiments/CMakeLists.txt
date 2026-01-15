@@ -13,6 +13,7 @@ add_executable(experiments)
 target_sources(experiments
 PRIVATE
     exp.cpp
+    algorithm_implementations.cpp
 )
 target_link_libraries(experiments
 PRIVATE

@@ -335,6 +335,40 @@ public:
         doc.save_file(path.c_str());
     }
 
+    // Read graph from simple link file format: first line contains n m wf
+    // followed by m lines of u v w representing an edge between u and v with weight
+    static inline WeightedCRFGraph<> read_from_file_links(const std::filesystem::path &link_file)
+    {
+        std::ifstream file{link_file};
+        size_t n, m, wf;
+        file >> n >> m >> wf;
+        std::vector<size_t> vertices(n + 1, 0);
+        std::vector<size_t> edges;
+        std::vector<double> weights;
+        size_t u;
+        size_t v;
+        double w;
+        auto adj_list = std::vector<std::vector<std::pair<size_t, double>>>(n);
+        for (size_t i = 0; i < m; ++i)
+        {
+            file >> u >> v >> w;
+            --u;
+            --v;
+            adj_list[u].emplace_back(v, w);
+            adj_list[v].emplace_back(u, w);
+        }
+        for (size_t i = 0; i < n; ++i)
+        {
+            for (const auto &[neighbor, weight] : adj_list[i])
+            {
+                edges.emplace_back(neighbor);
+                weights.emplace_back(weight);
+            }
+            vertices[i + 1] = edges.size();
+        }
+        return {{vertices, edges}, weights};
+    }
+
     /// Generate a graph consisting of all non-existing edges in the input graph.
     /// The weights of the new edges are determined by the provided edge_weight function.
     /// @param graph

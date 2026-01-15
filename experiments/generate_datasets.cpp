@@ -9,13 +9,24 @@ using ull = unsigned long long;
 static void write_links(std::filesystem::path filename,
                         std::vector<std::tuple<ull, ull, double>> &links)
 {
+    ull max_node = 0;
+    for (size_t i{0}; i < links.size(); ++i)
+    {
+        auto [u, v, w] = links[i];
+        if (u > max_node)
+            max_node = u;
+        if (v > max_node)
+            max_node = v;
+    }
     std::ofstream file{filename};
+    file << max_node + 1 << " " << links.size() << " " << "1" << "\n";
     for (const auto &[u, v, w] : links)
     {
-        file << u << " " << v << " " << w << "\n";
+        file << u + 1 << " " << v + 1 << " " << w << "\n";
     }
 }
 
+// writes only in one direction for undirected graphs
 static std::vector<std::tuple<ull, ull, double>> create_links_undirected(
     const WeightedCRFGraph<> &graph,
     std::function<double(ull, ull, const WeightedCRFGraph<> &)> weight_function)
