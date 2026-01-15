@@ -355,7 +355,6 @@ public:
             --u;
             --v;
             adj_list[u].emplace_back(v, w);
-            adj_list[v].emplace_back(u, w);
         }
         for (size_t i = 0; i < n; ++i)
         {
