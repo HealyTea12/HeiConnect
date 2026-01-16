@@ -91,6 +91,7 @@ class SetCoverGreedyCheapestRunner : public AlgorithmRunner
         size_t solution_size_trimmed;
         double time_reduction;
         double time_solving;
+        double time_trimming;
         double time_total;
     } result;
 
@@ -104,6 +105,34 @@ public:
         os << "Solution size (trimmed): " << result.solution_size_trimmed << "\n";
         os << "Time reduction: " << result.time_reduction << "s\n";
         os << "Time solving: " << result.time_solving << "s\n";
+        os << "Time trimming: " << result.time_trimming << "s\n";
+        os << "Time total: " << result.time_total << "s\n";
+    }
+};
+
+class SetCoverPseudoGreedyCheapestRunner : public AlgorithmRunner
+{
+    struct Result
+    {
+        double solution_cost;
+        size_t solution_size;
+        double solution_cost_trimmed;
+        size_t solution_size_trimmed;
+        double time_reduction;
+        double time_solving;
+        double time_trimming;
+        double time_total;
+    } result;
+    void run(const std::filesystem::path &graph_file) override;
+    void print_results(std::ostream &os) override
+    {
+        os << "Solution cost: " << result.solution_cost << "\n";
+        os << "Solution size: " << result.solution_size << "\n";
+        os << "Solution cost (trimmed): " << result.solution_cost_trimmed << "\n";
+        os << "Solution size (trimmed): " << result.solution_size_trimmed << "\n";
+        os << "Time reduction: " << result.time_reduction << "s\n";
+        os << "Time solving: " << result.time_solving << "s\n";
+        os << "Time trimming: " << result.time_trimming << "s\n";
         os << "Time total: " << result.time_total << "s\n";
     }
 };

@@ -6,6 +6,7 @@
 #include <bit>
 #include <queue>
 #include <algorithm>
+#include <numeric>
 #include <immintrin.h>
 
 #include <gurobi_c++.h>
@@ -741,6 +742,157 @@ public:
                 return;
             }
             add_set(best_set);
+        }
+    }
+};
+
+// Partial specialization for GreedyCheapest with SetCoverPseudo
+template <>
+class SetCoverSolverGreedyCheapest<SetCoverPseudo>
+    : public SetCoverSolver<SetCoverSolverGreedyCheapest<SetCoverPseudo>, SetCoverPseudo>
+{
+public:
+    using Base = SetCoverSolver<SetCoverSolverGreedyCheapest<SetCoverPseudo>, SetCoverPseudo>;
+    using Base::add_set;
+    using Base::m_chosen_sets;
+    using Base::m_feasible;
+    using Base::m_solution;
+    using Base::m_total_covered_elements;
+    using Base::NUM_ELEMENTS;
+    using Base::remove_set;
+    using Base::set_cover;
+    using Base::SetCoverSolver;
+
+    std::vector<std::tuple<ull, ull, double>> m_links;
+    std::vector<ull> m_covered_elements;
+
+    void add_set(std::vector<ull> &covered_els, ull u, ull v)
+    {
+        for (size_t k{0}; k < set_cover.n_cols; k++)
+        {
+            covered_els[k] |= set_cover.min_cuts[u * set_cover.n_cols + k] ^
+                              set_cover.min_cuts[v * set_cover.n_cols + k];
+        }
+    }
+
+    bool check_solved(std::vector<ull> &covered_els)
+    {
+        for (size_t k{0}; k < set_cover.n_cols; k++)
+        {
+            if (covered_els[k] != 0xFFFFFFFFFFFFFFFFULL)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // will probably get rid of this and construct directly the link
+    // graph as a vector of links.
+    std::vector<std::tuple<ull, ull, double>> csr_to_vec_links()
+    {
+        std::vector<std::tuple<ull, ull, double>> links = std::vector<std::tuple<ull, ull, double>>(set_cover.link_weights.size());
+        for (size_t u{0}; u < set_cover.link_vertices.size() - 1; u++)
+        {
+            for (size_t e{set_cover.link_vertices[u]}; e < set_cover.link_vertices[u + 1]; e++)
+            {
+                ull v = set_cover.link_edges[e];
+                double w = set_cover.link_weights[e];
+                links[e] = {u, v, w};
+            }
+        }
+        return links;
+    }
+
+    void solve()
+    {
+        double start = omp_get_wtime();
+        m_links = csr_to_vec_links();
+        double end = omp_get_wtime();
+        std::cout << "Converted CSR to vector of links in " << end - start << " seconds." << std::endl;
+        m_covered_elements = std::vector<ull>(set_cover.n_cols, 0);
+        m_covered_elements[set_cover.n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover.get_num_elements() % (8 * sizeof(ull)));
+        std::vector<size_t> set_indices = std::vector<size_t>(set_cover.get_num_sets());
+        std::iota(set_indices.begin(), set_indices.end(), 0);
+        std::sort(set_indices.begin(), set_indices.end(), [&](size_t a, size_t b)
+                  { return set_cover.get_set_cost(a) < set_cover.get_set_cost(b); });
+        bool solved = false;
+        size_t i = 0;
+        while (!solved && m_solution.size() < set_cover.get_num_sets())
+        {
+            auto [u, v, w] = m_links[set_indices[i]];
+            add_set(m_covered_elements, u, v);
+            solved = check_solved(m_covered_elements);
+            m_solution.insert(set_indices[i]);
+            i++;
+        }
+    }
+
+    bool can_remove(size_t set_index)
+    {
+        auto [u, v, w] = m_links[set_index];
+        /*
+        // TODO: avoid this reallocation
+        std::vector<ull> covered_elements = std::vector<ull>(set_cover.n_cols, 0);
+        covered_elements[set_cover.n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover.get_num_elements() % (8 * sizeof(ull)));
+        // cover all sets except the current one
+        for (const auto &other_set_index : m_solution)
+        {
+            if (other_set_index == set_index)
+                continue;
+            auto [ou, ov, ow] = m_links[other_set_index];
+            for (size_t k{0}; k < set_cover.n_cols; k++)
+            {
+                covered_elements[k] |= set_cover.min_cuts[ou * set_cover.n_cols + k] ^
+                                       set_cover.min_cuts[ov * set_cover.n_cols + k];
+            }
+        }
+        // check if all cuts are still covered
+        bool can_remove = true;
+        for (size_t k{0}; k < set_cover.n_cols; k++)
+        {
+            if (covered_elements[k] != 0xFFFFFFFFFFFFFFFFULL)
+            {
+                can_remove = false;
+                break;
+            }
+        }
+        return can_remove;
+        */
+        for (size_t k{0}; k < set_cover.n_cols; k++)
+        {
+            ull set_coverage = set_cover.min_cuts[u * set_cover.n_cols + k] ^
+                               set_cover.min_cuts[v * set_cover.n_cols + k];
+            for (const auto &other_set_index : m_solution)
+            {
+                if (other_set_index == set_index)
+                    continue;
+                auto [ou, ov, ow] = m_links[other_set_index];
+                set_coverage &= ~(set_cover.min_cuts[ou * set_cover.n_cols + k] ^
+                                  set_cover.min_cuts[ov * set_cover.n_cols + k]);
+                if (set_coverage == 0)
+                    break;
+            }
+            if (set_coverage != 0)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void trim_solution()
+    {
+        // sort solution by decreasing cost
+        std::vector<size_t> solution_vec(m_solution.begin(), m_solution.end());
+        std::sort(solution_vec.begin(), solution_vec.end(), [&](size_t a, size_t b)
+                  { return set_cover.get_set_cost(a) > set_cover.get_set_cost(b); });
+        for (const auto &set_index : solution_vec)
+        {
+            if (can_remove(set_index))
+            {
+                m_solution.erase(set_index);
+            }
         }
     }
 };

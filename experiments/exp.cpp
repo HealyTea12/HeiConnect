@@ -18,9 +18,9 @@ void run_experiment(const std::filesystem::path &graph_dir,
         if (!file.path().filename().string().ends_with(".xml"))
             continue;
 
-        std::cout << "Processing graph: " << file.path() << std::endl;
         try
         {
+            log_to_file_and_stdout("Instance: " + file.path().string(), output_file);
             auto memory_usage = run_isolated_and_measure_memory_usage([&]()
                                                                       { 
                 runner->run(file.path());
