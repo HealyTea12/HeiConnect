@@ -119,11 +119,14 @@ void SetCoverGreedyCheapestRunner::run(const std::filesystem::path &graph_file)
 // ==================== (Set Cover Pseudo) Greedy Cheapest ====================
 void SetCoverPseudoGreedyCheapestRunner::run(const std::filesystem::path &graph_file)
 {
+    double start = omp_get_wtime();
     const std::string link_file = graph_file.parent_path() / (graph_file.filename().stem().string() + ".links");
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
+    double end = omp_get_wtime();
+    std::cout << "Initialization time: " << end - start << "s\n";
 
-    double start = omp_get_wtime();
+    start = omp_get_wtime();
     auto sc = construct_set_cover_pseudo(
         graph.graph.vertices,
         graph.graph.edges,
@@ -140,13 +143,13 @@ void SetCoverPseudoGreedyCheapestRunner::run(const std::filesystem::path &graph_
     result.solution_size = solver.get_solution().size();
     result.time_reduction = reduction_time;
     result.time_solving = solving_time;
-    result.time_total = reduction_time + solving_time;
 
     solver.trim_solution();
     double trim_time = omp_get_wtime();
     result.time_trimming = trim_time - (start + reduction_time + solving_time);
     result.solution_cost_trimmed = solver.get_solution_cost();
     result.solution_size_trimmed = solver.get_solution().size();
+    result.time_total = reduction_time + solving_time + result.time_trimming;
 }
 // ==================== Set Cover ILP ====================
 void SetCoverILPRunner::run(const std::filesystem::path &graph_file)

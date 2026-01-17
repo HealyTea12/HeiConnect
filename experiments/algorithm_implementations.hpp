@@ -29,9 +29,9 @@ public:
     {
         os << "Solution cost: " << result.solution_cost << "\n";
         os << "Solution size: " << result.solution_size << "\n";
-        os << "Time reduction: " << result.time_reduction << "s\n";
-        os << "Time solving: " << result.time_solving << "s\n";
-        os << "Time total: " << result.time_total << "s\n";
+        os << "Time reduction (s): " << result.time_reduction << "\n";
+        os << "Time solving (s): " << result.time_solving << "\n";
+        os << "Time total (s): " << result.time_total << "\n";
     }
 };
 
@@ -52,9 +52,9 @@ public:
     {
         os << "Solution cost: " << result.solution_cost << "\n";
         os << "Solution size: " << result.solution_size << "\n";
-        os << "Time reduction: " << result.time_reduction << "s\n";
-        os << "Time solving: " << result.time_solving << "s\n";
-        os << "Time total: " << result.time_total << "s\n";
+        os << "Time reduction (s): " << result.time_reduction << "\n";
+        os << "Time solving (s): " << result.time_solving << "\n";
+        os << "Time total (s): " << result.time_total << "\n";
     }
 };
 
@@ -75,9 +75,9 @@ public:
     {
         os << "Solution cost: " << result.solution_cost << "\n";
         os << "Solution size: " << result.solution_size << "\n";
-        os << "Time reduction: " << result.time_reduction << "s\n";
-        os << "Time solving: " << result.time_solving << "s\n";
-        os << "Time total: " << result.time_total << "s\n";
+        os << "Time reduction (s): " << result.time_reduction << "\n";
+        os << "Time solving (s): " << result.time_solving << "\n";
+        os << "Time total (s): " << result.time_total << "\n";
     }
 };
 
@@ -103,10 +103,10 @@ public:
         os << "Solution size: " << result.solution_size << "\n";
         os << "Solution cost (trimmed): " << result.solution_cost_trimmed << "\n";
         os << "Solution size (trimmed): " << result.solution_size_trimmed << "\n";
-        os << "Time reduction: " << result.time_reduction << "s\n";
-        os << "Time solving: " << result.time_solving << "s\n";
-        os << "Time trimming: " << result.time_trimming << "s\n";
-        os << "Time total: " << result.time_total << "s\n";
+        os << "Time reduction (s): " << result.time_reduction << "\n";
+        os << "Time solving (s): " << result.time_solving << "\n";
+        os << "Time trimming (s): " << result.time_trimming << "\n";
+        os << "Time total (s): " << result.time_total << "\n";
     }
 };
 
@@ -130,10 +130,10 @@ class SetCoverPseudoGreedyCheapestRunner : public AlgorithmRunner
         os << "Solution size: " << result.solution_size << "\n";
         os << "Solution cost (trimmed): " << result.solution_cost_trimmed << "\n";
         os << "Solution size (trimmed): " << result.solution_size_trimmed << "\n";
-        os << "Time reduction: " << result.time_reduction << "s\n";
-        os << "Time solving: " << result.time_solving << "s\n";
-        os << "Time trimming: " << result.time_trimming << "s\n";
-        os << "Time total: " << result.time_total << "s\n";
+        os << "Time reduction (s): " << result.time_reduction << "\n";
+        os << "Time solving (s): " << result.time_solving << "\n";
+        os << "Time trimming (s): " << result.time_trimming << "\n";
+        os << "Time total (s): " << result.time_total << "\n";
     }
 };
 
@@ -153,9 +153,9 @@ public:
     {
         os << "Solution cost: " << result.solution_cost << "\n";
         os << "Solution size: " << result.solution_size << "\n";
-        os << "Time reduction: " << result.time_reduction << "s\n";
-        os << "Time solving: " << result.time_solving << "s\n";
-        os << "Time total: " << result.time_total << "s\n";
+        os << "Time reduction (s): " << result.time_reduction << "\n";
+        os << "Time solving (s): " << result.time_solving << "\n";
+        os << "Time total (s): " << result.time_total << "\n";
     }
 };
 
@@ -176,7 +176,7 @@ public:
     {
         os << "Solution cost: " << result.solution_cost << "\n";
         os << "Solution size: " << result.solution_size << "\n";
-        os << "Time total: " << result.time_total << "s\n";
+        os << "Time total (s): " << result.time_total << "\n";
     }
 };
 
@@ -195,7 +195,7 @@ public:
     {
         os << "Solution cost: " << result.solution_cost << "\n";
         os << "Solution size: " << result.solution_size << "\n";
-        os << "Time total: " << result.time_total << "s\n";
+        os << "Time total (s): " << result.time_total << "\n";
     }
 };
 
@@ -214,7 +214,7 @@ public:
     {
         os << "Solution cost: " << result.solution_cost << "\n";
         os << "Solution size: " << result.solution_size << "\n";
-        os << "Time total: " << result.time_total << "s\n";
+        os << "Time total (s): " << result.time_total << "\n";
     }
 };
 
@@ -233,7 +233,7 @@ public:
     {
         os << "Solution cost: " << result.solution_cost << "\n";
         os << "Solution size: " << result.solution_size << "\n";
-        os << "Time total: " << result.time_total << "s\n";
+        os << "Time total (s): " << result.time_total << "\n";
     }
 };
 
