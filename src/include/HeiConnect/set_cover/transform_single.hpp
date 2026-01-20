@@ -17,7 +17,8 @@ template <class T>
     requires std::unsigned_integral<T>
 void inline set_bit(std::vector<T> &bit_vector, size_t index) noexcept
 {
-    bit_vector[index / (8 * sizeof(T))] |= (static_cast<T>(1) << (index % (8 * sizeof(T))));
+    constexpr unsigned B = 8 * sizeof(T);
+    bit_vector[index / (B)] |= (static_cast<T>(1) << (index % (B)));
 }
 
 template <class T>
@@ -113,13 +114,10 @@ std::vector<ull> calculate_min_cut_partitions_ull( // maybe uint64_t
     weight_T min_cut,
     size_t n_min_cuts)
 {
-    std::vector<ull> min_cuts{};
-    size_t n_vertices = vertices.size() - 1;
     constexpr const size_t B = 8 * sizeof(ull);
-    // const size_t N_COLS = (n_vertices - 1) / (8 * sizeof(ull)) + 1;    // 64 vertices -> (64 -1)/64 + 1
-    // const size_t MAX_NUM_MIN_CUTS = n_vertices * (n_vertices - 1) / 2; // n choose 2 in case of cycle, the number of rows we need
+    size_t n_vertices = vertices.size() - 1;
     const size_t N_COLS = (n_min_cuts - 1) / B + 1;
-    min_cuts.resize(n_vertices * N_COLS, 0); // 1 extra
+    std::vector<ull> min_cuts = std::vector<ull>(n_vertices * N_COLS, 0ULL);
     size_t current_min_cut_idx = 0;
     for (node_T u{}; u < vertices.size() - 1; u++)
     {
@@ -735,7 +733,7 @@ std::tuple<std::vector<ull>, ull> generate_min_cut_matrix(
         }
     }
     end = omp_get_wtime();
-    for (auto cyc : cycles)
+    for (auto &cyc : cycles)
     {
         std::cout << cyc.size() << " cycle edges." << std::endl;
     }

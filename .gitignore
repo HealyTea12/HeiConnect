@@ -9,3 +9,9 @@ augmented_graph.graph
 .vscode
 graphs/
 .venv/
+datasets/
+BITMATRIX_*
+CMakeCache.txt
+perf.data 
+perf.data.old
+results/

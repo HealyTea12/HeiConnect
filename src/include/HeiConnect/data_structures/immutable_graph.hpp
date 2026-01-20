@@ -433,4 +433,10 @@ public:
             {new_vertices, new_edges},
             new_weights};
     }
+
+    WeightedCRFGraph<> generate_cactus_block_tree() const
+    {
+        // TODO
+        return *this;
+    }
 };
