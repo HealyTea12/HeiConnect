@@ -2,6 +2,7 @@
 #include <concepts>
 #include <vector>
 #include <queue>
+#include <stack>
 #include <unordered_set>
 #include <cassert>
 #include <omp.h>
@@ -893,6 +894,288 @@ SetCoverPseudo construct_set_cover_pseudo(
         link_weights);
     return SetCoverPseudo{min_cuts, n_min_cuts, link_vertices, link_edges, link_weights};
 }
+
+// ----- Alternative
+
+using timer_type = int;
+template <typename node_T, typename edge_T>
+    requires std::integral<node_T> && std::integral<edge_T>
+std::tuple<
+    std::vector<timer_type>,
+    std::vector<timer_type>,
+    std::vector<std::vector<node_T>>,
+    std::vector<char>,
+    std::vector<node_T>>
+dfs_tin_tout_cycles(const std::vector<edge_T> &vertices, const std::vector<node_T> &edges)
+{
+    // maybe having a vector of structs is faster, but this part of the algorithm is not the bottleneck
+    auto tin = std::vector<timer_type>(vertices.size() - 1, -1);
+    auto tout = std::vector<timer_type>(vertices.size() - 1, -1);
+    auto cycle_edges = std::vector<std::pair<node_T, node_T>>{};
+    auto parent = std::vector<node_T>(vertices.size() - 1, -1);
+    auto is_cycle_edge = std::vector<char>(edges.size(), 0);
+    auto visited = std::vector<char>(vertices.size() - 1, 0);
+    // auto depth = std::vector<timer_type>(vertices.size() - 1, -1);
+    auto stack = std::stack<node_T>{};
+    node_T root = static_cast<node_T>(0);
+    timer_type timer{0};
+    stack.push(root);
+    visited[root] = 1;
+    node_T previous_node = root;
+    // depth[root] = 0;
+    while (!stack.empty())
+    {
+        node_T current_node = stack.top();
+        node_T first_neighbor_in_stack = edges[vertices[current_node]];
+        if (visited[current_node]) // revisiting node, so all neighbors processed
+        {
+            tout[current_node] = timer++;
+            stack.pop();
+        }
+        else // push neighbors
+        {
+            tin[current_node] = timer++;
+            visited[current_node] = 1;
+            parent[current_node] = previous_node;
+            for (edge_T i{vertices[current_node]}; i < vertices[current_node + 1]; i++)
+            {
+                node_T neighbor = edges[i];
+                // don't forget to ignore backward edges
+                if (neighbor == previous_node)
+                    continue;
+                if (visited[neighbor])
+                {
+                    cycle_edges.emplace_back(current_node, neighbor);
+                }
+                else
+                {
+                    stack.push(neighbor);
+                }
+            }
+            previous_node = current_node;
+        }
+    }
+
+    std::vector<std::vector<node_T>> cycles{};
+    for (const auto &edge : cycle_edges)
+    {
+        std::vector<node_T> cycle{};
+        node_T u = edge.first;
+        node_T v = edge.second;
+        // mark cycle edges TODO: optimize by storing indices during DFS
+        is_cycle_edge[get_edge_index(vertices, edges, u, v)] = 1;
+        is_cycle_edge[get_edge_index(vertices, edges, v, u)] = 1;
+        while (u != v)
+        {
+            // mark cycle edges TODO: optimize by storing indices during DFS
+            is_cycle_edge[get_edge_index(vertices, edges, u, parent[u])] = 1;
+            is_cycle_edge[get_edge_index(vertices, edges, parent[u], u)] = 1;
+            cycle.emplace_back(u);
+            u = parent[u];
+        }
+        cycle.emplace_back(v);
+        cycles.emplace_back(cycle);
+    }
+
+    return {tin, tout, cycles, is_cycle_edge, parent};
+}
+
+template <typename node_T, typename edge_T, typename weight_T>
+    requires std::integral<node_T> && std::integral<edge_T>
+weight_T calculate_cactus_min_cut(
+    const std::vector<edge_T> &vertices,
+    const std::vector<node_T> &edges,
+    const std::vector<weight_T> &weights,
+    const std::vector<std::vector<node_T>> &cycles,
+    const std::vector<char> &is_cycle_edge)
+{
+    weight_T min_cut = std::numeric_limits<weight_T>::max();
+    // iterate over all edges to find min cuts
+    for (node_T u{}; u < vertices.size() - 1; u++)
+    {
+        for (edge_T e{vertices[u]}; e < vertices[u + 1]; e++)
+        {
+            if (!is_cycle_edge[e] && weights[e] < min_cut)
+            {
+                min_cut = weights[e];
+            }
+        }
+    }
+    for (const auto &cycle : cycles)
+    {
+        for (auto i = 0; i < cycle.size() - 1; i++)
+        {
+            node_T edge1_u = cycle[i];
+            node_T edge1_v = cycle[(i + 1) % cycle.size()];
+            auto edge1_idx = get_edge_index(vertices, edges, edge1_u, edge1_v);
+            for (auto j = i + 1; j < cycle.size(); j++)
+            {
+                node_T edge2_u = cycle[j];
+                node_T edge2_v = cycle[(j + 1) % cycle.size()];
+                auto edge2_idx = get_edge_index(vertices, edges, edge2_u, edge2_v);
+                weight_T cycle_cut = weights[edge1_idx] + weights[edge2_idx];
+                if (cycle_cut < min_cut)
+                {
+                    min_cut = cycle_cut;
+                }
+            }
+        }
+    }
+    return min_cut;
+}
+
+template <typename node_T>
+    requires std::integral<node_T>
+struct CactusMinCuts
+{
+    struct Edge
+    {
+        node_T u;
+        node_T v;
+    };
+    std::vector<Edge> tree_cuts;
+    std::vector<std::pair<Edge, Edge>> cycle_cuts;
+    size_t get_n_min_cuts() const
+    {
+        return tree_cuts.size() + cycle_cuts.size();
+    }
+};
+
+template <typename node_T, typename edge_T, typename weight_T>
+    requires std::integral<node_T> && std::integral<edge_T>
+CactusMinCuts<node_T> calculate_all_cactus_min_cuts(
+    const std::vector<edge_T> &vertices,
+    const std::vector<node_T> &edges,
+    const std::vector<weight_T> &weights,
+    const std::vector<std::vector<node_T>> &cycles,
+    const std::vector<char> &is_cycle_edge,
+    weight_T min_cut,
+    std::vector<node_T> &parent)
+{
+    CactusMinCuts<node_T> cactus_min_cuts{};
+    // iterate over all edges to find min cuts
+    for (node_T u{}; u < vertices.size() - 1; u++)
+    {
+        for (edge_T e{vertices[u]}; e < vertices[u + 1]; e++)
+        {
+            if (!is_cycle_edge[e] && weights[e] == min_cut)
+            {
+                node_T v = edges[e];
+                cactus_min_cuts.tree_cuts.push_back({u, v});
+            }
+        }
+    }
+    for (const auto &cycle : cycles)
+    {
+        for (auto i = 0; i < cycle.size() - 1; i++)
+        {
+            node_T edge1_u = cycle[i];
+            node_T edge1_v = cycle[(i + 1) % cycle.size()];
+            auto edge1_idx = get_edge_index(vertices, edges, edge1_u, edge1_v);
+            for (auto j = i + 1; j < cycle.size(); j++)
+            {
+                node_T edge2_u = cycle[j];
+                node_T edge2_v = cycle[(j + 1) % cycle.size()];
+                auto edge2_idx = get_edge_index(vertices, edges, edge2_u, edge2_v);
+                weight_T cycle_cut = weights[edge1_idx] + weights[edge2_idx];
+                if (cycle_cut == min_cut)
+                {
+                    cactus_min_cuts.cycle_cuts.push_back({{edge1_u, edge1_v}, {edge2_u, edge2_v}});
+                }
+            }
+        }
+    }
+    return cactus_min_cuts;
+}
+
+// is u ancestor of v
+template <typename node_T>
+    requires std::integral<node_T>
+bool isAncestor(
+    const std::vector<timer_type> &tin,
+    const std::vector<timer_type> &tout,
+    node_T u,
+    node_T v)
+{
+    return tin[u] <= tin[v] && tout[u] >= tout[v];
+}
+
+template <typename node_T, typename edge_T>
+    requires std::integral<node_T> && std::integral<edge_T>
+std::vector<ull> calculate_min_cut_partitions_ull_alternative(
+    const std::vector<edge_T> &vertices,
+    const CactusMinCuts<node_T> &cactus_min_cuts,
+    const std::vector<timer_type> &tin,
+    const std::vector<timer_type> &tout)
+{
+    size_t n_min_cuts = cactus_min_cuts.get_n_min_cuts();
+    size_t n_vertices = vertices.size() - 1;
+    const unsigned long B = 8 * sizeof(ull);
+    const unsigned long N_COLS = (n_min_cuts + B - 1) / B;
+    std::vector<ull> min_cuts = std::vector<ull>(n_vertices * N_COLS, 0ULL);
+    for (node_T u{0}; u < n_vertices; u++)
+    {
+        for (size_t cut_idx{0}; cut_idx < cactus_min_cuts.tree_cuts.size(); cut_idx++)
+        {
+            const auto &cut = cactus_min_cuts.tree_cuts[cut_idx];
+            node_T cut_child = tin[cut.u] < tin[cut.v] ? cut.v : cut.u;
+            if (isAncestor(tin, tout, cut_child, u))
+            {
+                size_t word_idx = cut_idx / B;
+                size_t bit_idx = cut_idx % B;
+                min_cuts[u * N_COLS + word_idx] |= (1ULL << bit_idx);
+            }
+        }
+        // in construction
+        for (size_t cut_idx{0}; cut_idx < cactus_min_cuts.cycle_cuts.size(); cut_idx++)
+        {
+            const auto &[cut1, cut2] = cactus_min_cuts.cycle_cuts[cut_idx];
+            node_T a1 = cut1.u;
+            node_T b1 = cut1.v;
+            node_T a2 = cut2.u;
+            node_T b2 = cut2.v;
+            node_T cut1_child = tin[a1] < tin[b1] ? b1 : a1;
+            node_T cut2_child = tin[a2] < tin[b2] ? b2 : a2;
+            if (tin[cut1_child] > tin[cut2_child])
+            {
+                std::swap(cut1_child, cut2_child);
+            }
+            bool in_cut1 = isAncestor(tin, tout, cut1_child, u);
+            bool in_cut2 = isAncestor(tin, tout, cut2_child, u);
+            if (in_cut1 & ~in_cut2)
+            {
+                size_t overall_cut_idx = cactus_min_cuts.tree_cuts.size() + cut_idx;
+                size_t word_idx = overall_cut_idx / B;
+                size_t bit_idx = overall_cut_idx % B;
+                min_cuts[u * N_COLS + word_idx] |= (1ULL << bit_idx);
+            }
+        }
+    }
+    return min_cuts;
+}
+
+// AN ALTERNATIVE SET COVER RECONSTRUCTION METHOD
+template <typename node_T, typename edge_T, typename weight_T, typename link_node_T, typename link_edge_T, typename link_weight_T>
+    requires std::integral<node_T> && std::integral<edge_T> && std::integral<link_node_T> && std::integral<link_edge_T>
+SetCoverPseudo construct_set_cover_alternative(
+    const std::vector<edge_T> &vertices,
+    const std::vector<node_T> &edges,
+    const std::vector<weight_T> &weights,
+    const std::vector<link_node_T> &link_vertices,
+    const std::vector<link_edge_T> &link_edges,
+    const std::vector<link_weight_T> &link_weights)
+{
+    auto [tin, tout, cycles, is_cycle_edge, parent] = dfs_tin_tout_cycles(vertices, edges);
+    weight_T min_cut = calculate_cactus_min_cut(vertices, edges, weights, cycles, is_cycle_edge);
+    auto cactus_min_cuts = calculate_all_cactus_min_cuts(vertices, edges, weights, cycles, is_cycle_edge, min_cut, parent);
+    auto min_cuts = calculate_min_cut_partitions_ull_alternative(
+        vertices,
+        cactus_min_cuts,
+        tin,
+        tout);
+    return {min_cuts, cactus_min_cuts.get_n_min_cuts(), link_vertices, link_edges, link_weights};
+}
+
 // template <typename node_T, typename edge_T>
 //     requires std::integral<node_T> && std::integral<edge_T>
 // SetCover construct_set_cover1(

@@ -20,9 +20,15 @@ public:
     {
         double solution_cost;
         size_t solution_size;
+        double solution_cost_trimmed;
+        size_t solution_size_trimmed;
         double time_reduction;
         double time_solving;
+        double time_trimming;
         double time_total;
+        double time_ls;
+        double solution_cost_ls;
+        size_t solution_size_ls;
     } result;
     void run(const std::filesystem::path &graph_file) override;
     void print_results(std::ostream &os) override
@@ -32,6 +38,12 @@ public:
         os << "Time reduction (s): " << result.time_reduction << "\n";
         os << "Time solving (s): " << result.time_solving << "\n";
         os << "Time total (s): " << result.time_total << "\n";
+        os << "Solution cost (trimmed): " << result.solution_cost_trimmed << "\n";
+        os << "Solution size (trimmed): " << result.solution_size_trimmed << "\n";
+        os << "Time trimming (s): " << result.time_trimming << "\n";
+        os << "Time local search (s): " << result.time_ls << "\n";
+        os << "Solution cost (local search): " << result.solution_cost_ls << "\n";
+        os << "Solution size (local search): " << result.solution_size_ls << "\n";
     }
 };
 
@@ -67,6 +79,12 @@ class SetCoverGreedySingleThreadedPQPseudoRunner : public AlgorithmRunner
         double time_reduction;
         double time_solving;
         double time_total;
+        double time_trimming;
+        double solution_cost_trimmed;
+        size_t solution_size_trimmed;
+        double time_ls;
+        double solution_cost_ls;
+        size_t solution_size_ls;
     } result;
 
 public:
@@ -78,6 +96,12 @@ public:
         os << "Time reduction (s): " << result.time_reduction << "\n";
         os << "Time solving (s): " << result.time_solving << "\n";
         os << "Time total (s): " << result.time_total << "\n";
+        os << "Solution cost (trimmed): " << result.solution_cost_trimmed << "\n";
+        os << "Solution size (trimmed): " << result.solution_size_trimmed << "\n";
+        os << "Time trimming (s): " << result.time_trimming << "\n";
+        os << "Time local search (s): " << result.time_ls << "\n";
+        os << "Solution cost (local search): " << result.solution_cost_ls << "\n";
+        os << "Solution size (local search): " << result.solution_size_ls << "\n";
     }
 };
 

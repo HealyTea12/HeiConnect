@@ -81,6 +81,26 @@ void SetCoverGreedySingleThreadedPQPseudoRunner::run(const std::filesystem::path
     result.time_reduction = reduction_time;
     result.time_solving = solving_time;
     result.time_total = reduction_time + solving_time;
+
+    solver.trim_solution();
+    double trim_time = omp_get_wtime();
+    result.time_trimming = trim_time - (start + reduction_time + solving_time);
+    result.solution_cost_trimmed = solver.get_solution_cost();
+    result.solution_size_trimmed = solver.get_solution().size();
+
+    /*
+    while (solver.local_search(2))
+    {
+        double ls_improve_time = omp_get_wtime();
+        std::cout << "Improved solution: " << solver.get_solution_cost() << ',' << solver.get_solution().size() << "\n";
+        std::cout << "Time so far: " << ls_improve_time - trim_time << "s\n";
+        trim_time = ls_improve_time;
+    }
+    */
+    double ls_time = omp_get_wtime();
+    result.time_ls = ls_time - trim_time;
+    result.solution_cost_ls = solver.get_solution_cost();
+    result.solution_size_ls = solver.get_solution().size();
 }
 
 // ==================== Set Cover Greedy Cheapest ====================
@@ -265,4 +285,4 @@ std::unique_ptr<AlgorithmRunner> create_algorithm_runner(Algorithms algorithm)
     default:
         throw std::invalid_argument("Unknown algorithm");
     }
-}
+};

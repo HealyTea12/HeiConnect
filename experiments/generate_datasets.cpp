@@ -123,10 +123,7 @@ int main(int argc, char **argv)
     po::store(po::parse_command_line(argc, argv, desc), vm);
     po::notify(vm);
     if (vm.count("help") ||
-        !vm.count("output_dir") ||
-        !vm.count("start") ||
-        !vm.count("stop") ||
-        !vm.count("step"))
+        !vm.count("output_dir"))
     {
         std::cout << desc << std::endl;
         return 1;
@@ -144,9 +141,9 @@ int main(int argc, char **argv)
     }
 
     auto graph_type = vm["graph_type"].as<std::string>();
-    if (graph_type != "cycle" && graph_type != "star")
+    if (graph_type != "cycle" && graph_type != "star" && graph_type != "fill")
     {
-        std::cerr << "Invalid link distribution: " << ld << ".\n Must be";
+        std::cerr << "Invalid graph type: " << ld << ".\n Must be";
         for (const auto &gt : graph_types)
         {
             std::cerr << " '" << gt << "'";
@@ -201,6 +198,22 @@ int main(int argc, char **argv)
         {
             return (*dist)(*mt);
         };
+    }
+
+    if (graph_type == "fill")
+    {
+        for (auto &file : std::filesystem::directory_iterator(graph_dir))
+        {
+            if (file.path().extension() == ".xml")
+            {
+                std::cout << "Processing file: " << file.path() << "\n";
+                auto graph = WeightedCRFGraph<>::read_from_file_graphML(file.path());
+                std::cout << "n: " << graph.graph.vertices.size() - 1 << ", m: " << graph.graph.edges.size() << "\n";
+                auto links = create_links_undirected(graph, weight_function);
+                write_links(file.path().parent_path() / (file.path().stem().string() + ".links"), links);
+            }
+        }
+        return 0;
     }
     size_t start = vm["start"].as<size_t>();
     size_t stop = vm["stop"].as<size_t>();

@@ -27,6 +27,15 @@ struct WeightedCRFGraph
     std::vector<WeightType> weights;
 
 public:
+    WeightedCRFGraph(const CRFGraph<NodeID, EdgeID> &graph,
+                     const std::vector<WeightType> &weights)
+        : graph(graph), weights(weights) {}
+
+    WeightedCRFGraph(std::vector<NodeID> vertices,
+                     std::vector<EdgeID> edges,
+                     std::vector<WeightType> weights)
+        : graph{std::move(vertices), std::move(edges)}, weights{std::move(weights)} {}
+
     bool is_edge(NodeID u, NodeID v) const
     {
         for (EdgeID e{graph.vertices[u]}; e < graph.vertices[u + 1]; ++e)
@@ -36,6 +45,7 @@ public:
         }
         return false;
     }
+
     WeightedCRFGraph make_bidirectional() const
     {
         auto new_vertices = std::vector<size_t>(graph.vertices.size(), 0);
@@ -434,9 +444,66 @@ public:
             new_weights};
     }
 
-    WeightedCRFGraph<> generate_cactus_block_tree() const
+    // will probably get rid of this and construct directly the link
+    // graph as a vector of links.
+    std::vector<std::tuple<NodeID, NodeID, WeightType>> csr_to_vec_links()
     {
-        // TODO
+        std::vector<std::tuple<NodeID, NodeID, WeightType>> links = std::vector<std::tuple<NodeID, NodeID, WeightType>>(weights.size());
+        for (NodeID u{0}; u < graph.vertices.size() - 1; u++)
+        {
+            for (EdgeID e{graph.vertices[u]}; e < graph.vertices[u + 1]; e++)
+            {
+                NodeID v = graph.edges[e];
+                WeightType w = weights[e];
+                links[e] = {u, v, w};
+            }
+        }
+        return links;
+    }
+
+    // TODO: Construction site
+    std::vector<size_t> calculate_undirected_indices() const
+    {
+        std::vector<size_t> uidx = std::vector<size_t>(graph.edges.size(), 0);
+        size_t curr_idx{0};
+        for (size_t u = 0; u < graph.vertices.size() - 1; ++u)
+        {
+            for (size_t e = graph.vertices[u]; e < graph.vertices[u + 1]; ++e)
+            {
+                size_t v = graph.edges[e];
+                if (u < v)
+                {
+                    uidx[e] = curr_idx;
+                    // find the reverse edge
+                    for (size_t rev_e = graph.vertices[v]; rev_e < graph.vertices[v + 1]; ++rev_e)
+                    {
+                        if (graph.edges[rev_e] == u)
+                        {
+                            uidx[rev_e] = curr_idx;
+                            break;
+                        }
+                    }
+                    curr_idx++;
+                }
+            }
+        }
+        return uidx;
+    }
+
+    // TODO: under construction
+    // Only works for cactus graphs
+    WeightedCRFGraph<> cactus_generate_block_tree(size_t root) const
+    {
+        auto tin = std::vector<size_t>(graph.vertices.size() - 1, 0);
+        auto tout = std::vector<size_t>(graph.vertices.size() - 1, 0);
+        auto depth = std::vector<size_t>(graph.vertices.size() - 1, 0);
+        auto parent = std::vector<decltype(graph.edges[0])>(graph.vertices.size() - 1, 0);
+        size_t timer = 0;
+        size_t block_count = 0;
+        // dfs
+        std::vector<char> visited(graph.vertices.size() - 1, 0);
+        std::vector<size_t> stack{root};
+
         return *this;
     }
 };

@@ -60,5 +60,49 @@ int main(int argc, char **argv)
             auto solution = solver.get_solution();
             std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
         }
+        if (type == "pseudo")
+        {
+            Timer timer = Timer{
+                file.path().filename().string() + " - PSEUDO",
+                output_file};
+            double start = omp_get_wtime();
+            auto set_cover_pseudo = construct_set_cover_pseudo(
+                graph.graph.vertices,
+                graph.graph.edges,
+                graph.weights,
+                link_graph.graph.vertices,
+                link_graph.graph.edges,
+                link_graph.weights);
+            double end = omp_get_wtime();
+            std::cout << "Constructing set cover in PSEUDO form took " << (end - start) << " seconds." << std::endl;
+            timer.add_checkpoint("reduction");
+            SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo> solver{set_cover_pseudo};
+            solver.solve();
+            timer.add_checkpoint("solving");
+            auto solution = solver.get_solution();
+            std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+        }
+        if (type == "pseudoAlt")
+        {
+            Timer timer = Timer{
+                file.path().filename().string() + " - PSEUDO ALTERNATIVE",
+                output_file};
+            double start = omp_get_wtime();
+            auto set_cover_pseudo = construct_set_cover_alternative(
+                graph.graph.vertices,
+                graph.graph.edges,
+                graph.weights,
+                link_graph.graph.vertices,
+                link_graph.graph.edges,
+                link_graph.weights);
+            double end = omp_get_wtime();
+            std::cout << "Constructing set cover in PSEUDO ALTERNATIVE form took " << (end - start) << " seconds." << std::endl;
+            timer.add_checkpoint("reduction");
+            SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo> solver{set_cover_pseudo};
+            solver.solve();
+            timer.add_checkpoint("solving");
+            auto solution = solver.get_solution();
+            std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+        }
     }
 }
