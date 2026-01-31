@@ -1,6 +1,7 @@
 #include <fstream>
 #include <iostream>
 #include "algorithm_implementations.hpp"
+#include "HeiConnect/link_reduction.hpp"
 
 // ==================== Set Cover Greedy PQ ====================
 void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path &graph_file)
@@ -141,8 +142,15 @@ void SetCoverPseudoGreedyCheapestRunner::run(const std::filesystem::path &graph_
 {
     double start = omp_get_wtime();
     const std::string link_file = graph_file.parent_path() / (graph_file.filename().stem().string() + ".links");
+    // const std::string original_graph_file = graph_file.parent_path() / (graph_file.filename().stem().string() + ".graph");
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
+    // auto mapping = read_mapping(graph_file, read_nodes_in_original_graph(original_graph_file));
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
+    // auto link_reduction_output = generate_link_mapping(
+    //    link_graph,
+    //    graph,
+    //    mapping);
+    // link_graph = link_reduction_output.cactus_links;
     double end = omp_get_wtime();
     std::cout << "Initialization time: " << end - start << "s\n";
 
@@ -188,6 +196,33 @@ void SetCoverILPRunner::run(const std::filesystem::path &graph_file)
         link_graph.weights);
     double reduction_time = omp_get_wtime() - start;
     SetCoverSolverILP<SetCover> solver{std::move(sc)};
+    solver.solve();
+    double solving_time = omp_get_wtime() - start - reduction_time;
+    auto ilp_solution = solver.get_solution();
+    result.solution_cost = solver.get_solution_cost();
+    result.solution_size = ilp_solution.size();
+    result.time_reduction = reduction_time;
+    result.time_solving = solving_time;
+    result.time_total = reduction_time + solving_time;
+}
+
+// ==================== Set Cover ILP (Pseudo) ====================
+void SetCoverPseudoILPRunner::run(const std::filesystem::path &graph_file)
+{
+    const std::string link_file = graph_file.parent_path() / (graph_file.filename().stem().string() + ".links");
+    auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
+    auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
+
+    double start = omp_get_wtime();
+    SetCoverPseudo sc = construct_set_cover_pseudo(
+        graph.graph.vertices,
+        graph.graph.edges,
+        graph.weights,
+        link_graph.graph.vertices,
+        link_graph.graph.edges,
+        link_graph.weights);
+    double reduction_time = omp_get_wtime() - start;
+    SetCoverSolverILP<SetCoverPseudo> solver{std::move(sc)};
     solver.solve();
     double solving_time = omp_get_wtime() - start - reduction_time;
     auto ilp_solution = solver.get_solution();
@@ -282,7 +317,9 @@ std::unique_ptr<AlgorithmRunner> create_algorithm_runner(Algorithms algorithm)
         return std::make_unique<MSTConnectRunner>();
     case Algorithms::DirectILP:
         return std::make_unique<DirectILPRunner>();
+    case Algorithms::SetCoverPseudoILP:
+        return std::make_unique<SetCoverPseudoILPRunner>();
     default:
         throw std::invalid_argument("Unknown algorithm");
     }
-};
+}

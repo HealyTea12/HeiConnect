@@ -46,6 +46,57 @@ public:
         return false;
     }
 
+    // Metrics
+    size_t num_edges() const
+    {
+        return graph.edges.size();
+    }
+
+    size_t num_vertices() const
+    {
+        return graph.vertices.size() - 1;
+    }
+
+    size_t degree(NodeID u) const
+    {
+        return graph.vertices[u + 1] - graph.vertices[u];
+    }
+
+    double average_degree() const
+    {
+        return (double)num_edges() / (double)num_vertices();
+    }
+
+    size_t max_degree() const
+    {
+        size_t max_deg = 0;
+        for (NodeID u{0}; u < num_vertices(); ++u)
+        {
+            size_t deg = degree(u);
+            if (deg > max_deg)
+            {
+                max_deg = deg;
+            }
+        }
+        return max_deg;
+    }
+
+    size_t min_degree() const
+    {
+        size_t min_deg = SIZE_MAX;
+        for (NodeID u{0}; u < num_vertices(); ++u)
+        {
+            size_t deg = degree(u);
+            if (deg < min_deg)
+            {
+                min_deg = deg;
+            }
+        }
+        return min_deg;
+    }
+
+    // ----
+
     WeightedCRFGraph make_bidirectional() const
     {
         auto new_vertices = std::vector<size_t>(graph.vertices.size(), 0);

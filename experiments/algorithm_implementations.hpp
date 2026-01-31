@@ -183,6 +183,28 @@ public:
     }
 };
 
+class SetCoverPseudoILPRunner : public AlgorithmRunner
+{
+public:
+    struct Result
+    {
+        double solution_cost;
+        size_t solution_size;
+        double time_reduction;
+        double time_solving;
+        double time_total;
+    } result;
+    void run(const std::filesystem::path &graph_file) override;
+    void print_results(std::ostream &os) override
+    {
+        os << "Solution cost: " << result.solution_cost << "\n";
+        os << "Solution size: " << result.solution_size << "\n";
+        os << "Time reduction (s): " << result.time_reduction << "\n";
+        os << "Time solving (s): " << result.time_solving << "\n";
+        os << "Time total (s): " << result.time_total << "\n";
+    }
+};
+
 // ==================== Direct Graph Algorithms ====================
 
 class DirectGreedyRunner : public AlgorithmRunner

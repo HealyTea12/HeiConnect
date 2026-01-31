@@ -6,6 +6,19 @@ namespace po = boost::program_options;
 
 using ull = unsigned long long;
 
+void drop_contained_nodes(const std::filesystem::path &graph_file_xml)
+{
+    auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file_xml);
+    std::filesystem::path graph_file_metis = graph_file_xml.parent_path() / (graph_file_xml.stem().string() + ".graph");
+    auto graph_metis = WeightedCRFGraph<>::read_from_file(graph_file_metis);
+    std::unordered_map<size_t, std::vector<size_t>> mapping{};
+    for (ull u = 0; u < graph_metis.graph.vertices.size() - 1; ++u)
+    {
+        mapping[u] = {u};
+    }
+    graph.write_to_file_graphML(graph_file_xml, mapping);
+}
+
 static void write_links(std::filesystem::path filename,
                         std::vector<std::tuple<ull, ull, double>> &links)
 {
@@ -48,6 +61,56 @@ static std::vector<std::tuple<ull, ull, double>> create_links_undirected(
         }
     }
     return links;
+}
+
+static void create_links_undirected_write(
+    const WeightedCRFGraph<> &graph,
+    std::function<double(ull, ull, const WeightedCRFGraph<> &)> weight_function,
+    std::filesystem::path &file)
+{
+    ull n = graph.graph.vertices.size() - 1;
+    ull total_possible_edges = (n * (n - 1)) / 2;
+    ull existing_edges = graph.graph.edges.size();
+    ull estimated_new_edges = total_possible_edges - existing_edges;
+
+    std::cout << "Estimated new edges to generate: " << estimated_new_edges << "\n";
+    std::cout << "This may take a while...\n";
+
+    std::ofstream outfile{file};
+    outfile.rdbuf()->pubsetbuf(nullptr, 65536); // 64KB buffer
+    outfile << n << " " << estimated_new_edges << " " << "1" << "\n";
+
+    ull edges_written = 0;
+    ull progress_interval = std::max(1ULL, estimated_new_edges / 100); // Report progress every 1%
+    if (progress_interval == 0)
+        progress_interval = 1000000; // Cap at 1M edge intervals
+
+    for (ull u = 0; u < n; ++u)
+    {
+        if (u % 100 == 0)
+        {
+            std::cerr << "\rProcessing vertex " << u << " / " << n << " (" << (u * 100 / n) << "%)" << std::flush;
+        }
+        for (ull v = u + 1; v < n; ++v) // Start from u+1 to avoid duplicates
+        {
+            // better not to keep assumptions about the graph being undirected when not necessary
+            bool edge_in_graph = graph.is_edge(u, v) || graph.is_edge(v, u);
+            if (u < v && !edge_in_graph)
+            {
+                double weight = weight_function(u, v, graph);
+                assert(weight > 0);
+                outfile << u + 1 << " " << v + 1 << " " << weight << "\n";
+                edges_written++;
+
+                if (edges_written % progress_interval == 0)
+                {
+                    std::cerr << "\rWritten " << edges_written << " edges..." << std::flush;
+                }
+            }
+        }
+    }
+    outfile.flush();
+    std::cerr << "\rCompleted! Written " << edges_written << " edges to " << file << "\n";
 }
 
 static void write_cycle_graphs(std::filesystem::path graph_dir, size_t start, size_t stop, size_t step,
@@ -141,9 +204,9 @@ int main(int argc, char **argv)
     }
 
     auto graph_type = vm["graph_type"].as<std::string>();
-    if (graph_type != "cycle" && graph_type != "star" && graph_type != "fill")
+    if (graph_type != "cycle" && graph_type != "star" && graph_type != "fill" && graph_type != "break")
     {
-        std::cerr << "Invalid graph type: " << ld << ".\n Must be";
+        std::cerr << "Invalid graph type: " << graph_type << ".\n Must be";
         for (const auto &gt : graph_types)
         {
             std::cerr << " '" << gt << "'";
@@ -200,30 +263,50 @@ int main(int argc, char **argv)
         };
     }
 
-    if (graph_type == "fill")
+    if (graph_type == "break")
     {
         for (auto &file : std::filesystem::directory_iterator(graph_dir))
         {
             if (file.path().extension() == ".xml")
             {
-                std::cout << "Processing file: " << file.path() << "\n";
                 auto graph = WeightedCRFGraph<>::read_from_file_graphML(file.path());
-                std::cout << "n: " << graph.graph.vertices.size() - 1 << ", m: " << graph.graph.edges.size() << "\n";
-                auto links = create_links_undirected(graph, weight_function);
-                write_links(file.path().parent_path() / (file.path().stem().string() + ".links"), links);
+                graph.write_to_file_metis(file.path().parent_path() / (file.path().stem().string() + ".graph"));
+                drop_contained_nodes(file.path());
             }
         }
         return 0;
     }
-    size_t start = vm["start"].as<size_t>();
-    size_t stop = vm["stop"].as<size_t>();
-    size_t step = vm["step"].as<size_t>();
+
+    else if (graph_type == "fill")
+    {
+        for (auto &file : std::filesystem::directory_iterator(graph_dir))
+        {
+            if (file.path().extension() == ".graph")
+            {
+                auto links_file = std::filesystem::path(file.path().parent_path() / (file.path().stem().string() + ".links"));
+                std::cout << "\n=== Processing file: " << file.path() << " ===\n";
+                auto graph = WeightedCRFGraph<>::read_from_file(file.path());
+                ull n = graph.graph.vertices.size() - 1;
+                ull m = graph.graph.edges.size();
+                std::cout << "n: " << n << ", m: " << m << "\n";
+                std::cout << "Density: " << (2.0 * m / (n * (n - 1))) * 100 << "%\n";
+                create_links_undirected_write(graph, weight_function, links_file);
+            }
+        }
+        return 0;
+    }
     if (graph_type == "cycle")
     {
+        size_t start = vm["start"].as<size_t>();
+        size_t stop = vm["stop"].as<size_t>();
+        size_t step = vm["step"].as<size_t>();
         write_cycle_graphs(graph_dir, start, stop, step, weight_function);
     }
     else if (graph_type == "star")
     {
+        size_t start = vm["start"].as<size_t>();
+        size_t stop = vm["stop"].as<size_t>();
+        size_t step = vm["step"].as<size_t>();
         write_star_graphs(graph_dir, start, stop, step, weight_function);
     }
 }
