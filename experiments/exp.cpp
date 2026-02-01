@@ -46,13 +46,14 @@ void run_experiment(const std::filesystem::path &graph_dir,
 }
 
 void run_experiment_file(const std::filesystem::path &graph_file,
-                         Algorithms algorithm)
+                         Algorithms algorithm,
+                         const std::filesystem::path &output_file)
 {
     auto runner = create_algorithm_runner(algorithm);
     try
     {
-        log_to_file_and_stdout("Instance: " + file.path().string(), output_file);
-        auto graph = WeightedCRFGraph<>::read_from_file_graphML(file.path());
+        log_to_file_and_stdout("Instance: " + graph_file.string(), output_file);
+        auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
         log_to_file_and_stdout("n: " + std::to_string(graph.num_vertices()), output_file);
         log_to_file_and_stdout("m: " + std::to_string(graph.num_edges()), output_file);
         log_to_file_and_stdout("Algorithm: " + algorithm_to_string(algorithm), output_file);
@@ -126,7 +127,7 @@ int main(int argc, char **argv)
         if (!graph_dir.empty())
             run_experiment(graph_dir, output_file, algorithm);
         if (!graph_file.empty())
-            run_experiment_file(graph_file, algorithm);
+            run_experiment_file(graph_file, algorithm, output_file);
     }
     catch (const po::error &e)
     {
