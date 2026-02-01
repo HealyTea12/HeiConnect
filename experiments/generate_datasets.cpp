@@ -284,6 +284,11 @@ int main(int argc, char **argv)
             if (file.path().extension() == ".graph")
             {
                 auto links_file = std::filesystem::path(file.path().parent_path() / (file.path().stem().string() + ".links"));
+                if (std::filesystem::exists(links_file))
+                {
+                    std::cout << "Links file already exists for " << file.path() << ", skipping...\n";
+                    continue;
+                }
                 std::cout << "\n=== Processing file: " << file.path() << " ===\n";
                 auto graph = WeightedCRFGraph<>::read_from_file(file.path());
                 ull n = graph.graph.vertices.size() - 1;

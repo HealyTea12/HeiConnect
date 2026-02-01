@@ -1111,15 +1111,54 @@ public:
             vars[i] = model.addVar(0.0, 1.0, set_cover.get_set_cost(i), GRB_BINARY, "s" + std::to_string(i));
         }
         // coverage constraints
-        for (size_t i{0}; i < set_cover.n_cols; i++)
+        std::vector<GRBLinExpr> cover_expr = std::vector<GRBLinExpr>(set_cover.get_num_elements());
+        for (size_t i = 0; i < set_cover.get_num_sets(); i++)
         {
-            GRBLinExpr cover_expr = 0;
-            for (size_t e{0}; e < set_cover.get_num_sets(); e++)
+            auto [u, v, w] = m_links[i];
+            for (size_t k{0}; k < set_cover.n_cols; k++)
             {
-                auto [u, v, w] = m_links[e];
-                ull cut_word = set_cover.min_cuts[u * set_cover.n_cols + i] ^
-                               set_cover.min_cuts[v * set_cover.n_cols + i];
+                ull set_coverage = set_cover.min_cuts[u * set_cover.n_cols + k] ^
+                                   set_cover.min_cuts[v * set_cover.n_cols + k];
+                while (set_coverage)
+                {
+                    size_t bit_pos = std::countr_zero(set_coverage);
+                    size_t elem = k * (8 * sizeof(ull)) + bit_pos;
+                    // shouldn't be necessary
+                    if (elem < set_cover.get_num_elements())
+                    {
+                        cover_expr[elem] += vars[i];
+                    }
+                    set_coverage &= set_coverage - 1; // clear the least significant bit set compiler will optimize (i checked the assembly)
+                }
             }
+        }
+        for (size_t e = 0; e < set_cover.get_num_elements(); e++)
+        {
+            model.addConstr(cover_expr[e] >= 1, "cover_e" + std::to_string(e));
+        }
+        // objective
+        GRBLinExpr obj = 0;
+        for (size_t i = 0; i < set_cover.get_num_sets(); i++)
+        {
+            obj += set_cover.get_set_cost(i) * vars[i];
+        }
+        model.setObjective(obj, GRB_MINIMIZE);
+        model.optimize();
+        // check optimization status
+        int status = model.get(GRB_IntAttr_Status);
+        if (status == GRB_OPTIMAL || status == GRB_SUBOPTIMAL)
+        {
+            for (size_t i = 0; i < set_cover.get_num_sets(); i++)
+            {
+                double val = vars[i].get(GRB_DoubleAttr_X);
+                if (val > 0.5)
+                    m_solution.insert(i);
+            }
+            m_feasible = true;
+        }
+        else
+        {
+            m_feasible = false;
         }
     }
 };

@@ -6,6 +6,7 @@
 #include "algorithm_registry.hpp"
 #include "algorithm_runner.hpp"
 #include "experiment_utils.hpp"
+#include "HeiConnect/data_structures/immutable_graph.hpp"
 
 void run_experiment(const std::filesystem::path &graph_dir,
                     const std::filesystem::path &output_file,
@@ -21,6 +22,13 @@ void run_experiment(const std::filesystem::path &graph_dir,
         try
         {
             log_to_file_and_stdout("Instance: " + file.path().string(), output_file);
+            auto graph = WeightedCRFGraph<>::read_from_file_graphML(file.path());
+            log_to_file_and_stdout("n: " + std::to_string(graph.num_vertices()), output_file);
+            log_to_file_and_stdout("m: " + std::to_string(graph.num_edges()), output_file);
+            log_to_file_and_stdout("Algorithm: " + algorithm_to_string(algorithm), output_file);
+            log_to_file_and_stdout("d_min: " + std::to_string(graph.min_degree()), output_file);
+            log_to_file_and_stdout("d_max: " + std::to_string(graph.max_degree()), output_file);
+            log_to_file_and_stdout("d_avg: " + std::to_string(graph.average_degree()), output_file);
             auto memory_usage = run_isolated_and_measure_memory_usage([&]()
                                                                       { 
                 runner->run(file.path());
@@ -43,6 +51,14 @@ void run_experiment_file(const std::filesystem::path &graph_file,
     auto runner = create_algorithm_runner(algorithm);
     try
     {
+        log_to_file_and_stdout("Instance: " + file.path().string(), output_file);
+        auto graph = WeightedCRFGraph<>::read_from_file_graphML(file.path());
+        log_to_file_and_stdout("n: " + std::to_string(graph.num_vertices()), output_file);
+        log_to_file_and_stdout("m: " + std::to_string(graph.num_edges()), output_file);
+        log_to_file_and_stdout("Algorithm: " + algorithm_to_string(algorithm), output_file);
+        log_to_file_and_stdout("d_min: " + std::to_string(graph.min_degree()), output_file);
+        log_to_file_and_stdout("d_max: " + std::to_string(graph.max_degree()), output_file);
+        log_to_file_and_stdout("d_avg: " + std::to_string(graph.average_degree()), output_file);
         runner->run(graph_file);
         runner->print_results(std::cout);
     }
