@@ -6,33 +6,35 @@
 
 enum class Algorithms
 {
+    GWC,
     SetCoverGreedySingleThreadedPQ,
     SetCoverGreedySingleThreadedPQBit,
     SetCoverGreedySingleThreadedPQPseudo,
-    SetCoverSharpGreedy,
+    MSTConnect,
     SetCoverGreedyCheapest,
+    SetCoverGreedyCheapestBit,
     SetCoverPseudoGreedyCheapest,
+    DirectILP,
     SetCoverILP,
     SetCoverPseudoILP,
     DirectGreedy,
-    GWC,
-    MSTConnect,
-    DirectILP
+    SetCoverSharpGreedy
 };
 
-constexpr std::array<std::string_view, 12> ALGORITHM_NAMES = {
+constexpr std::array<std::string_view, 13> ALGORITHM_NAMES = {
+    "GWC",
     "SetCoverGreedySingleThreadedPQ",
     "SetCoverGreedySingleThreadedPQBit",
     "SetCoverGreedySingleThreadedPQPseudo",
-    "SetCoverSharpGreedy",
+    "MSTConnect",
     "SetCoverGreedyCheapest",
+    "SetCoverGreedyCheapestBit",
     "SetCoverPseudoGreedyCheapest",
+    "DirectILP",
     "SetCoverILP",
     "SetCoverPseudoILP",
     "DirectGreedy",
-    "GWC",
-    "MSTConnect",
-    "DirectILP"};
+    "SetCoverSharpGreedy"};
 
 inline Algorithms algorithm_from_string(const std::string &algo)
 {

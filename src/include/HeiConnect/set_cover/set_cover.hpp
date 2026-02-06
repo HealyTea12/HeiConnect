@@ -243,6 +243,31 @@ public:
     // Those whose elements are still covered by other sets in the solution.
     void trim_solution()
     {
+        std::vector<size_t> solution_vec(m_solution.begin(), m_solution.end());
+        // sort solution by decreasing cost
+        std::sort(solution_vec.begin(), solution_vec.end(), [&](size_t a, size_t b)
+                  { return set_cover.get_set_cost(a) > set_cover.get_set_cost(b); });
+        for (const auto &set_index : solution_vec)
+        {
+            bool can_remove = true;
+            for (auto j{set_cover.set_begin(set_index)}; j != set_cover.set_end(set_index); j++)
+            {
+                if (m_covered_elements[*j] == 1)
+                {
+                    can_remove = false;
+                    break;
+                }
+            }
+            if (can_remove)
+            {
+                remove_set(set_index);
+            }
+        }
+    }
+
+    /*
+    void trim_solution()
+    {
         using WeightType = decltype(set_cover.get_set_cost(0));
         using SetType = decltype(set_cover.get_num_sets()); // should be defined in SetCoverType
         while (true)
@@ -277,6 +302,8 @@ public:
             }
         }
     }
+    */
+
     std::unordered_set<size_t> get_solution() const noexcept
     {
         return m_solution;
@@ -325,6 +352,242 @@ protected:
     std::vector<bool> m_chosen_sets{};
     bool m_feasible = false;
     std::vector<int> m_covered_elements;
+};
+
+// specialization of SetCoverSolver with SetCoverType = SetCoverBit
+template <typename Derived>
+class SetCoverSolver<Derived, SetCoverBit>
+{
+public:
+    using SetCoverType = SetCoverBit;
+    SetCoverSolver(SetCoverType sc)
+        : set_cover(std::move(sc))
+    {
+        NUM_ELEMENTS = set_cover.get_num_elements();
+        m_covered_elements = std::vector<ull>(set_cover.n_cols, 0);
+        m_covered_elements[set_cover.n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover.get_num_elements() % (8 * sizeof(ull)));
+    }
+
+    void solve()
+    {
+        static_cast<Derived *>(this)->solve();
+    }
+
+    std::unordered_set<size_t> get_solution() const noexcept
+    {
+        return m_solution;
+    }
+
+    double get_solution_cost() const
+    {
+        double total_cost = 0.0;
+        for (const auto &set_index : m_solution)
+        {
+            total_cost += set_cover.get_set_cost(set_index);
+        }
+        return total_cost;
+    }
+
+    // must vectorize
+    bool can_remove(size_t set_index)
+    {
+        for (size_t k{0}; k < set_cover.n_cols; k++)
+        {
+            ull set_coverage = set_cover.set_cover[set_index * set_cover.n_cols + k];
+
+            for (const auto &other_set_index : m_solution)
+            {
+                if (other_set_index == set_index)
+                    continue;
+                set_coverage &= ~(set_cover.set_cover[other_set_index * set_cover.n_cols + k]);
+                if (set_coverage == 0)
+                    break;
+            }
+            if (set_coverage != 0)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void init_coverage()
+    {
+        // set all covered elements to 0
+        m_total_covered_elements = 0;
+        m_covered_elements = std::vector<ull>(set_cover.n_cols, 0);
+        m_covered_elements[set_cover.n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover.get_num_elements() % (8 * sizeof(ull)));
+    }
+
+    void greedy_solve()
+    {
+        std::priority_queue<std::pair<double, size_t>> pq;
+        for (size_t s{0}; s < set_cover.get_num_sets(); s++)
+        {
+            size_t covered = cover_count(s);
+            double cost_benefit_ratio = static_cast<double>(covered) / set_cover.get_set_cost(s);
+            pq.push({cost_benefit_ratio, s});
+        }
+        // stop when all elements are covered or we've chosen all available sets while (m_total_covered_elements < NUM_ELEMENTS && m_solution.size() != set_cover.a.size() - 1)
+        while (m_total_covered_elements < set_cover.get_num_elements() && m_solution.size() != set_cover.get_num_sets())
+        {
+            auto best_set = pq.top();
+            pq.pop();
+            // check if ratio has changed
+            auto best_set_idx = best_set.second;
+            size_t covered = cover_count(best_set_idx);
+            double ratio = static_cast<double>(covered) / set_cover.get_set_cost(best_set_idx);
+            // if changed that put back in and try again
+            if (ratio < best_set.first)
+            {
+                pq.push({ratio, best_set_idx});
+                continue;
+            }
+            // otherwise add the set to the solution
+            add_set(best_set_idx);
+            m_total_covered_elements += covered;
+            m_solution.insert(best_set_idx);
+        }
+    }
+
+    // always the same could remove and just use base
+    void trim_solution()
+    {
+        // sort solution by decreasing cost
+        std::vector<size_t> solution_vec(m_solution.begin(), m_solution.end());
+        std::sort(solution_vec.begin(), solution_vec.end(), [&](size_t a, size_t b)
+                  { return set_cover.get_set_cost(a) > set_cover.get_set_cost(b); });
+        for (const auto &set_index : solution_vec)
+        {
+            if (can_remove(set_index))
+            {
+                m_solution.erase(set_index);
+            }
+        }
+    }
+
+    void add_set(size_t set_index)
+    {
+        size_t k{0};
+// check for 512 bit vectorization support and use it if available, otherwise check for 256 bit vectorization support and use it if available, otherwise do scalar
+#if __AVX512__
+        for (; k + 7 < set_cover.n_cols; k += 8)
+        {
+            __m512i set_vec = _mm512_loadu_si512((__m512i *)(set_cover.set_cover.data() + set_index * set_cover.n_cols + k));
+            __m512i covered_vec = _mm512_loadu_si512((__m512i *)(&m_covered_elements[k]));
+            __m512i new_coverage = _mm512_or_si512(set_vec, covered_vec);
+            _mm512_storeu_si512((__m512i *)(&m_covered_elements[k]), new_coverage);
+        }
+#elif __AVX2__
+        for (; k + 3 < set_cover.n_cols; k += 4)
+        {
+            __m256i set_vec = _mm256_loadu_si256((__m256i *)(set_cover.set_cover.data() + set_index * set_cover.n_cols + k));
+            __m256i covered_vec = _mm256_loadu_si256((__m256i *)(&m_covered_elements[k]));
+            __m256i new_coverage = _mm256_or_si256(set_vec, covered_vec);
+            _mm256_storeu_si256((__m256i *)(&m_covered_elements[k]), new_coverage);
+        }
+#endif
+        for (; k < set_cover.n_cols; k++)
+        {
+            m_covered_elements[k] |= set_cover.set_cover[set_index * set_cover.n_cols + k];
+        }
+    }
+
+    // must check instructions
+    bool check_solved(std::vector<ull> &covered_els)
+    {
+        size_t k{0};
+#if __AVX512__
+        for (; k + 7 < set_cover.n_cols; k += 8)
+        {
+            __m512i covered_vec = _mm512_loadu_si512((__m512i *)(&covered_els[k]));
+            __m512i all_covered = _mm512_set1_epi64(0xFFFFFFFFFFFFFFFFULL);
+            __m512i cmp = _mm512_cmpeq_epi64_mask(covered_vec, all_covered);
+            if (cmp != 0xFF)
+            {
+                return false;
+            }
+        }
+#elif __AVX2__
+        for (; k + 3 < set_cover.n_cols; k += 4)
+        {
+            __m256i covered_vec = _mm256_loadu_si256((__m256i *)(&covered_els[k]));
+            __m256i all_covered = _mm256_set1_epi64x(0xFFFFFFFFFFFFFFFFULL);
+            __m256i cmp = _mm256_cmpeq_epi64(covered_vec, all_covered);
+            int mask = _mm256_movemask_pd(_mm256_castsi256_pd(cmp));
+            if (mask != 0xF)
+            {
+                return false;
+            }
+        }
+#endif
+        for (; k < set_cover.n_cols; k++)
+        {
+            if (covered_els[k] != 0xFFFFFFFFFFFFFFFFULL)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    size_t cover_count(size_t set_index)
+    {
+        size_t n_covered_els = 0;
+        size_t k{0};
+#ifdef __AVX512VPOPCNTDQ__
+        for (; k + 7 < set_cover.n_cols; k += 8)
+        {
+            __m512i vec_set = _mm512_loadu_si512((__m512i *)(set_cover.set_cover.data() + set_index * set_cover.n_cols + k));
+            __m512i vec_covered = _mm512_loadu_si512(&m_covered_elements[k]);
+            __m512i vec_new_bits = _mm512_andnot_si512(vec_covered, vec_set);
+            __m512i vec_popcnt = _mm512_popcnt_epi64(vec_new_bits);
+            n_covered_els += _mm512_reduce_add_epi64(vec_popcnt);
+        }
+#elif __AVX512__
+        for (; k + 7 < set_cover.n_cols; k += 8)
+        {
+            __m512i vec_set = _mm512_loadu_si512((__m512i *)(set_cover.set_cover.data() + set_index * set_cover.n_cols + k));
+            __m512i vec_covered = _mm512_loadu_si512(&m_covered_elements[k]);
+            __m512i vec_new_bits = _mm512_andnot_si512(vec_covered, vec_set);
+            // there is no popcnt instruction in AVX512 without VPOPCNTDQ, so we have to do it manually
+            for (int i = 0; i < 8; i++)
+            {
+                n_covered_els += std::popcount(((ull *)&vec_new_bits)[i]);
+            }
+        }
+#elif __AVX2__
+        for (; k + 3 < set_cover.n_cols; k += 4)
+        {
+            __m256i vec_set = _mm256_loadu_si256((__m256i *)(set_cover.set_cover.data() + set_index * set_cover.n_cols + k));
+            __m256i covered_vec = _mm256_loadu_si256((__m256i *)(&m_covered_elements[k]));
+            __m256i new_bits = _mm256_andnot_si256(covered_vec, vec_set);
+            for (int i = 0; i < 4; i++)
+            {
+                n_covered_els += std::popcount(((ull *)&new_bits)[i]);
+            }
+        }
+#endif
+        {
+            const ull *set_data = set_cover.set_cover.data() + set_index * set_cover.n_cols;
+            for (; k < set_cover.n_cols; k++)
+            {
+                ull covered_cuts = set_data[k] & ~m_covered_elements[k];
+                n_covered_els += std::popcount(covered_cuts);
+            }
+        }
+        return n_covered_els;
+    }
+
+protected:
+    size_t NUM_ELEMENTS;
+    SetCoverType set_cover;
+    size_t m_total_covered_elements = 0;
+    std::unordered_set<size_t> m_solution{};
+    std::vector<ull> m_covered_elements;
+    // ILP stuff don't really belong here
+    std::vector<bool> m_chosen_sets{};
+    bool m_feasible = false;
 };
 
 // specialization of SetCoverSolver  with SetCoverType = SetCoverPseudo
@@ -451,6 +714,7 @@ public:
         }
     }
 
+    // TODO: Doesn't belong here and could return an iterator
     // creates a vector of all subsets of size k from n elements, used for local search
     // for example k=2, n=4 -> {{0,1}, {0,2}, {0,3}, {1,2}, {1,3}, {2,3}}
     // so returns a vector  -> [0, 1, 0, 2, 0, 3, 1, 2, 1, 3, 2, 3]
@@ -731,91 +995,13 @@ public:
     using Base::m_solution;
     using Base::m_total_covered_elements;
     using Base::NUM_ELEMENTS;
-    using Base::remove_set;
     using Base::set_cover;
     using Base::SetCoverSolver;
 
-    size_t cover_count(const ull *set_data, const std::vector<ull> &covered_elements)
-    {
-        size_t covered = 0;
-#ifdef __AVX512VPOPCNTDQ__
-        for (size_t k{0}; k + 7 < set_cover.n_cols; k += 8)
-        {
-            __m512i vec_set = _mm512_loadu_si512(set_data + k);
-            __m512i vec_covered = _mm512_loadu_si512(&covered_elements[k]);
-            __m512i vec_new_bits = _mm512_andnot_si512(vec_covered, vec_set);
-            __m512i vec_popcnt = _mm512_popcnt_epi64(vec_new_bits);
-            covered += _mm512_reduce_add_epi64(vec_popcnt);
-        }
-        for (size_t k = (set_cover.n_cols / 8) * 8; k < set_cover.n_cols; k++)
-        {
-            ull new_bits = set_data[k] & ~covered_elements[k];
-            covered += std::popcount(new_bits);
-        }
-#elif __AVX2__
-        for (size_t k{0}; k + 3 < set_cover.n_cols; k += 4)
-        {
-            __m256i set_vec = _mm256_loadu_si256((__m256i *)(set_data + k));
-            __m256i covered_vec = _mm256_loadu_si256((__m256i *)(&covered_elements[k]));
-            __m256i new_bits = _mm256_andnot_si256(covered_vec, set_vec);
-            covered += std::popcount(((ull *)&new_bits)[0]);
-            covered += std::popcount(((ull *)&new_bits)[1]);
-            covered += std::popcount(((ull *)&new_bits)[2]);
-            covered += std::popcount(((ull *)&new_bits)[3]);
-        }
-        for (size_t k = (set_cover.n_cols / 4) * 4; k < set_cover.n_cols; k++)
-        {
-            ull new_bits = set_data[k] & ~covered_elements[k];
-            covered += std::popcount(new_bits);
-        }
-#else
-        for (size_t k{0}; k < set_cover.n_cols; k++)
-        {
-            ull new_bits = set_data[k] & ~covered_elements[k];
-            covered += std::popcount(new_bits);
-        }
-#endif
-        return covered;
-    }
-
     void solve()
     {
-        std::priority_queue<std::pair<double, size_t>> pq;
-        std::vector<ull> covered_elements = std::vector<ull>(set_cover.n_cols, 0);
-        covered_elements[set_cover.n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover.get_num_elements() % (8 * sizeof(ull)));
-        for (size_t i = 0; i < set_cover.get_num_sets(); i++)
-        {
-            const ull *set_data = &set_cover.set_cover[i * set_cover.n_cols];
-            __builtin_prefetch(set_data, 0, 3);
-            size_t covered = cover_count(set_data, covered_elements);
-            double cost_benefit_ratio = static_cast<double>(covered) / set_cover.get_set_cost(i);
-            pq.push({cost_benefit_ratio, i});
-        }
-        // stop when all elements are covered or we've chosen all available sets while (m_total_covered_elements < NUM_ELEMENTS && m_solution.size() != set_cover.a.size() - 1)
-        while (m_total_covered_elements < set_cover.get_num_elements() && m_solution.size() != set_cover.get_num_sets())
-        {
-            auto best_set = pq.top();
-            pq.pop();
-            // check if ratio has changed
-            size_t best_set_idx = best_set.second;
-            const ull *set_data = &set_cover.set_cover[best_set_idx * set_cover.n_cols];
-            __builtin_prefetch(set_data, 0, 3);
-            size_t covered = cover_count(set_data, covered_elements);
-            double ratio = static_cast<double>(covered) / set_cover.get_set_cost(best_set_idx);
-            // if changed that put back in and try again
-            if (ratio < best_set.first)
-            {
-                pq.push({ratio, best_set_idx});
-                continue;
-            }
-            // otherwise add the set to the solution
-            for (size_t k{0}; k < set_cover.n_cols; k++)
-            {
-                covered_elements[k] |= set_data[k];
-            }
-            m_total_covered_elements += covered;
-            m_solution.insert(best_set_idx);
-        }
+        init_coverage();
+        greedy_solve();
     }
 };
 
@@ -915,39 +1101,91 @@ public:
 
     void solve()
     {
+        std::vector<size_t> set_indices = std::vector<size_t>(set_cover.get_num_sets(), 0);
+        std::iota(set_indices.begin(), set_indices.end(), 0);
+        std::sort(set_indices.begin(), set_indices.end(), [&](size_t a, size_t b)
+                  { return set_cover.get_set_cost(a) < set_cover.get_set_cost(b); });
+        size_t i = 0;
         while (m_total_covered_elements < set_cover.get_num_elements() && m_solution.size() < set_cover.get_num_sets())
         {
-            double min_set_cost = std::numeric_limits<double>::max();
-            size_t best_set = std::numeric_limits<size_t>::max();
-            for (size_t s{0}; s < set_cover.get_num_sets(); s++)
+            add_set(set_indices[i]);
+            i++;
+        }
+    }
+
+    /*
+        void solve()
+        {
+            while (m_total_covered_elements < set_cover.get_num_elements() && m_solution.size() < set_cover.get_num_sets())
             {
-                if (m_solution.find(s) != m_solution.end())
-                    continue;
-                // check if it covers something
-                bool covers_new = false;
-                for (auto e = set_cover.set_begin(s); e != set_cover.set_end(s); e++)
+                double min_set_cost = std::numeric_limits<double>::max();
+                size_t best_set = std::numeric_limits<size_t>::max();
+                for (size_t s{0}; s < set_cover.get_num_sets(); s++)
                 {
-                    if (m_covered_elements[*e] == 0)
+                    // check if it covers something
+                    bool covers_new = false;
+                    for (auto e = set_cover.set_begin(s); e != set_cover.set_end(s); e++)
                     {
-                        covers_new = true;
-                        break;
+                        if (m_covered_elements[*e] == 0)
+                        {
+                            covers_new = true;
+                            break;
+                        }
+                    }
+                    if (!covers_new)
+                        continue;
+                    double set_cost = set_cover.get_set_cost(s);
+                    if (set_cost < min_set_cost)
+                    {
+                        min_set_cost = set_cost;
+                        best_set = s;
                     }
                 }
-                if (!covers_new)
-                    continue;
-                double set_cost = set_cover.get_set_cost(s);
-                if (set_cost < min_set_cost)
+                if (best_set == std::numeric_limits<size_t>::max())
                 {
-                    min_set_cost = set_cost;
-                    best_set = s;
+                    m_feasible = false;
+                    return;
                 }
+                add_set(best_set);
             }
-            if (best_set == std::numeric_limits<size_t>::max())
-            {
-                m_feasible = false;
-                return;
-            }
-            add_set(best_set);
+        }
+    */
+};
+
+// Partial specialization for GreedyCheapest with SetCoverBit
+template <>
+class SetCoverSolverGreedyCheapest<SetCoverBit>
+    : public SetCoverSolver<SetCoverSolverGreedyCheapest<SetCoverBit>, SetCoverBit>
+{
+public:
+    using Base = SetCoverSolver<SetCoverSolverGreedyCheapest<SetCoverBit>, SetCoverBit>;
+    using Base::add_set;
+    using Base::m_chosen_sets;
+    using Base::m_feasible;
+    using Base::m_solution;
+    using Base::m_total_covered_elements;
+    using Base::NUM_ELEMENTS;
+    using Base::set_cover;
+    using Base::SetCoverSolver;
+
+    using Base::m_covered_elements;
+
+    // TODO: this is the same as for pseudo
+    void solve()
+    {
+        init_coverage();
+        std::vector<size_t> set_indices = std::vector<size_t>(set_cover.get_num_sets());
+        std::iota(set_indices.begin(), set_indices.end(), 0);
+        std::sort(set_indices.begin(), set_indices.end(), [&](size_t a, size_t b)
+                  { return set_cover.get_set_cost(a) < set_cover.get_set_cost(b); });
+        bool solved = false;
+        size_t i = 0;
+        while (!solved && m_solution.size() < set_cover.get_num_sets())
+        {
+            add_set(set_indices[i]);
+            solved = check_solved(m_covered_elements);
+            m_solution.insert(set_indices[i]);
+            i++;
         }
     }
 };

@@ -137,6 +137,42 @@ void SetCoverGreedyCheapestRunner::run(const std::filesystem::path &graph_file)
     result.solution_size_trimmed = solver.get_solution().size();
 }
 
+// ==================== (Set Cover Bit) Greedy Cheapest ====================
+void SetCoverGreedyCheapestBitRunner::run(const std::filesystem::path &graph_file)
+{
+    double start = omp_get_wtime();
+    const std::string link_file = graph_file.parent_path() / (graph_file.filename().stem().string() + ".links");
+    auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
+    auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
+    double end = omp_get_wtime();
+    std::cout << "Initialization time: " << end - start << "s\n";
+
+    start = omp_get_wtime();
+    auto sc = construct_set_cover_bit_matrix(
+        graph.graph.vertices,
+        graph.graph.edges,
+        graph.weights,
+        link_graph.graph.vertices,
+        link_graph.graph.edges,
+        link_graph.weights);
+    double reduction_time = omp_get_wtime() - start;
+    SetCoverSolverGreedyCheapest<SetCoverBit> solver{std::move(sc)};
+    solver.solve();
+    double solving_time = omp_get_wtime() - start - reduction_time;
+
+    result.solution_cost = solver.get_solution_cost();
+    result.solution_size = solver.get_solution().size();
+    result.time_reduction = reduction_time;
+    result.time_solving = solving_time;
+
+    solver.trim_solution();
+    double trim_time = omp_get_wtime();
+    result.time_trimming = trim_time - (start + reduction_time + solving_time);
+    result.solution_cost_trimmed = solver.get_solution_cost();
+    result.solution_size_trimmed = solver.get_solution().size();
+    result.time_total = reduction_time + solving_time + *result.time_trimming;
+}
+
 // ==================== (Set Cover Pseudo) Greedy Cheapest ====================
 void SetCoverPseudoGreedyCheapestRunner::run(const std::filesystem::path &graph_file)
 {
@@ -177,7 +213,7 @@ void SetCoverPseudoGreedyCheapestRunner::run(const std::filesystem::path &graph_
     result.time_trimming = trim_time - (start + reduction_time + solving_time);
     result.solution_cost_trimmed = solver.get_solution_cost();
     result.solution_size_trimmed = solver.get_solution().size();
-    result.time_total = reduction_time + solving_time + result.time_trimming;
+    result.time_total = reduction_time + solving_time + *result.time_trimming;
 }
 // ==================== Set Cover ILP ====================
 void SetCoverILPRunner::run(const std::filesystem::path &graph_file)
@@ -305,6 +341,8 @@ std::unique_ptr<AlgorithmRunner> create_algorithm_runner(Algorithms algorithm)
         return std::make_unique<SetCoverGreedySingleThreadedPQPseudoRunner>();
     case Algorithms::SetCoverGreedyCheapest:
         return std::make_unique<SetCoverGreedyCheapestRunner>();
+    case Algorithms::SetCoverGreedyCheapestBit:
+        return std::make_unique<SetCoverGreedyCheapestBitRunner>();
     case Algorithms::SetCoverPseudoGreedyCheapest:
         return std::make_unique<SetCoverPseudoGreedyCheapestRunner>();
     case Algorithms::SetCoverILP:
