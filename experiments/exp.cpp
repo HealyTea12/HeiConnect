@@ -62,6 +62,8 @@ void run_experiment_file(const std::filesystem::path &graph_file,
         log_to_file_and_stdout("d_avg: " + std::to_string(graph.average_degree()), output_file);
         runner->run(graph_file);
         runner->print_results(std::cout);
+        std::ofstream ofs{output_file.string(), std::ios::app};
+        runner->print_results(ofs);
     }
     catch (const std::exception &e)
     {
