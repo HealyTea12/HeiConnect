@@ -35,6 +35,10 @@ long run_isolated_and_measure_memory_usage(ChildFn child_function)
         int status;
         struct rusage rusage{};
         pid_t wpid = wait4(pid, &status, 0, &rusage);
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+        {
+            throw std::runtime_error("Child process failed");
+        }
 
         const long page_size = sysconf(_SC_PAGESIZE);
         const long peak_kb = rusage.ru_maxrss;

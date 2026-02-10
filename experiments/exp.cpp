@@ -40,6 +40,7 @@ void run_experiment(const std::filesystem::path &graph_dir,
         }
         catch (const std::exception &e)
         {
+            log_separator(output_file);
             std::cerr << "Error processing graph " << file.path() << ": " << e.what() << std::endl;
         }
     }
@@ -60,13 +61,18 @@ void run_experiment_file(const std::filesystem::path &graph_file,
         log_to_file_and_stdout("d_min: " + std::to_string(graph.min_degree()), output_file);
         log_to_file_and_stdout("d_max: " + std::to_string(graph.max_degree()), output_file);
         log_to_file_and_stdout("d_avg: " + std::to_string(graph.average_degree()), output_file);
-        runner->run(graph_file);
-        runner->print_results(std::cout);
-        std::ofstream ofs{output_file.string(), std::ios::app};
-        runner->print_results(ofs);
+        auto memory_usage = run_isolated_and_measure_memory_usage([&]()
+                                                                  {
+            runner->run(graph_file);
+            std::ofstream ofs{output_file.string(), std::ios::app};
+            runner->print_results(std::cout);
+            runner->print_results(ofs); });
+        log_to_file_and_stdout("Peak memory usage (pages): " + std::to_string(memory_usage), output_file);
+        log_separator(output_file);
     }
     catch (const std::exception &e)
     {
+        log_separator(output_file);
         std::cerr << "Error processing graph " << graph_file << ": " << e.what() << std::endl;
     }
 }
