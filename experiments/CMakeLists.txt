@@ -1,4 +1,6 @@
 find_package(Boost REQUIRED COMPONENTS program_options)
+find_package(benchmark REQUIRED)
+
 add_executable(generate_datasets)
 target_sources(generate_datasets
 PRIVATE
@@ -23,10 +25,33 @@ PRIVATE
 add_executable(sc_red_bm)
 target_sources(sc_red_bm
 PRIVATE
-    set_cover_reduction_BM.cpp
+    benchmarks/set_cover_reduction_BM.cpp
 )
 target_link_libraries(sc_red_bm
 PRIVATE
     heiconnect
     Boost::program_options
 )
+
+add_executable(vec_BM)
+target_sources(vec_BM
+PRIVATE
+    benchmarks/vec_BM.cpp
+)
+target_link_libraries(vec_BM
+PRIVATE    
+    benchmark::benchmark
+    benchmark::benchmark_main
+) 
+
+add_executable(sc_red_BM)
+target_sources(sc_red_BM
+PRIVATE
+    benchmarks/sc_red_BM.cpp
+)
+target_link_libraries(sc_red_BM
+PRIVATE    
+    heiconnect
+    benchmark::benchmark
+    benchmark::benchmark_main
+) 

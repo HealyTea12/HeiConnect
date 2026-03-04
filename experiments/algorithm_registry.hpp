@@ -10,6 +10,7 @@ enum class Algorithms
     SetCoverGreedySingleThreadedPQ,
     SetCoverGreedySingleThreadedPQBit,
     SetCoverGreedySingleThreadedPQPseudo,
+    SCGWCPseudoAncestry,
     MSTConnect,
     SetCoverGreedyCheapest,
     SetCoverGreedyCheapestBit,
@@ -21,11 +22,12 @@ enum class Algorithms
     SetCoverSharpGreedy
 };
 
-constexpr std::array<std::string_view, 13> ALGORITHM_NAMES = {
+constexpr std::array<std::string_view, 14> ALGORITHM_NAMES = {
     "GWC",
     "SetCoverGreedySingleThreadedPQ",
     "SetCoverGreedySingleThreadedPQBit",
     "SetCoverGreedySingleThreadedPQPseudo",
+    "SCGWCPseudoAncestry",
     "MSTConnect",
     "SetCoverGreedyCheapest",
     "SetCoverGreedyCheapestBit",

@@ -82,13 +82,13 @@ int main(int argc, char **argv)
             auto solution = solver.get_solution();
             std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
         }
-        if (type == "pseudoAlt")
+        if (type == "pseudo_ancestry")
         {
             Timer timer = Timer{
-                file.path().filename().string() + " - PSEUDO ALTERNATIVE",
+                file.path().filename().string() + " - PSEUDO ANCESTRY",
                 output_file};
             double start = omp_get_wtime();
-            auto set_cover_pseudo = construct_set_cover_alternative(
+            auto set_cover_pseudo = construct_set_cover_pseudo_ancestry(
                 graph.graph.vertices,
                 graph.graph.edges,
                 graph.weights,
@@ -96,7 +96,7 @@ int main(int argc, char **argv)
                 link_graph.graph.edges,
                 link_graph.weights);
             double end = omp_get_wtime();
-            std::cout << "Constructing set cover in PSEUDO ALTERNATIVE form took " << (end - start) << " seconds." << std::endl;
+            std::cout << "Constructing set cover in PSEUDO ANCESTRY form took " << (end - start) << " seconds." << std::endl;
             timer.add_checkpoint("reduction");
             SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo> solver{set_cover_pseudo};
             solver.solve();

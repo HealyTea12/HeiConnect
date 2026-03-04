@@ -32,6 +32,13 @@ public:
     void run(const std::filesystem::path &graph_file) override;
 };
 
+class SCGWCPseudoAncestryRunner : public AlgorithmRunner
+{
+
+public:
+    void run(const std::filesystem::path &graph_file) override;
+};
+
 class SetCoverGreedyCheapestRunner : public AlgorithmRunner
 {
 

@@ -104,6 +104,53 @@ void SetCoverGreedySingleThreadedPQPseudoRunner::run(const std::filesystem::path
     result.solution_size_ls = solver.get_solution().size();
 }
 
+// ==================== Set Cover Greedy PQ Pseudo Ancestry ====================
+void SCGWCPseudoAncestryRunner::run(const std::filesystem::path &graph_file)
+{
+    const std::string link_file = graph_file.parent_path() / (graph_file.filename().stem().string() + ".links");
+    auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
+    auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
+
+    double start = omp_get_wtime();
+    auto sc = construct_set_cover_pseudo_ancestry(
+        graph.graph.vertices,
+        graph.graph.edges,
+        graph.weights,
+        link_graph.graph.vertices,
+        link_graph.graph.edges,
+        link_graph.weights);
+    double reduction_time = omp_get_wtime() - start;
+    SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo> solver{std::move(sc)};
+    solver.solve();
+    double solving_time = omp_get_wtime() - start - reduction_time;
+
+    result.solution_cost = solver.get_solution_cost();
+    result.solution_size = solver.get_solution().size();
+    result.time_reduction = reduction_time;
+    result.time_solving = solving_time;
+    result.time_total = reduction_time + solving_time;
+
+    solver.trim_solution();
+    double trim_time = omp_get_wtime();
+    result.time_trimming = trim_time - (start + reduction_time + solving_time);
+    result.solution_cost_trimmed = solver.get_solution_cost();
+    result.solution_size_trimmed = solver.get_solution().size();
+
+    /*
+    while (solver.local_search(2))
+    {
+        double ls_improve_time = omp_get_wtime();
+        std::cout << "Improved solution: " << solver.get_solution_cost() << ',' << solver.get_solution().size() << "\n";
+        std::cout << "Time so far: " << ls_improve_time - trim_time << "s\n";
+        trim_time = ls_improve_time;
+    }
+    */
+    double ls_time = omp_get_wtime();
+    result.time_ls = ls_time - trim_time;
+    result.solution_cost_ls = solver.get_solution_cost();
+    result.solution_size_ls = solver.get_solution().size();
+}
+
 // ==================== Set Cover Greedy Cheapest ====================
 void SetCoverGreedyCheapestRunner::run(const std::filesystem::path &graph_file)
 {
@@ -339,6 +386,8 @@ std::unique_ptr<AlgorithmRunner> create_algorithm_runner(Algorithms algorithm)
         return std::make_unique<SetCoverGreedySingleThreadedPQBitRunner>();
     case Algorithms::SetCoverGreedySingleThreadedPQPseudo:
         return std::make_unique<SetCoverGreedySingleThreadedPQPseudoRunner>();
+    case Algorithms::SCGWCPseudoAncestry:
+        return std::make_unique<SCGWCPseudoAncestryRunner>();
     case Algorithms::SetCoverGreedyCheapest:
         return std::make_unique<SetCoverGreedyCheapestRunner>();
     case Algorithms::SetCoverGreedyCheapestBit:
