@@ -434,20 +434,20 @@ public:
     /// @param graph
     /// @param edge_weight
     /// @return
-    WeightedCRFGraph generate_links(double (*edge_weight)(size_t u, size_t v)) const
+    WeightedCRFGraph generate_links(double (*edge_weight)(NodeID u, NodeID v)) const
     {
         std::vector<EdgeID> new_vertices{};
         std::vector<NodeID> new_edges{};
         std::vector<double> weights{};
         new_vertices.push_back(0);
-        for (size_t u = 0; u < graph.vertices.size() - 1; ++u)
+        for (NodeID u = 0; u < graph.vertices.size() - 1; ++u)
         {
-            std::unordered_set<size_t> neighbours{};
-            for (size_t idx = graph.vertices[u]; idx < graph.vertices[u + 1]; ++idx)
+            std::unordered_set<NodeID> neighbours{};
+            for (EdgeID idx = graph.vertices[u]; idx < graph.vertices[u + 1]; ++idx)
             {
                 neighbours.insert(graph.edges[idx]);
             }
-            for (size_t i = u + 1; i < graph.vertices.size() - 1; i++)
+            for (NodeID i = u + 1; i < graph.vertices.size() - 1; i++)
             {
                 if (i == u)
                     continue;

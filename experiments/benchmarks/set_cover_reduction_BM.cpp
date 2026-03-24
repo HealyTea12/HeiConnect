@@ -76,7 +76,7 @@ int main(int argc, char **argv)
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in PSEUDO form took " << (end - start) << " seconds." << std::endl;
             timer.add_checkpoint("reduction");
-            SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo> solver{set_cover_pseudo};
+            SetCoverSolverGreedySingleThreadedPQ<decltype(set_cover_pseudo)> solver{set_cover_pseudo};
             solver.solve();
             timer.add_checkpoint("solving");
             auto solution = solver.get_solution();
@@ -98,7 +98,7 @@ int main(int argc, char **argv)
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in PSEUDO ANCESTRY form took " << (end - start) << " seconds." << std::endl;
             timer.add_checkpoint("reduction");
-            SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo> solver{set_cover_pseudo};
+            SetCoverSolverGreedySingleThreadedPQ<decltype(set_cover_pseudo)> solver{set_cover_pseudo};
             solver.solve();
             timer.add_checkpoint("solving");
             auto solution = solver.get_solution();

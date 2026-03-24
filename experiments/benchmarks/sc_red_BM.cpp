@@ -4,9 +4,9 @@
 
 static void BM_scred_csr(benchmark::State &state)
 {
-    WeightedCRFGraph<> graph = create_star_graph(state.range(0));
-    WeightedCRFGraph<> link_graph = graph.generate_links([](size_t u, size_t v)
-                                                         { return 1.0; });
+    auto graph = create_star_graph<uint64_t, uint64_t, double>(state.range(0));
+    auto link_graph = graph.generate_links([](uint64_t u, uint64_t v)
+                                           { return 1.0; });
     volatile int dummy = 0;
     for (auto _ : state)
     {
@@ -24,9 +24,9 @@ static void BM_scred_csr(benchmark::State &state)
 
 static void BM_scred_bit(benchmark::State &state)
 {
-    WeightedCRFGraph<> graph = create_star_graph(state.range(0));
-    WeightedCRFGraph<> link_graph = graph.generate_links([](size_t u, size_t v)
-                                                         { return 1.0; });
+    auto graph = create_star_graph<uint64_t, uint64_t, double>(state.range(0));
+    auto link_graph = graph.generate_links([](uint64_t u, uint64_t v)
+                                           { return 1.0; });
     volatile int dummy = 0;
     for (auto _ : state)
     {
@@ -44,12 +44,12 @@ static void BM_scred_bit(benchmark::State &state)
 
 static void BM_scred_partial_bit(benchmark::State &state)
 {
-    WeightedCRFGraph<> graph = create_star_graph(state.range(0));
-    WeightedCRFGraph<> link_graph = graph.generate_links([](size_t u, size_t v)
-                                                         { return 1.0; });
+    auto graph = create_star_graph<uint64_t, uint64_t, double>(state.range(0));
+    auto link_graph = graph.generate_links([](uint64_t u, uint64_t v)
+                                           { return 1.0; });
     for (auto _ : state)
     {
-        SetCoverPseudo sc = construct_set_cover_pseudo(
+        SetCoverPseudo<uint64_t, uint64_t> sc = construct_set_cover_pseudo(
             graph.graph.vertices,
             graph.graph.edges,
             graph.weights,
@@ -63,13 +63,13 @@ static void BM_scred_partial_bit(benchmark::State &state)
 
 static void BM_scred_partial_ancestry(benchmark::State &state)
 {
-    WeightedCRFGraph<> graph = create_star_graph(state.range(0));
-    WeightedCRFGraph<> link_graph = graph.generate_links([](size_t u, size_t v)
-                                                         { return 1.0; });
+    auto graph = create_star_graph<uint64_t, uint64_t, double>(state.range(0));
+    auto link_graph = graph.generate_links([](uint64_t u, uint64_t v)
+                                           { return 1.0; });
     volatile int dummy = 0;
     for (auto _ : state)
     {
-        SetCoverPseudo sc = construct_set_cover_pseudo_ancestry(
+        auto sc = construct_set_cover_pseudo_ancestry(
             graph.graph.vertices,
             graph.graph.edges,
             graph.weights,
@@ -81,8 +81,33 @@ static void BM_scred_partial_ancestry(benchmark::State &state)
     }
 }
 
-BENCHMARK(BM_scred_partial_ancestry)->DenseRange(128, 1024, 128);
-BENCHMARK(BM_scred_partial_bit)->DenseRange(128, 1024, 128);
-BENCHMARK(BM_scred_bit)->DenseRange(128, 1024, 128);
-BENCHMARK(BM_scred_csr)->DenseRange(128, 1024, 128);
+static void BM_scred_partial_ancestry_vec(benchmark::State &state)
+{
+    auto graph = create_star_graph<uint32_t, uint32_t, double>(state.range(0));
+    auto link_graph = graph.generate_links([](uint32_t u, uint32_t v)
+                                           { return 1.0; });
+    volatile int dummy = 0;
+    for (auto _ : state)
+    {
+        SetCoverPseudo<uint32_t, uint32_t> sc = construct_set_cover_pseudo_ancestry_vec(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+        dummy = 1;
+        benchmark::ClobberMemory();
+    }
+}
+
+const int MIN = 256;
+const int MAX = 1 << 14;
+const int STEP = 2;
+
+BENCHMARK(BM_scred_partial_ancestry_vec)->Range(MIN, MAX);
+BENCHMARK(BM_scred_partial_ancestry)->Range(MIN, MAX);
+// BENCHMARK(BM_scred_partial_bit)->DenseRange(MIN, MAX, STEP);
+// BENCHMARK(BM_scred_bit)->DenseRange(MIN, MAX, STEP);
+// BENCHMARK(BM_scred_csr)->DenseRange(MIN, MAX, STEP);
 BENCHMARK_MAIN();

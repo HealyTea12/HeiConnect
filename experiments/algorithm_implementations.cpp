@@ -73,7 +73,7 @@ void SetCoverGreedySingleThreadedPQPseudoRunner::run(const std::filesystem::path
         link_graph.graph.edges,
         link_graph.weights);
     double reduction_time = omp_get_wtime() - start;
-    SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo> solver{std::move(sc)};
+    SetCoverSolverGreedySingleThreadedPQ<decltype(sc)> solver{std::move(sc)};
     solver.solve();
     double solving_time = omp_get_wtime() - start - reduction_time;
 
@@ -120,7 +120,7 @@ void SCGWCPseudoAncestryRunner::run(const std::filesystem::path &graph_file)
         link_graph.graph.edges,
         link_graph.weights);
     double reduction_time = omp_get_wtime() - start;
-    SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo> solver{std::move(sc)};
+    SetCoverSolverGreedySingleThreadedPQ<decltype(sc)> solver{std::move(sc)};
     solver.solve();
     double solving_time = omp_get_wtime() - start - reduction_time;
 
@@ -246,7 +246,7 @@ void SetCoverPseudoGreedyCheapestRunner::run(const std::filesystem::path &graph_
         link_graph.graph.edges,
         link_graph.weights);
     double reduction_time = omp_get_wtime() - start;
-    SetCoverSolverGreedyCheapest<SetCoverPseudo> solver{std::move(sc)};
+    SetCoverSolverGreedyCheapest<decltype(sc)> solver{std::move(sc)};
     solver.solve();
     double solving_time = omp_get_wtime() - start - reduction_time;
 
@@ -297,7 +297,7 @@ void SetCoverPseudoILPRunner::run(const std::filesystem::path &graph_file)
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
     double start = omp_get_wtime();
-    SetCoverPseudo sc = construct_set_cover_pseudo(
+    auto sc = construct_set_cover_pseudo(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
@@ -305,7 +305,7 @@ void SetCoverPseudoILPRunner::run(const std::filesystem::path &graph_file)
         link_graph.graph.edges,
         link_graph.weights);
     double reduction_time = omp_get_wtime() - start;
-    SetCoverSolverILP<SetCoverPseudo> solver{std::move(sc)};
+    SetCoverSolverILP<decltype(sc)> solver{std::move(sc)};
     solver.solve();
     double solving_time = omp_get_wtime() - start - reduction_time;
     auto ilp_solution = solver.get_solution();

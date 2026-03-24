@@ -35,19 +35,20 @@ inline WeightedCRFGraph<> create_cycle_graph_undirected(size_t n_nodes)
 }
 
 // Creates a star graph with one center node (node 0) connected to n_leaves leaf nodes.
-inline WeightedCRFGraph<> create_star_graph(size_t n_leaves)
+template <class node_T = uint64_t, class edge_T = uint64_t, class weight_T = double>
+inline WeightedCRFGraph<node_T, edge_T, weight_T> create_star_graph(node_T n_leaves)
 {
-    auto vertices = std::vector<size_t>(n_leaves + 2, 0);
-    auto edges = std::vector<size_t>(2 * n_leaves, 0);
-    auto weights = std::vector<double>(2 * n_leaves, 1.0);
+    auto vertices = std::vector<edge_T>(n_leaves + 2, static_cast<edge_T>(0));
+    auto edges = std::vector<node_T>(2 * n_leaves, static_cast<node_T>(0));
+    auto weights = std::vector<weight_T>(2 * n_leaves, static_cast<weight_T>(1.0));
     vertices[1] = n_leaves;
-    for (size_t i = 1; i <= n_leaves; i++)
+    for (node_T i = static_cast<node_T>(1); i <= n_leaves; i++)
     {
         vertices[i + 1] = vertices[i] + 1;
         edges[i - 1] = i; // center to leaf
         edges[n_leaves + i - 1] = 0;
     }
-    return WeightedCRFGraph<>{{vertices, edges}, weights};
+    return WeightedCRFGraph<node_T, edge_T, weight_T>{{vertices, edges}, weights};
 }
 
 inline WeightedCRFGraph<> create_random_tree(size_t n_nodes, unsigned int seed = 42)

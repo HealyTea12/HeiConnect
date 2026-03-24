@@ -15,6 +15,7 @@
 
 #include "HeiConnect/minmax.hpp"
 #include "HeiConnect/data_structures/immutable_graph.hpp"
+#include "HeiConnect/set_cover/cactus_min_cuts.hpp"
 
 template <typename T>
 concept SetCoverCon = requires(T t, size_t i) {
@@ -178,20 +179,22 @@ struct SetCoverBit
 
 static_assert(SetCoverCon<SetCoverBit>);
 
+template <class link_node_T, class link_edge_T>
+    requires std::integral<link_node_T> && std::integral<link_edge_T>
 class SetCoverPseudo
 {
 public:
     const std::vector<ull> min_cuts;
     const ull n_min_cuts;
-    const std::vector<size_t> link_vertices;
-    const std::vector<size_t> link_edges;
+    const std::vector<link_edge_T> link_vertices;
+    const std::vector<link_node_T> link_edges;
     const std::vector<double> link_weights;
     const size_t n_cols;
     SetCoverPseudo(
         const std::vector<ull> min_cuts,
         ull n_min_cuts,
-        const std::vector<size_t> link_vertices,
-        const std::vector<size_t> link_edges,
+        const std::vector<link_edge_T> link_vertices,
+        const std::vector<link_node_T> link_edges,
         const std::vector<double> link_weights)
         : min_cuts(std::move(min_cuts)),
           n_min_cuts(n_min_cuts),
@@ -221,7 +224,21 @@ public:
     }
 };
 
-static_assert(SetCoverCon<SetCoverPseudo>);
+static_assert(SetCoverCon<SetCoverPseudo<uint64_t, uint64_t>>);
+
+// TODO: set covers are assuming size_t indices everywhere, should improve with templates
+class SetCoverOracle
+{
+    SetCoverOracle(
+        std::vector<size_t> tin,
+        std::vector<size_t> tout,
+        CactusMinCuts<size_t> mcs) : m_tin(std::move(tin)), m_tout(std::move(tout)), m_mcs(std::move(mcs)) {};
+
+private:
+    std::vector<size_t> m_tin;
+    std::vector<size_t> m_tout;
+    CactusMinCuts<size_t> m_mcs;
+};
 
 template <typename Derived, typename SetCoverType = SetCover>
     requires(SetCoverCon<SetCoverType>)
@@ -591,11 +608,11 @@ protected:
 };
 
 // specialization of SetCoverSolver  with SetCoverType = SetCoverPseudo
-template <typename Derived>
-class SetCoverSolver<Derived, SetCoverPseudo>
+template <typename Derived, class link_node_T, class link_edge_T>
+class SetCoverSolver<Derived, SetCoverPseudo<link_node_T, link_edge_T>>
 {
 public:
-    using SetCoverType = SetCoverPseudo;
+    using SetCoverType = SetCoverPseudo<link_node_T, link_edge_T>;
 
     SetCoverSolver(SetCoverType sc)
         : set_cover(std::move(sc))
@@ -1000,18 +1017,18 @@ public:
 
     void solve()
     {
-        init_coverage();
-        greedy_solve();
+        this->init_coverage();
+        this->greedy_solve();
     }
 };
 
 // Partial specialization for SetCoverPseudo
-template <>
-class SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo>
-    : public SetCoverSolver<SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo>, SetCoverPseudo>
+template <class link_node_T, class link_edge_T>
+class SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo<link_node_T, link_edge_T>>
+    : public SetCoverSolver<SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo<link_node_T, link_edge_T>>, SetCoverPseudo<link_node_T, link_edge_T>>
 {
 public:
-    using Base = SetCoverSolver<SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo>, SetCoverPseudo>;
+    using Base = SetCoverSolver<SetCoverSolverGreedySingleThreadedPQ<SetCoverPseudo<link_node_T, link_edge_T>>, SetCoverPseudo<link_node_T, link_edge_T>>;
     using Base::add_set;
     using Base::m_covered_elements;
     using Base::m_total_covered_elements;
@@ -1023,8 +1040,8 @@ public:
     // we should reuse this code and avoid copying it
     void solve()
     {
-        init_coverage();
-        greedy_solve();
+        this->init_coverage();
+        this->greedy_solve();
     }
 };
 
@@ -1191,12 +1208,12 @@ public:
 };
 
 // Partial specialization for GreedyCheapest with SetCoverPseudo
-template <>
-class SetCoverSolverGreedyCheapest<SetCoverPseudo>
-    : public SetCoverSolver<SetCoverSolverGreedyCheapest<SetCoverPseudo>, SetCoverPseudo>
+template <typename link_node_T, typename link_edge_T>
+class SetCoverSolverGreedyCheapest<SetCoverPseudo<link_node_T, link_edge_T>>
+    : public SetCoverSolver<SetCoverSolverGreedyCheapest<SetCoverPseudo<link_node_T, link_edge_T>>, SetCoverPseudo<link_node_T, link_edge_T>>
 {
 public:
-    using Base = SetCoverSolver<SetCoverSolverGreedyCheapest<SetCoverPseudo>, SetCoverPseudo>;
+    using Base = SetCoverSolver<SetCoverSolverGreedyCheapest<SetCoverPseudo<link_node_T, link_edge_T>>, SetCoverPseudo<link_node_T, link_edge_T>>;
     using Base::add_set;
     using Base::m_chosen_sets;
     using Base::m_feasible;
@@ -1230,7 +1247,7 @@ public:
         {
             auto [u, v, w] = m_links[set_indices[i]];
             add_set(m_covered_elements, u, v);
-            solved = check_solved(m_covered_elements);
+            solved = this->check_solved(m_covered_elements);
             m_solution.insert(set_indices[i]);
             i++;
         }
@@ -1311,12 +1328,12 @@ public:
 
 // Partial specialization for ILP with SetCoverPseudo
 // TODO: under construction
-template <>
-class SetCoverSolverILP<SetCoverPseudo>
-    : public SetCoverSolver<SetCoverSolverILP<SetCoverPseudo>, SetCoverPseudo>
+template <typename link_node_T, typename link_edge_T>
+class SetCoverSolverILP<SetCoverPseudo<link_node_T, link_edge_T>>
+    : public SetCoverSolver<SetCoverSolverILP<SetCoverPseudo<link_node_T, link_edge_T>>, SetCoverPseudo<link_node_T, link_edge_T>>
 {
 public:
-    using Base = SetCoverSolver<SetCoverSolverILP<SetCoverPseudo>, SetCoverPseudo>;
+    using Base = SetCoverSolver<SetCoverSolverILP<SetCoverPseudo<link_node_T, link_edge_T>>, SetCoverPseudo<link_node_T, link_edge_T>>;
     using Base::add_set;
     using Base::m_chosen_sets;
     using Base::m_covered_elements;
