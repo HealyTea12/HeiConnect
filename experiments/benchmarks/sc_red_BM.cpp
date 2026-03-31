@@ -102,12 +102,12 @@ static void BM_scred_partial_ancestry_vec(benchmark::State &state)
 }
 
 const int MIN = 256;
-const int MAX = 1 << 14;
+const int MAX = 1 << 10;
 const int STEP = 2;
 
 BENCHMARK(BM_scred_partial_ancestry_vec)->Range(MIN, MAX);
 BENCHMARK(BM_scred_partial_ancestry)->Range(MIN, MAX);
-// BENCHMARK(BM_scred_partial_bit)->DenseRange(MIN, MAX, STEP);
-// BENCHMARK(BM_scred_bit)->DenseRange(MIN, MAX, STEP);
-// BENCHMARK(BM_scred_csr)->DenseRange(MIN, MAX, STEP);
+BENCHMARK(BM_scred_partial_bit)->Range(MIN, MAX);
+BENCHMARK(BM_scred_bit)->Range(MIN, MAX);
+BENCHMARK(BM_scred_csr)->Range(MIN, MAX);
 BENCHMARK_MAIN();

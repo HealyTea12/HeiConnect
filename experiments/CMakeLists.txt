@@ -48,6 +48,7 @@ add_executable(sc_red_BM)
 target_sources(sc_red_BM
 PRIVATE
     benchmarks/sc_red_BM.cpp
+    benchmarks/cap_BM.cpp
 )
 target_link_libraries(sc_red_BM
 PRIVATE    

@@ -993,6 +993,8 @@ dfs_tin_tout_cycles(
         }
         cycle.emplace_back(u);
         cycle.emplace_back(v);
+        is_cycle_edge[get_edge_index(vertices, edges, u, v)] = 1;
+        is_cycle_edge[get_edge_index(vertices, edges, v, u)] = 1;
         cycles.emplace_back(cycle);
     }
 
@@ -1080,8 +1082,15 @@ CactusMinCuts<node_T> calculate_all_cactus_min_cuts(
 
     // There is an important exception case to take care of here
     // We assume that the cycles are stored in traversal order
+    // Each cycle mincut is the child of the first and second edges
     std::vector<std::pair<node_T, node_T>> cycle_mcs{};
-    for (const auto &cycle : cycles)
+    // TODO: THIS TEMPORARILY REVERSES THE CYCLE ORDER FOR DEBUGGING
+    auto reversed_cycles = cycles;
+    for (auto &cycle : reversed_cycles)
+    {
+        std::reverse(cycle.begin(), cycle.end());
+    }
+    for (const auto &cycle : reversed_cycles)
     {
         assert(cycle.size() >= 3 && "Cycles must have at least 3 nodes; bug in cycle detection");
         for (size_t i = 0; i < cycle.size() - 2; i++)
@@ -1092,12 +1101,12 @@ CactusMinCuts<node_T> calculate_all_cactus_min_cuts(
             for (size_t j = i + 1; j < cycle.size() - 1; j++)
             {
                 node_T edge2_u = cycle[j];
-                node_T edge2_v = cycle[(j + 1) % cycle.size()];
+                node_T edge2_v = cycle[j + 1];
                 auto edge2_idx = get_edge_index(vertices, edges, edge2_u, edge2_v);
                 weight_T cycle_cut = weights[edge1_idx] + weights[edge2_idx];
                 if (cycle_cut == min_cut)
                 {
-                    cycle_mcs.emplace_back(edge1_u, edge2_u);
+                    cycle_mcs.emplace_back(edge1_v, edge2_v);
                 }
             }
         }
@@ -1114,7 +1123,7 @@ CactusMinCuts<node_T> calculate_all_cactus_min_cuts(
             weight_T w = weights[e];
             if (w + f_w == min_cut)
             {
-                tree_mcs.emplace_back(u);
+                tree_mcs.emplace_back(v);
             }
         }
     }
@@ -1134,18 +1143,21 @@ bool isAncestor(
 }
 
 // Set Cover constructor
-template <class node_T, class edge_T, class weight_T>
-    requires std::integral<node_T> && std::integral<edge_T>
-SetCoverOracle construct_set_cover_oracle(
+template <class node_T, class edge_T, class weight_T, class link_node_T, class link_edge_T, class link_weight_T>
+    requires std::integral<node_T> && std::integral<edge_T> && std::integral<link_node_T> && std::integral<link_edge_T>
+SetCoverOracle<link_node_T, link_edge_T, link_weight_T> construct_set_cover_oracle(
     std::vector<edge_T> &vertices,
     std::vector<node_T> &edges,
-    std::vector<weight_T> &weights)
+    std::vector<weight_T> &weights,
+    std::vector<link_node_T> &link_vertices,
+    std::vector<link_edge_T> &link_edges,
+    std::vector<link_weight_T> &link_weights)
 {
     auto [tin, tout, cycles, is_cycle_edge, parent] = dfs_tin_tout_cycles(vertices, edges);
     weight_T min_cut = calculate_cactus_min_cut(vertices, edges, weights, cycles, is_cycle_edge);
     auto cactus_min_cuts = calculate_all_cactus_min_cuts(
         vertices, edges, weights, cycles, is_cycle_edge, min_cut, parent, static_cast<node_T>(0));
-    return SetCoverOracle{vertices, edges, tin, tout, cactus_min_cuts};
+    return SetCoverOracle<link_node_T, link_edge_T, link_weight_T>{tin, tout, cactus_min_cuts, link_vertices, link_edges, link_weights};
 }
 
 template <typename node_T, typename edge_T>

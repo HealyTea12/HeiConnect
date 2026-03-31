@@ -69,6 +69,12 @@ public:
     void run(const std::filesystem::path &graph_file) override;
 };
 
+class OracleGreedySingleThreadedPQRunner : public AlgorithmRunner
+{
+public:
+    void run(const std::filesystem::path &graph_file) override;
+};
+
 // ==================== Direct Graph Algorithms ====================
 
 class DirectGreedyRunner : public AlgorithmRunner
