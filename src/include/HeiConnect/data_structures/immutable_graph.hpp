@@ -6,8 +6,13 @@
 #include <concepts>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
+#include <string>
+#include <tuple>
 
 #include "pugixml.hpp"
+
+#include "HeiConnect/set_cover/transform_single_partition_matrix_utils.hpp"
 
 template <typename NodeID = size_t, typename EdgeID = size_t>
 struct CRFGraph
@@ -543,18 +548,135 @@ public:
 
     // TODO: under construction
     // Only works for cactus graphs
-    WeightedCRFGraph<> cactus_generate_block_tree(size_t root) const
+    using CycleID = int;
+    std::tuple<
+        WeightedCRFGraph<>,
+        std::vector<std::vector<CycleID>>>
+    cactus_generate_block_tree(size_t root) const
     {
-        auto tin = std::vector<size_t>(graph.vertices.size() - 1, 0);
-        auto tout = std::vector<size_t>(graph.vertices.size() - 1, 0);
-        auto depth = std::vector<size_t>(graph.vertices.size() - 1, 0);
-        auto parent = std::vector<decltype(graph.edges[0])>(graph.vertices.size() - 1, 0);
-        size_t timer = 0;
-        size_t block_count = 0;
-        // dfs
-        std::vector<char> visited(graph.vertices.size() - 1, 0);
-        std::vector<size_t> stack{root};
+        auto parent = std::vector<NodeID>(graph.vertices.size() - 1, static_cast<NodeID>(-1));
+        auto state = std::vector<char>(graph.vertices.size() - 1, 0);
+        auto tin = std::vector<EdgeID>(graph.vertices.size() - 1, 0);
+        auto next_edge = std::vector<EdgeID>(graph.vertices.size() - 1, 0);
+        auto stack = std::vector<NodeID>{static_cast<NodeID>(root)};
+        EdgeID timer{0};
+        auto cycle_edges = std::vector<std::pair<NodeID, NodeID>>();
+        auto is_cycle_edge = std::vector<bool>(graph.edges.size(), false);
+        // what cycle each edge belongs to, -1 being none.
+        auto cycle_id = std::vector<CycleID>(graph.edges.size(), -1);
+        auto cycles = std::vector<std::vector<NodeID>>{};
+        auto cycle_positions = std::vector<std::vector<CycleID>>{};
+        parent[root] = static_cast<NodeID>(root);
+        while (!stack.empty())
+        {
+            NodeID current = stack.back();
 
-        return *this;
+            if (state[current] == 0)
+            {
+                state[current] = 1;
+                tin[current] = timer++;
+                next_edge[current] = graph.vertices[current];
+            }
+
+            bool advanced = false;
+            for (EdgeID &e = next_edge[current]; e < graph.vertices[current + 1]; ++e)
+            {
+                NodeID v = graph.edges[e];
+                if (v == parent[current])
+                {
+                    continue;
+                }
+                if (state[v] == 0)
+                {
+                    parent[v] = current;
+                    stack.emplace_back(v);
+                    ++e;
+                    advanced = true;
+                    break;
+                }
+
+                if (state[v] == 1 && tin[v] < tin[current])
+                {
+                    cycle_edges.emplace_back(current, v);
+                }
+            }
+
+            if (!advanced)
+            {
+                state[current] = 2;
+                stack.pop_back();
+            }
+        }
+        for (CycleID cid{0}; cid < cycle_edges.size(); cid++)
+        {
+            auto ce = cycle_edges[cid];
+            std::vector<NodeID> cycle{};
+            std::vector<CycleID> cycle_pos = std::vector<CycleID>(graph.vertices.size() - 1, -1);
+            NodeID u = ce.first;
+            NodeID v = ce.second;
+            auto f = get_edge_index(graph.vertices, graph.edges, u, v);
+            auto b = get_edge_index(graph.vertices, graph.edges, v, u);
+            is_cycle_edge[f] = true;
+            is_cycle_edge[b] = true;
+            cycle_id[f] = cid;
+            cycle_id[b] = cid;
+            while (u != v)
+            {
+                cycle.emplace_back(u);
+                f = get_edge_index(graph.vertices, graph.edges, u, parent[u]);
+                b = get_edge_index(graph.vertices, graph.edges, parent[u], u);
+                is_cycle_edge[b] = true;
+                is_cycle_edge[f] = true;
+                cycle_id[f] = cid;
+                cycle_id[b] = cid;
+                u = parent[u];
+            }
+            cycle.emplace_back(v);
+            for (CycleID i{0}; i < cycle.size(); i++)
+            {
+                NodeID node = cycle[i];
+                cycle_pos[node] = i;
+            }
+            cycle_positions.emplace_back(cycle_pos);
+            cycles.emplace_back(cycle);
+        }
+        auto new_vertices = std::vector<EdgeID>(graph.vertices.size() + cycle_edges.size(), 0);
+        auto new_edges = std::vector<NodeID>();
+        new_edges.reserve(graph.edges.size());
+        auto new_weights = std::vector<WeightType>();
+        new_weights.reserve(weights.size());
+        for (NodeID u{0}; u < graph.vertices.size() - 1; u++)
+        {
+            auto added_cycle_neighbors = std::unordered_set<CycleID>{};
+            for (EdgeID e{graph.vertices[u]}; e < graph.vertices[u + 1]; e++)
+            {
+                NodeID v = graph.edges[e];
+                if (is_cycle_edge[e])
+                {
+                    auto cid = cycle_id[e];
+                    if (added_cycle_neighbors.insert(cid).second)
+                    {
+                        new_edges.emplace_back(graph.vertices.size() - 1 + cid);
+                        new_weights.emplace_back(weights[e]);
+                    }
+                }
+                else
+                {
+                    new_edges.emplace_back(v);
+                    new_weights.emplace_back(weights[e]);
+                }
+            }
+            new_vertices[u + 1] = new_edges.size();
+        }
+        for (CycleID cid{0}; cid < cycle_edges.size(); cid++)
+        {
+            for (NodeID node : cycles[cid])
+            {
+                new_edges.emplace_back(node);
+                new_weights.emplace_back(1.0);
+            }
+            new_vertices[graph.vertices.size() + cid] = new_edges.size();
+        }
+        return std::make_tuple(WeightedCRFGraph{{new_vertices, new_edges}, new_weights}, cycle_positions);
     }
 };

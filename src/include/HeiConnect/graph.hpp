@@ -157,8 +157,8 @@ inline bool is_same_edge(Edge &e, int u, int v) {
 }
 
 // Dynamic cactus graph data structure
-#define CactusNodeID int
-#define CycleID int
+using CactusNodeID = int;
+using CycleID = int;
 
 class DynamicCactus : public Graph {
 public:

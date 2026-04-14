@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 #include <omp.h>
 #include <bit>
@@ -11,6 +12,7 @@
 #include <immintrin.h>
 #include <iomanip>
 #include <cstdint>
+#include <limits>
 
 #include <gurobi_c++.h>
 
@@ -312,6 +314,96 @@ private:
     }
 };
 
+template <typename node_T, typename cycle_id_T>
+struct CycleCross
+{
+    cycle_id_T cycle_id;
+    node_T v1;
+    node_T v2;
+};
+using cycle_pos_T = int;
+using cycle_id_T = int;
+template <class link_node_T, class link_edge_T, class link_weight_T>
+    requires std::integral<link_node_T> && std::integral<link_edge_T>
+class SetCoverCyc
+{
+public:
+    SetCoverCyc(
+        std::vector<ull> tree_partition_matrix,
+        ull n_tree_min_cuts,
+        ull n_cycle_min_cuts,
+        std::vector<std::vector<uint32_t>> cycle_coverages,
+        std::vector<std::vector<CycleCross<cycle_pos_T, cycle_id_T>>> cycle_crosses,
+        std::vector<std::vector<cycle_pos_T>> cycle_positions,
+        std::vector<size_t> cycle_sizes,
+        std::vector<link_edge_T> link_vertices,
+        std::vector<link_node_T> link_edges,
+        std::vector<link_weight_T> link_weights)
+        : m_tree_partition_matrix(std::move(tree_partition_matrix)),
+          m_n_tree_min_cuts(n_tree_min_cuts),
+          m_n_cycle_min_cuts(n_cycle_min_cuts),
+          m_cycle_coverages(std::move(cycle_coverages)),
+          link_vertices(std::move(link_vertices)),
+          link_edges(std::move(link_edges)),
+          link_weights(std::move(link_weights)),
+          m_cycle_crosses(std::move(cycle_crosses)),
+          cycle_positions(std::move(cycle_positions)),
+          n_cols((m_n_tree_min_cuts + 8 * sizeof(ull) - 1) / (8 * sizeof(ull))),
+          cycle_sizes(cycle_sizes)
+    {
+        WeightedCRFGraph<> g = WeightedCRFGraph<>{
+            {this->link_vertices, this->link_edges},
+            this->link_weights};
+        links = g.csr_to_vec_links();
+    };
+
+private:
+    const ull m_n_tree_min_cuts;
+    const ull m_n_cycle_min_cuts;
+
+public:
+    const std::vector<ull> m_tree_partition_matrix;
+    const size_t n_cols;
+    const std::vector<std::vector<CycleCross<cycle_pos_T, cycle_id_T>>> m_cycle_crosses;
+    const std::vector<link_edge_T> link_vertices;
+    const std::vector<link_node_T> link_edges;
+    const std::vector<link_weight_T> link_weights;
+    std::vector<std::tuple<size_t, size_t, double>> links; // (u, v, weight)
+    std::vector<std::vector<uint32_t>> m_cycle_coverages;
+    const std::vector<std::vector<cycle_pos_T>> cycle_positions;
+    const std::vector<size_t> cycle_sizes;
+
+public:
+    size_t get_num_sets() const noexcept
+    {
+        return link_weights.size();
+    }
+    size_t get_num_elements() const noexcept
+    {
+        return static_cast<size_t>(m_n_tree_min_cuts) + m_n_cycle_min_cuts;
+    }
+    double get_set_cost(size_t set_index) const
+    {
+        return static_cast<double>(link_weights[set_index]);
+    }
+    BitSetIterator set_begin(size_t set_index)
+    {
+        throw std::logic_error("SetCoverPseudo does not fully implement interface yet.");
+    };
+    BitSetIterator set_end(size_t set_index)
+    {
+        throw std::logic_error("SetCoverPseudo does not fully implement interface yet.");
+    }
+    size_t get_num_tree_cuts() const
+    {
+        return static_cast<size_t>(m_n_tree_min_cuts);
+    }
+    size_t get_num_cycle_cuts() const
+    {
+        return m_n_cycle_min_cuts;
+    }
+};
+
 template <typename Derived, typename SetCoverType = SetCover>
     requires(SetCoverCon<SetCoverType>)
 class SetCoverSolver
@@ -323,11 +415,14 @@ public:
         NUM_ELEMENTS = set_cover.get_num_elements();
         m_covered_elements = std::vector<int>(NUM_ELEMENTS, 0);
     }
+
     ~SetCoverSolver() = default;
+
     void solve()
     {
         static_cast<Derived *>(this)->solve();
     };
+
     // Removes sets that are no longer necessary for the solution.
     // Those whose elements are still covered by other sets in the solution.
     void trim_solution()
@@ -397,6 +492,7 @@ public:
     {
         return m_solution;
     }
+
     double get_solution_cost() const
     {
         double total_cost = 0.0;
@@ -420,6 +516,7 @@ protected:
         }
         m_solution.insert(set_index);
     }
+
     void remove_set(size_t set_index) noexcept
     {
         for (auto j{set_cover.set_begin(set_index)}; j != set_cover.set_end(set_index); j++)
@@ -1064,7 +1161,7 @@ public:
                   { return set_cover.get_set_cost(a) > set_cover.get_set_cost(b); });
         for (const auto &set_index : solution_vec)
         {
-            if (can_remove(set_index))
+            if (this->can_remove(set_index))
             {
                 delete_set(set_index);
             }
@@ -1080,17 +1177,10 @@ public:
     size_t cover_count(size_t set_index)
     {
         size_t covered = 0;
-        auto [u, v, w] = m_links[set_index];
-        for (size_t k{0}; k < set_cover.get_num_tree_cuts(); k++)
+        const auto &covered_elements = get_or_build_set_coverage(set_index);
+        for (const auto cut_idx : covered_elements)
         {
-            if (set_cover.covers_tree(set_index, k) && m_coverage_count[k] == 0)
-            {
-                covered++;
-            }
-        }
-        for (size_t k{0}; k < set_cover.get_num_cycle_cuts(); k++)
-        {
-            if (set_cover.covers_cycle(set_index, k) && m_coverage_count[set_cover.get_num_tree_cuts() + k] == 0)
+            if (m_coverage_count[cut_idx] == 0)
             {
                 covered++;
             }
@@ -1100,23 +1190,13 @@ public:
 
     void add_set(size_t set_index)
     {
-        auto [u, v, w] = m_links[set_index];
-        for (size_t k{0}; k < set_cover.get_num_tree_cuts(); k++)
+        const auto &covered_elements = get_or_build_set_coverage(set_index);
+        for (const auto cut_idx : covered_elements)
         {
-            if (set_cover.covers_tree(set_index, k))
+            const size_t cov = m_coverage_count[cut_idx]++;
+            if (cov == 0)
             {
-                size_t cov = m_coverage_count[k]++;
-                if (cov == 0)
-                    m_total_covered_elements++;
-            }
-        }
-        for (size_t k{0}; k < set_cover.get_num_cycle_cuts(); k++)
-        {
-            if (set_cover.covers_cycle(set_index, k))
-            {
-                m_coverage_count[set_cover.get_num_tree_cuts() + k]++;
-                if (m_coverage_count[set_cover.get_num_tree_cuts() + k] == 1)
-                    m_total_covered_elements++;
+                m_total_covered_elements++;
             }
         }
         m_solution.insert(set_index);
@@ -1124,26 +1204,45 @@ public:
 
     void delete_set(size_t set_index)
     {
-        auto [u, v, w] = m_links[set_index];
+        const auto &covered_elements = get_or_build_set_coverage(set_index);
+        for (const auto cut_idx : covered_elements)
+        {
+            const size_t cov = --m_coverage_count[cut_idx];
+            if (cov == 0)
+            {
+                m_total_covered_elements--;
+            }
+        }
+        m_solution.erase(set_index);
+    }
+
+private:
+    const std::vector<size_t> &get_or_build_set_coverage(size_t set_index)
+    {
+        auto cached = m_set_coverage_cache.find(set_index);
+        if (cached != m_set_coverage_cache.end())
+        {
+            return cached->second;
+        }
+
+        std::vector<size_t> covered_elements;
+        covered_elements.reserve(set_cover.get_num_tree_cuts() + set_cover.get_num_cycle_cuts());
         for (size_t k{0}; k < set_cover.get_num_tree_cuts(); k++)
         {
             if (set_cover.covers_tree(set_index, k))
             {
-                size_t cov = --m_coverage_count[k];
-                if (cov == 0)
-                    m_total_covered_elements--;
+                covered_elements.emplace_back(k);
             }
         }
         for (size_t k{0}; k < set_cover.get_num_cycle_cuts(); k++)
         {
             if (set_cover.covers_cycle(set_index, k))
             {
-                size_t cov = --m_coverage_count[set_cover.get_num_tree_cuts() + k];
-                if (cov == 0)
-                    m_total_covered_elements--;
+                covered_elements.emplace_back(set_cover.get_num_tree_cuts() + k);
             }
         }
-        m_solution.erase(set_index);
+        auto [it, _] = m_set_coverage_cache.emplace(set_index, std::move(covered_elements));
+        return it->second;
     }
 
 protected:
@@ -1156,6 +1255,230 @@ protected:
     std::vector<ull> m_covered_elements;
     std::vector<ull> m_coverage_count;
     std::vector<std::tuple<size_t, size_t, double>> m_links;
+    std::unordered_map<size_t, std::vector<size_t>> m_set_coverage_cache;
+};
+
+template <typename Derived, class link_node_T, class link_edge_T, class link_weight_T>
+class SetCoverSolver<Derived, SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>
+{
+public:
+    using SetCoverType = SetCoverCyc<link_node_T, link_edge_T, link_weight_T>;
+
+    SetCoverSolver(SetCoverType sc)
+        : set_cover(std::move(sc))
+    {
+        NUM_ELEMENTS = set_cover.get_num_elements();
+        m_coverage_count = std::vector<ull>(set_cover.get_num_elements(), 0);
+        WeightedCRFGraph<> g = WeightedCRFGraph<>{
+            {set_cover.link_vertices, set_cover.link_edges},
+            set_cover.link_weights};
+        m_links = g.csr_to_vec_links();
+    }
+
+    ~SetCoverSolver() = default;
+
+    void solve()
+    {
+        static_cast<Derived *>(this)->solve();
+    }
+
+    std::unordered_set<size_t> get_solution() const noexcept
+    {
+        return m_solution;
+    }
+
+    double get_solution_cost() const
+    {
+        double total_cost = 0.0;
+        for (const auto &set_index : m_solution)
+        {
+            total_cost += set_cover.get_set_cost(set_index);
+        }
+        return total_cost;
+    }
+
+    void init_coverage()
+    {
+        m_total_covered_elements = 0;
+
+        m_covered_elements = std::vector<ull>(set_cover.n_cols, 0);
+        m_covered_elements[set_cover.n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover.get_num_tree_cuts() % (8 * sizeof(ull)));
+    }
+
+    void greedy_solve()
+    {
+        std::priority_queue<std::pair<double, size_t>> pq;
+        for (size_t s{0}; s < set_cover.get_num_sets(); s++)
+        {
+            size_t covered = cover_count(s);
+            double cost_benefit_ratio = static_cast<double>(covered) / set_cover.get_set_cost(s);
+            pq.push({cost_benefit_ratio, s});
+        }
+
+        while (m_total_covered_elements < set_cover.get_num_elements() && m_solution.size() != set_cover.get_num_sets())
+        {
+            auto best_set = pq.top();
+            pq.pop();
+
+            const auto best_set_idx = best_set.second;
+            size_t covered = cover_count(best_set_idx);
+            double ratio = static_cast<double>(covered) / set_cover.get_set_cost(best_set_idx);
+            if (ratio < best_set.first)
+            {
+                pq.push({ratio, best_set_idx});
+                continue;
+            }
+
+            add_set(best_set_idx);
+        }
+    }
+
+    void trim_solution()
+    {
+        std::vector<size_t> solution_vec(m_solution.begin(), m_solution.end());
+        std::sort(solution_vec.begin(), solution_vec.end(), [&](size_t a, size_t b)
+                  { return set_cover.get_set_cost(a) > set_cover.get_set_cost(b); });
+        for (const auto &set_index : solution_vec)
+        {
+            if (can_remove(set_index))
+            {
+                delete_set(set_index);
+            }
+        }
+    }
+
+    size_t cover_count(size_t set_index)
+    {
+        size_t covered = 0;
+        // tree part
+        auto [u, v, w] = m_links[set_index];
+        for (size_t k{0}; k < set_cover.get_num_tree_cuts(); k++)
+        {
+            ull coverage = set_cover.m_tree_partition_matrix[u * set_cover.get_num_tree_cuts() + k] ^ set_cover.m_tree_partition_matrix[v * set_cover.get_num_tree_cuts() + k];
+            covered += std::popcount(coverage & ~m_covered_elements[k]);
+        }
+        // cycle part
+        const auto &cc = set_cover.m_cycle_crosses[set_index];
+        for (size_t i{0}; i < cc.size(); i++)
+        {
+            auto [c, a, b] = cc[i];
+            auto c_size = set_cover.cycle_sizes[c];
+            const size_t a_pos = static_cast<size_t>(a);
+            const size_t b_pos = static_cast<size_t>(b);
+            for (size_t j{0}; j < a_pos; j++)
+            {
+                for (size_t k = a_pos; k < b_pos; k++)
+                {
+                    if (set_cover.m_cycle_coverages[c][j * c_size + k] == 0)
+                    {
+                        covered++;
+                    }
+                }
+            }
+            for (size_t j = a_pos; j < b_pos; j++)
+            {
+                for (size_t k = b_pos; k < c_size; k++)
+                {
+                    if (set_cover.m_cycle_coverages[c][j * c_size + k] == 0)
+                    {
+                        covered++;
+                    }
+                }
+            }
+        }
+
+        return covered;
+    }
+
+    void add_set(size_t set_index)
+    {
+        auto [u, v, w] = m_links[set_index];
+        auto covered = 0ull;
+        for (size_t k{0}; k < set_cover.n_cols; k++)
+        {
+            auto cov = set_cover.m_tree_partition_matrix[u * set_cover.n_cols + k] ^ set_cover.m_tree_partition_matrix[v * set_cover.n_cols + k];
+            covered += std::popcount(cov & ~m_covered_elements[k]);
+            m_covered_elements[k] |= cov;
+        }
+        // cycle part
+        const auto &cc = set_cover.m_cycle_crosses[set_index];
+        for (size_t i{0}; i < cc.size(); i++)
+        {
+            auto [c, a, b] = cc[i];
+            auto c_size = set_cover.cycle_sizes[c];
+            const size_t a_pos = static_cast<size_t>(a);
+            const size_t b_pos = static_cast<size_t>(b);
+            for (size_t j{0}; j < a_pos; j++)
+            {
+                for (size_t k = a_pos; k < b_pos; k++)
+                {
+                    if (set_cover.m_cycle_coverages[c][j * c_size + k]++ == 0)
+                    {
+                        covered++;
+                    }
+                }
+            }
+            for (size_t j = a_pos; j < b_pos; j++)
+            {
+                for (size_t k = b_pos; k < c_size; k++)
+                {
+                    if (set_cover.m_cycle_coverages[c][j * c_size + k]++ == 0)
+                    {
+                        covered++;
+                    }
+                }
+            }
+        }
+        m_total_covered_elements += covered;
+        m_solution.insert(set_index);
+    }
+
+    // Need to implement maybe consider changing to csr
+    void delete_set(size_t set_index)
+    {
+        return;
+    }
+
+    bool can_remove(size_t set_index)
+    {
+        return true;
+    }
+
+protected:
+    size_t NUM_ELEMENTS;
+    SetCoverType set_cover;
+    size_t m_total_covered_elements = 0;
+    std::unordered_set<size_t> m_solution{};
+    std::vector<bool> m_chosen_sets{};
+    bool m_feasible = false;
+    std::vector<ull> m_covered_elements;
+    std::vector<ull> m_coverage_count;
+    std::vector<std::tuple<size_t, size_t, double>> m_links;
+};
+
+// Forward declaration and partial specialization for SetCoverCyc
+template <typename SetCoverType = SetCover>
+class SetCoverSolverGreedySingleThreadedPQ;
+
+// Partial specialization for SetCoverCyc
+template <class link_node_T, class link_edge_T, class link_weight_T>
+class SetCoverSolverGreedySingleThreadedPQ<SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>
+    : public SetCoverSolver<SetCoverSolverGreedySingleThreadedPQ<SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>, SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>
+{
+public:
+    using Base = SetCoverSolver<SetCoverSolverGreedySingleThreadedPQ<SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>, SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>;
+    using Base::add_set;
+    using Base::m_covered_elements;
+    using Base::m_solution;
+    using Base::m_total_covered_elements;
+    using Base::NUM_ELEMENTS;
+    using Base::set_cover;
+    using Base::SetCoverSolver;
+
+    void solve()
+    {
+        this->greedy_solve();
+    }
 };
 
 template <typename SetCoverType = SetCover>
@@ -1208,7 +1531,7 @@ public:
 // The idea of this method is to maintain a priority queue of sets based on their cost-benefit ration.
 // Then, to select the next best set, we pop the queue. But we need to check if the ration has changed.
 // The point is to recalculate the ratios as little as possible.
-template <typename SetCoverType = SetCover>
+template <typename SetCoverType>
 class SetCoverSolverGreedySingleThreadedPQ : public SetCoverSolver<SetCoverSolverGreedySingleThreadedPQ<SetCoverType>, SetCoverType>
 {
 public:
