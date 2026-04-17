@@ -21,10 +21,11 @@ enum class Algorithms
     DirectGreedy,
     SetCoverSharpGreedy,
     OracleGreedySingleThreadedPQ,
-    CycGreedySingleThreadedPQ
+    CycGreedySingleThreadedPQ,
+    CycGreedySingleThreadedPQV1
 };
 
-constexpr std::array<std::string_view, 16> ALGORITHM_NAMES = {
+constexpr std::array<std::string_view, 17> ALGORITHM_NAMES = {
     "GWC",
     "SetCoverGreedySingleThreadedPQ",
     "SetCoverGreedySingleThreadedPQBit",
@@ -40,7 +41,8 @@ constexpr std::array<std::string_view, 16> ALGORITHM_NAMES = {
     "DirectGreedy",
     "SetCoverSharpGreedy",
     "OracleGreedySingleThreadedPQ",
-    "CycGreedySingleThreadedPQ"};
+    "CycGreedySingleThreadedPQ",
+    "CycGreedySingleThreadedPQV1"};
 
 inline Algorithms algorithm_from_string(const std::string &algo)
 {

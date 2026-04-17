@@ -81,6 +81,12 @@ public:
     void run(const std::filesystem::path &graph_file) override;
 };
 
+class CycGreedySingleThreadedPQV1Runner : public AlgorithmRunner
+{
+public:
+    void run(const std::filesystem::path &graph_file) override;
+};
+
 // ==================== Direct Graph Algorithms ====================
 
 class DirectGreedyRunner : public AlgorithmRunner

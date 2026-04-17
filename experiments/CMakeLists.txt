@@ -49,6 +49,7 @@ target_sources(sc_red_BM
 PRIVATE
     benchmarks/sc_red_BM.cpp
     benchmarks/cap_BM.cpp
+    benchmarks/cyc_covercount_gwc_BM.cpp
 )
 target_link_libraries(sc_red_BM
 PRIVATE    

@@ -1263,6 +1263,12 @@ class SetCoverSolver<Derived, SetCoverCyc<link_node_T, link_edge_T, link_weight_
 {
 public:
     using SetCoverType = SetCoverCyc<link_node_T, link_edge_T, link_weight_T>;
+    struct ArcEquivClass
+    {
+        cycle_pos_T cls;
+        cycle_pos_T start;
+        cycle_pos_T end;
+    };
 
     SetCoverSolver(SetCoverType sc)
         : set_cover(std::move(sc))
@@ -1273,6 +1279,14 @@ public:
             {set_cover.link_vertices, set_cover.link_edges},
             set_cover.link_weights};
         m_links = g.csr_to_vec_links();
+        // each arc starts with one equivalence class that encompasses the whole cycle
+        // it is represented by [0, len(cycle)]
+        m_arc_equiv_classes = std::vector<std::vector<ArcEquivClass>>(set_cover.cycle_sizes.size());
+        for (size_t c{0}; c < set_cover.cycle_sizes.size(); c++)
+        {
+            m_arc_equiv_classes[c].emplace_back(0, 0, set_cover.cycle_sizes[c]);
+            m_class_sizes.emplace_back(std::vector<cycle_pos_T>{set_cover.cycle_sizes[c]});
+        }
     }
 
     ~SetCoverSolver() = default;
@@ -1305,12 +1319,22 @@ public:
         m_covered_elements[set_cover.n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover.get_num_tree_cuts() % (8 * sizeof(ull)));
     }
 
+    // template parameters for a function add set and a cover count
+    template <auto AddSetFn = nullptr, auto CoverCountFn = nullptr>
     void greedy_solve()
     {
         std::priority_queue<std::pair<double, size_t>> pq;
         for (size_t s{0}; s < set_cover.get_num_sets(); s++)
         {
-            size_t covered = cover_count(s);
+            size_t covered = 0;
+            if constexpr (CoverCountFn == nullptr)
+            {
+                covered = cover_count(s);
+            }
+            else
+            {
+                covered = std::invoke(CoverCountFn, *this, s);
+            }
             double cost_benefit_ratio = static_cast<double>(covered) / set_cover.get_set_cost(s);
             pq.push({cost_benefit_ratio, s});
         }
@@ -1321,7 +1345,15 @@ public:
             pq.pop();
 
             const auto best_set_idx = best_set.second;
-            size_t covered = cover_count(best_set_idx);
+            size_t covered = 0;
+            if constexpr (CoverCountFn == nullptr)
+            {
+                covered = cover_count(best_set_idx);
+            }
+            else
+            {
+                covered = std::invoke(CoverCountFn, *this, best_set_idx);
+            }
             double ratio = static_cast<double>(covered) / set_cover.get_set_cost(best_set_idx);
             if (ratio < best_set.first)
             {
@@ -1329,8 +1361,19 @@ public:
                 continue;
             }
 
-            add_set(best_set_idx);
+            if constexpr (AddSetFn == nullptr)
+            {
+                add_set(best_set_idx);
+            }
+            else
+            {
+                std::invoke(AddSetFn, *this, best_set_idx);
+            }
         }
+        // SHould save this metric
+        double spared_coverage = 1 - ((double)counter_cover_count / ((double)m_solution.size() * (double)set_cover.get_num_sets()));
+        std::cout
+            << "Cover count spare ratio: " << spared_coverage << std::endl;
     }
 
     void trim_solution()
@@ -1347,8 +1390,191 @@ public:
         }
     }
 
+    size_t cover_count_1(size_t set_index)
+    {
+        auto [u, v, w] = m_links[set_index];
+        size_t covered = 0;
+        const auto &ccs = set_cover.m_cycle_crosses[set_index];
+        for (const auto &cc : ccs)
+        {
+            auto [cycle, a, b] = cc;
+            std::vector<ArcEquivClass> &arcs = m_arc_equiv_classes[cycle];
+            // maybe could recycle this allocation
+            std::vector<size_t> class_intersects = std::vector<size_t>(m_class_sizes[cycle].size(), 0);
+            for (size_t arc_i{0}; arc_i < arcs.size(); arc_i++)
+            {
+                // calculate intersection of start-end with a-b
+                auto [cls, start, end] = arcs[arc_i];
+                auto intersect_start = std::max(start, a);
+                auto intersect_end = std::min(end, b);
+                if (intersect_start < intersect_end)
+                {
+                    class_intersects[cls] += intersect_end - intersect_start;
+                }
+            }
+            for (size_t i{0}; i < class_intersects.size(); i++)
+            {
+                covered += class_intersects[i] * (m_class_sizes[cycle][i] - class_intersects[i]);
+            }
+        }
+        for (size_t k{0}; k < set_cover.get_num_tree_cuts(); k++)
+        {
+            ull coverage = set_cover.m_tree_partition_matrix[u * set_cover.get_num_tree_cuts() + k] ^ set_cover.m_tree_partition_matrix[v * set_cover.get_num_tree_cuts() + k];
+            covered += std::popcount(coverage & ~m_covered_elements[k]);
+        }
+        return covered;
+    }
+
+private:
+    static constexpr cycle_pos_T INVALID_CLASS =
+        std::numeric_limits<cycle_pos_T>::max();
+
+    // Optional but useful to keep the representation compact.
+    static void merge_adjacent_arcs(std::vector<ArcEquivClass> &arcs)
+    {
+        if (arcs.empty())
+            return;
+
+        std::vector<ArcEquivClass> merged;
+        merged.reserve(arcs.size());
+        merged.push_back(arcs[0]);
+
+        for (size_t i = 1; i < arcs.size(); ++i)
+        {
+            auto &back = merged.back();
+            if (back.cls == arcs[i].cls && back.end == arcs[i].start)
+            {
+                back.end = arcs[i].end;
+            }
+            else
+            {
+                merged.push_back(arcs[i]);
+            }
+        }
+        arcs.swap(merged);
+    }
+
+    // Precondition: [a,b) is the canonical non-wrapping interval, so a <= b.
+    // Returns the number of *newly* covered cycle cuts contributed by this interval.
+    size_t refine_cycle_partition(size_t cycle, cycle_pos_T a, cycle_pos_T b)
+    {
+        auto &arcs = m_arc_equiv_classes[cycle];
+        auto &class_sizes = m_class_sizes[cycle];
+
+        const size_t old_num_classes = class_sizes.size();
+
+        // inside[c] = total length of old class c that lies inside [a,b)
+        std::vector<cycle_pos_T> inside(old_num_classes, 0);
+
+        for (const auto &arc : arcs)
+        {
+            const cycle_pos_T l = std::max(arc.start, a);
+            const cycle_pos_T r = std::min(arc.end, b);
+            if (l < r)
+            {
+                inside[arc.cls] += (r - l);
+            }
+        }
+
+        // For each partially cut class, allocate a distinct new class id.
+        // split_to[c] = new class id for the inside part of old class c.
+        std::vector<cycle_pos_T> split_to(old_num_classes, INVALID_CLASS);
+
+        size_t gained = 0;
+        for (size_t c = 0; c < old_num_classes; ++c)
+        {
+            const cycle_pos_T in = inside[c];
+            const cycle_pos_T out = class_sizes[c] - in;
+
+            gained += static_cast<size_t>(in) * static_cast<size_t>(out);
+
+            // Only partially intersected classes split.
+            if (in > 0 && out > 0)
+            {
+                const cycle_pos_T new_cls =
+                    static_cast<cycle_pos_T>(class_sizes.size());
+
+                split_to[c] = new_cls;
+
+                class_sizes[c] = out;      // old class keeps the outside mass
+                class_sizes.push_back(in); // new class gets the inside mass
+            }
+        }
+
+        // Rebuild arc partition in one pass.
+        std::vector<ArcEquivClass> new_arcs;
+        new_arcs.reserve(arcs.size() * 2 + 4);
+
+        for (const auto &arc : arcs)
+        {
+            const cycle_pos_T l = std::max(arc.start, a);
+            const cycle_pos_T r = std::min(arc.end, b);
+
+            // No overlap with [a,b): unchanged
+            if (!(l < r))
+            {
+                new_arcs.push_back(arc);
+                continue;
+            }
+
+            const cycle_pos_T new_cls = split_to[arc.cls];
+
+            // This old class was not partially split:
+            // either fully outside, fully inside, or untouched as a class.
+            if (new_cls == INVALID_CLASS)
+            {
+                new_arcs.push_back(arc);
+                continue;
+            }
+
+            // Old class is partially cut, so this arc may split into up to 3 pieces.
+            if (arc.start < l)
+            {
+                new_arcs.push_back({arc.cls, arc.start, l});
+            }
+
+            new_arcs.push_back({new_cls, l, r});
+
+            if (r < arc.end)
+            {
+                new_arcs.push_back({arc.cls, r, arc.end});
+            }
+        }
+
+        arcs.swap(new_arcs);
+        merge_adjacent_arcs(arcs);
+
+        return gained;
+    }
+
+public:
+    void add_set_1(size_t set_index)
+    {
+        auto [u, v, w] = m_links[set_index];
+
+        size_t gained = 0;
+
+        const auto &ccs = set_cover.m_cycle_crosses[set_index];
+        for (const auto &cc : ccs)
+        {
+            auto [cycle, a, b] = cc;
+
+            // If your preprocessing does not already guarantee a <= b,
+            // canonicalize here or split wrapping intervals into two calls.
+            gained += refine_cycle_partition(cycle, a, b);
+        }
+
+        // tree part ...
+        // gained += newly covered tree cuts;
+
+        m_solution.insert(set_index);
+        m_total_covered_elements += gained;
+    }
+
+    size_t counter_cover_count{};
     size_t cover_count(size_t set_index)
     {
+        counter_cover_count++;
         size_t covered = 0;
         // tree part
         auto [u, v, w] = m_links[set_index];
@@ -1454,6 +1680,8 @@ protected:
     std::vector<ull> m_covered_elements;
     std::vector<ull> m_coverage_count;
     std::vector<std::tuple<size_t, size_t, double>> m_links;
+    std::vector<std::vector<ArcEquivClass>> m_arc_equiv_classes;
+    std::vector<std::vector<cycle_pos_T>> m_class_sizes;
 };
 
 // Forward declaration and partial specialization for SetCoverCyc
@@ -1477,7 +1705,7 @@ public:
 
     void solve()
     {
-        this->greedy_solve();
+        this->template greedy_solve<&Base::add_set_1, &Base::cover_count_1>();
     }
 };
 

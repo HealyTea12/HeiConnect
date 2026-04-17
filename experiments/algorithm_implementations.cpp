@@ -370,6 +370,37 @@ void CycGreedySingleThreadedPQRunner::run(const std::filesystem::path &graph_fil
     result.time_total = reduction_time + solving_time;
 }
 
+// ==================== Cyc Greedy Single Threaded PQ (V1) ====================
+void CycGreedySingleThreadedPQV1Runner::run(const std::filesystem::path &graph_file)
+{
+    const std::string link_file = graph_file.parent_path() / (graph_file.filename().stem().string() + ".links");
+    auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
+    auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
+
+    double start = omp_get_wtime();
+    auto sc = construct_set_cover_cyc_pseudo_ancestry_vec(
+        graph.graph.vertices,
+        graph.graph.edges,
+        graph.weights,
+        link_graph.graph.vertices,
+        link_graph.graph.edges,
+        link_graph.weights);
+    double reduction_time = omp_get_wtime() - start;
+
+    using Solver = SetCoverSolverGreedySingleThreadedPQ<decltype(sc)>;
+    using SolverBase = typename Solver::Base;
+    Solver solver{std::move(sc)};
+    solver.template greedy_solve<&SolverBase::add_set_1, &SolverBase::cover_count_1>();
+
+    double solving_time = omp_get_wtime() - start - reduction_time;
+
+    result.solution_cost = solver.get_solution_cost();
+    result.solution_size = solver.get_solution().size();
+    result.time_reduction = reduction_time;
+    result.time_solving = solving_time;
+    result.time_total = reduction_time + solving_time;
+}
+
 // ==================== Direct Greedy ====================
 void DirectGreedyRunner::run(const std::filesystem::path &graph_file)
 {
@@ -464,6 +495,8 @@ std::unique_ptr<AlgorithmRunner> create_algorithm_runner(Algorithms algorithm)
         return std::make_unique<OracleGreedySingleThreadedPQRunner>();
     case Algorithms::CycGreedySingleThreadedPQ:
         return std::make_unique<CycGreedySingleThreadedPQRunner>();
+    case Algorithms::CycGreedySingleThreadedPQV1:
+        return std::make_unique<CycGreedySingleThreadedPQV1Runner>();
     default:
         throw std::invalid_argument("Unknown algorithm");
     }
