@@ -332,7 +332,7 @@ public:
         std::vector<ull> tree_partition_matrix,
         ull n_tree_min_cuts,
         ull n_cycle_min_cuts,
-        std::vector<std::vector<uint32_t>> cycle_coverages,
+        // std::vector<std::vector<uint32_t>> cycle_coverages,
         std::vector<std::vector<CycleCross<cycle_pos_T, cycle_id_T>>> cycle_crosses,
         std::vector<std::vector<cycle_pos_T>> cycle_positions,
         std::vector<size_t> cycle_sizes,
@@ -342,7 +342,7 @@ public:
         : m_tree_partition_matrix(std::move(tree_partition_matrix)),
           m_n_tree_min_cuts(n_tree_min_cuts),
           m_n_cycle_min_cuts(n_cycle_min_cuts),
-          m_cycle_coverages(std::move(cycle_coverages)),
+          // m_cycle_coverages(std::move(cycle_coverages)),
           link_vertices(std::move(link_vertices)),
           link_edges(std::move(link_edges)),
           link_weights(std::move(link_weights)),
@@ -369,7 +369,7 @@ public:
     const std::vector<link_node_T> link_edges;
     const std::vector<link_weight_T> link_weights;
     std::vector<std::tuple<size_t, size_t, double>> links; // (u, v, weight)
-    std::vector<std::vector<uint32_t>> m_cycle_coverages;
+    std::vector<std::vector<uint32_t>> m_cycle_coverages{};
     const std::vector<std::vector<cycle_pos_T>> cycle_positions;
     const std::vector<size_t> cycle_sizes;
 
@@ -1571,7 +1571,6 @@ public:
         m_total_covered_elements += gained;
     }
 
-    size_t counter_cover_count{};
     size_t cover_count(size_t set_index)
     {
         counter_cover_count++;
@@ -1580,7 +1579,8 @@ public:
         auto [u, v, w] = m_links[set_index];
         for (size_t k{0}; k < set_cover.get_num_tree_cuts(); k++)
         {
-            ull coverage = set_cover.m_tree_partition_matrix[u * set_cover.get_num_tree_cuts() + k] ^ set_cover.m_tree_partition_matrix[v * set_cover.get_num_tree_cuts() + k];
+            ull coverage = set_cover.m_tree_partition_matrix[u * set_cover.n_cols + k] ^
+                           set_cover.m_tree_partition_matrix[v * set_cover.n_cols + k];
             covered += std::popcount(coverage & ~m_covered_elements[k]);
         }
         // cycle part
@@ -1682,6 +1682,7 @@ protected:
     std::vector<std::tuple<size_t, size_t, double>> m_links;
     std::vector<std::vector<ArcEquivClass>> m_arc_equiv_classes;
     std::vector<std::vector<cycle_pos_T>> m_class_sizes;
+    size_t counter_cover_count{};
 };
 
 // Forward declaration and partial specialization for SetCoverCyc
