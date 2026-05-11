@@ -22,12 +22,21 @@ void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path &grap
         link_graph.graph.edges,
         link_graph.weights);
     double reduction_time = omp_get_wtime() - start;
-    GreedySetCoverPipeline<decltype(sc)> solver{};
-    solver.solve(std::move(sc));
+    USSolution solution{};
+    BasicContext<decltype(sc), decltype(solution)> context{std::make_shared<const decltype(sc)>(sc)};
+    GreedySetCoverSolver<decltype(sc), decltype(solution), decltype(context)> greedy_solver{};
+    SetCoverTrimmer<decltype(sc), decltype(solution), decltype(context)> trimmer{};
+    greedy_solver.solve(sc, solution, context);
     double solving_time = omp_get_wtime() - start - reduction_time;
+    result.solution_cost = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
+                                           { return acc + sc.get_set_cost(set_index); });
+    result.solution_size = solution.get_solution().size();
+    trimmer.trim(sc, solution, context);
+    result.time_trimming = omp_get_wtime() - start - reduction_time - solving_time;
 
-    result.solution_cost = solver.get_solution_cost();
-    result.solution_size = solver.get_solution().size();
+    result.solution_cost_trimmed = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
+                                                   { return acc + sc.get_set_cost(set_index); });
+    result.solution_size_trimmed = solution.get_solution().size();
     result.time_reduction = reduction_time;
     result.time_solving = solving_time;
     result.time_total = reduction_time + solving_time;
@@ -55,6 +64,9 @@ void SetCoverGreedySingleThreadedPQBitRunner::run(const std::filesystem::path &g
     SetCoverTrimmer<SetCoverBit, USSolution, BitPackedTrimmerContext<SetCoverBit, USSolution>> trimmer{};
     BitPackedTrimmerContext<SetCoverBit, USSolution> trimmer_context{std::make_shared<const SetCoverBit>(sc)};
     greedy_solver.solve(sc, solution, context);
+    result.solution_cost = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
+                                           { return acc + sc.get_set_cost(set_index); });
+    result.solution_size = solution.get_solution().size();
     trimmer.trim(sc, solution, trimmer_context);
 
     // SetCoverPipeline<
@@ -70,9 +82,9 @@ void SetCoverGreedySingleThreadedPQBitRunner::run(const std::filesystem::path &g
     // solver.solve(std::move(sc));
     double solving_time = omp_get_wtime() - start - reduction_time;
 
-    result.solution_cost = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
-                                           { return acc + sc.get_set_cost(set_index); });
-    result.solution_size = solution.get_solution().size();
+    result.solution_cost_trimmed = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
+                                                   { return acc + sc.get_set_cost(set_index); });
+    result.solution_size_trimmed = solution.get_solution().size();
     result.time_reduction = reduction_time;
     result.time_solving = solving_time;
     result.time_total = reduction_time + solving_time;
@@ -100,7 +112,12 @@ void SetCoverGreedySingleThreadedPQPseudoRunner::run(const std::filesystem::path
     SetCoverTrimmer<SetCoverPseudo<size_t, size_t>, USSolution, BitPackedTrimmerContext<SetCoverPseudo<size_t, size_t>, USSolution>> trimmer{};
     BitPackedTrimmerContext<SetCoverPseudo<size_t, size_t>, USSolution> trimmer_context{std::make_shared<const SetCoverPseudo<size_t, size_t>>(sc)};
     greedy_solver.solve(sc, solution, context);
+    double solving_time = omp_get_wtime() - start - reduction_time;
+    result.solution_cost = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
+                                           { return acc + sc.get_set_cost(set_index); });
+    result.solution_size = solution.get_solution().size();
     trimmer.trim(sc, solution, trimmer_context);
+    result.time_trimming = omp_get_wtime() - start - reduction_time - solving_time;
     // SetCoverPipeline<
     //     SetCoverPseudo<size_t, size_t>,
     //     USSolution,
@@ -112,20 +129,14 @@ void SetCoverGreedySingleThreadedPQPseudoRunner::run(const std::filesystem::path
     //     TrimmerStageAdapter<SetCoverTrimmer<SetCoverPseudo<size_t, size_t>, USSolution, BitPackedContext<SetCoverPseudo<size_t, size_t>, USSolution>>, Reuse, BitPackedContext<SetCoverPseudo<size_t, size_t>, USSolution>>>
     //     solver{};
     // solver.solve(std::move(sc));
-    double solving_time = omp_get_wtime() - start - reduction_time;
 
-    result.solution_cost = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
-                                           { return acc + sc.get_set_cost(set_index); });
-    result.solution_size = solution.get_solution().size();
+    result.solution_cost_trimmed = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
+                                                   { return acc + sc.get_set_cost(set_index); });
+    result.solution_size_trimmed = solution.get_solution().size();
     result.time_reduction = reduction_time;
     result.time_solving = solving_time;
     result.time_total = reduction_time + solving_time;
     result.time_trimming = 0.0;
-    result.solution_cost_trimmed = result.solution_cost;
-    result.solution_size_trimmed = result.solution_size;
-    result.time_ls = 0.0;
-    result.solution_cost_ls = result.solution_cost;
-    result.solution_size_ls = result.solution_size;
 }
 
 // ==================== Set Cover Greedy PQ Pseudo Ancestry ====================
@@ -150,7 +161,12 @@ void SCGWCPseudoAncestryRunner::run(const std::filesystem::path &graph_file)
     SetCoverTrimmer<SetCoverPseudo<size_t, size_t>, USSolution, BitPackedTrimmerContext<SetCoverPseudo<size_t, size_t>, USSolution>> trimmer{};
     BitPackedTrimmerContext<SetCoverPseudo<size_t, size_t>, USSolution> trimmer_context{std::make_shared<const SetCoverPseudo<size_t, size_t>>(sc)};
     greedy_solver.solve(sc, solution, context);
+    double time_solving = omp_get_wtime() - start - reduction_time;
+    result.solution_cost = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
+                                           { return acc + sc.get_set_cost(set_index); });
+    result.solution_size = solution.get_solution().size();
     trimmer.trim(sc, solution, trimmer_context);
+    double time_trimming = omp_get_wtime() - start - reduction_time - time_solving;
     // SetCoverPipeline<
     //     SetCoverPseudo<size_t, size_t>,
     //     USSolution,
@@ -161,20 +177,14 @@ void SCGWCPseudoAncestryRunner::run(const std::filesystem::path &graph_file)
     //         BitPackedContext<SetCoverPseudo<size_t, size_t>, USSolution>>,
     //     TrimmerStageAdapter<SetCoverTrimmer<SetCoverPseudo<size_t, size_t>, USSolution, BitPackedContext<SetCoverPseudo<size_t, size_t>, USSolution>>, Reuse, BitPackedContext<SetCoverPseudo<size_t, size_t>, USSolution>>>
     //     solver{};
-    double solving_time = omp_get_wtime() - start - reduction_time;
 
-    result.solution_cost = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
-                                           { return acc + sc.get_set_cost(set_index); });
-    result.solution_size = solution.get_solution().size();
+    result.solution_cost_trimmed = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
+                                                   { return acc + sc.get_set_cost(set_index); });
+    result.solution_size_trimmed = solution.get_solution().size();
     result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_total = reduction_time + solving_time;
-    result.time_trimming = 0.0;
-    result.solution_cost_trimmed = result.solution_cost;
-    result.solution_size_trimmed = result.solution_size;
-    result.time_ls = 0.0;
-    result.solution_cost_ls = result.solution_cost;
-    result.solution_size_ls = result.solution_size;
+    result.time_solving = time_solving;
+    result.time_trimming = time_trimming;
+    result.time_total = reduction_time + time_solving + time_trimming;
 }
 
 // ==================== Set Cover Greedy Cheapest ====================
@@ -415,8 +425,11 @@ void CycGreedySingleThreadedPQRunner::run(const std::filesystem::path &graph_fil
     result.solution_cost = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
                                            { return acc + sc.get_set_cost(set_index); });
     result.solution_size = solution.get_solution().size();
-    result.solution_cost_trimmed = result.solution_cost;
-    result.solution_size_trimmed = result.solution_size;
+    SetCoverTrimmer<decltype(sc), USSolution, decltype(context)> trimmer{};
+    trimmer.trim(sc, solution, context);
+    result.solution_cost_trimmed = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
+                                                   { return acc + sc.get_set_cost(set_index); });
+    result.solution_size_trimmed = solution.get_solution().size();
 
     result.time_reduction = reduction_time;
     result.time_solving = solving_time;
@@ -448,7 +461,7 @@ void CycGreedySingleThreadedPQV2Runner::run(const std::filesystem::path &graph_f
         CycContext<size_t, size_t, double, USSolution>,
         USSolution>
         context{std::make_shared<decltype(sc)>(sc)};
-    GreedySetCoverSolver<decltype(sc), USSolution, decltype(context)> solver{};
+    GreedySetCoverSolver<decltype(sc), decltype(solution), decltype(context)> solver{};
     solver.solve(sc, solution, context);
     double solving_time = omp_get_wtime() - start - reduction_time;
     result.solution_cost = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
