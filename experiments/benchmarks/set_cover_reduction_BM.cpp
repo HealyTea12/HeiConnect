@@ -1,6 +1,7 @@
 #include <filesystem>
 
-#include "HeiConnect/set_cover/transform_single.hpp"
+#include "HeiConnect/set_cover/set_cover.hpp"
+#include "HeiConnect/sc_reduction/transform_single_builders.hpp"
 #include "HeiConnect/tools/timer.hpp"
 
 int main(int argc, char **argv)
@@ -32,11 +33,16 @@ int main(int argc, char **argv)
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in CSR form took " << (end - start) << " seconds." << std::endl;
             timer.add_checkpoint("reduction");
-            SetCoverSolverGreedySingleThreadedPQ<SetCover> solver{set_cover};
-            solver.solve();
+            GreedySetCoverSolver<SetCover, USSolution> solver;
+            USSolution solution;
+            solver.solve(set_cover, solution);
             timer.add_checkpoint("solving");
-            auto solution = solver.get_solution();
-            std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+            double solution_cost = 0.0;
+            for (const auto set_index : solution.get_solution())
+            {
+                solution_cost += set_cover.get_set_cost(set_index);
+            }
+            std::cout << "Solution cost: " << solution_cost << std::endl;
         }
         if (type == "bit")
         {
@@ -54,11 +60,16 @@ int main(int argc, char **argv)
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in BIT MATRIX form took " << (end - start) << " seconds." << std::endl;
             timer.add_checkpoint("reduction");
-            SetCoverSolverGreedySingleThreadedPQ<SetCoverBit> solver{set_cover_bit};
-            solver.solve();
+            GreedySetCoverSolver<SetCoverBit, USSolution> solver;
+            USSolution solution;
+            solver.solve(set_cover_bit, solution);
             timer.add_checkpoint("solving");
-            auto solution = solver.get_solution();
-            std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+            double solution_cost = 0.0;
+            for (const auto set_index : solution.get_solution())
+            {
+                solution_cost += set_cover_bit.get_set_cost(set_index);
+            }
+            std::cout << "Solution cost: " << solution_cost << std::endl;
         }
         if (type == "pseudo")
         {
@@ -76,11 +87,16 @@ int main(int argc, char **argv)
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in PSEUDO form took " << (end - start) << " seconds." << std::endl;
             timer.add_checkpoint("reduction");
-            SetCoverSolverGreedySingleThreadedPQ<decltype(set_cover_pseudo)> solver{set_cover_pseudo};
-            solver.solve();
+            GreedySetCoverSolver<decltype(set_cover_pseudo), USSolution> solver;
+            USSolution solution;
+            solver.solve(set_cover_pseudo, solution);
             timer.add_checkpoint("solving");
-            auto solution = solver.get_solution();
-            std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+            double solution_cost = 0.0;
+            for (const auto set_index : solution.get_solution())
+            {
+                solution_cost += set_cover_pseudo.get_set_cost(set_index);
+            }
+            std::cout << "Solution cost: " << solution_cost << std::endl;
         }
         if (type == "pseudo_ancestry")
         {
@@ -98,11 +114,16 @@ int main(int argc, char **argv)
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in PSEUDO ANCESTRY form took " << (end - start) << " seconds." << std::endl;
             timer.add_checkpoint("reduction");
-            SetCoverSolverGreedySingleThreadedPQ<decltype(set_cover_pseudo)> solver{set_cover_pseudo};
-            solver.solve();
+            GreedySetCoverSolver<decltype(set_cover_pseudo), USSolution> solver;
+            USSolution solution;
+            solver.solve(set_cover_pseudo, solution);
             timer.add_checkpoint("solving");
-            auto solution = solver.get_solution();
-            std::cout << "Solution cost: " << solver.get_solution_cost() << std::endl;
+            double solution_cost = 0.0;
+            for (const auto set_index : solution.get_solution())
+            {
+                solution_cost += set_cover_pseudo.get_set_cost(set_index);
+            }
+            std::cout << "Solution cost: " << solution_cost << std::endl;
         }
     }
 }

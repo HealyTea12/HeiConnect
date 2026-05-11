@@ -3,7 +3,7 @@
 
 #include "HeiConnect/set_cover/set_cover.hpp"
 #include "HeiConnect/data_structures/immutable_graph.hpp"
-#include "HeiConnect/set_cover/transform_single.hpp"
+#include "HeiConnect/sc_reduction/transform_single_builders.hpp"
 #include "HeiConnect/min_cut/simple_mincut.hpp"
 #include "HeiConnect/viecut_runner.hpp" // Really would like not to need this
 #include "HeiConnect/data_structures/graph_utils.hpp"
@@ -28,12 +28,12 @@ TEST(SetCoverTest, SetCoverBasic)
     std::vector<double> costs = {3.0, 2.0, 4.0};
     SetCover sc{a, b, costs, 4};
 
-    SetCoverSolverGreedyParallel<SetCover> solver(sc);
-    solver.solve();
-    auto solution = solver.get_solution();
+    GreedySetCoverSolver<SetCover, USSolution> solver;
+    USSolution solution;
+    solver.solve(sc, solution);
 
     std::unordered_set<size_t> expected_solution = {1, 2};
-    EXPECT_EQ(solution, expected_solution);
+    EXPECT_EQ(solution.get_solution(), expected_solution);
 }
 
 TEST(Transpose, Basic)
@@ -75,7 +75,9 @@ TEST(GraphAugmentationToSetCover, Cycle)
         for (size_t e = link_graph.graph.vertices[u]; e < link_graph.graph.vertices[u + 1]; e++)
         {
             size_t v = link_graph.graph.edges[e];
-            auto n_cuts_covered = sc.a[e + 1] - sc.a[e];
+            size_t n_cuts_covered = 0;
+            sc.forEachElement(e, [&](size_t)
+                              { ++n_cuts_covered; });
             auto distance_u_v = (std::max(u, v) - std::min(u, v));
             auto expected_cuts_covered = distance_u_v * ((cycle_graph.graph.vertices.size() - 1) - distance_u_v);
             ASSERT_EQ(n_cuts_covered, expected_cuts_covered);

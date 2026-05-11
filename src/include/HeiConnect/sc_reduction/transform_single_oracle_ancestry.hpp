@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "HeiConnect/set_cover/cactus_min_cuts.hpp"
-#include "HeiConnect/set_cover/transform_single_partition_matrix_utils.hpp"
+#include "HeiConnect/sc_reduction/cactus_min_cuts.hpp"
+#include "HeiConnect/sc_reduction/transform_single_partition_matrix_utils.hpp"
 
 using ull = unsigned long long;
 using timer_type = uint32_t;

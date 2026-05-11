@@ -6,6 +6,7 @@
 #include <optional>
 #include <unordered_map>
 #include <fstream>
+#include <omp.h>
 
 class Timer
 {
@@ -54,3 +55,8 @@ private:
     std::optional<std::filesystem::path> m_output_path;
     std::vector<std::pair<std::string, std::chrono::time_point<std::chrono::high_resolution_clock>>> m_checkpoints{};
 };
+
+inline double get_time_s()
+{
+    return omp_get_wtime();
+}

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <array>
+#include <string_view>
 #include <stdexcept>
 
 enum class Algorithms
@@ -22,7 +23,7 @@ enum class Algorithms
     SetCoverSharpGreedy,
     OracleGreedySingleThreadedPQ,
     CycGreedySingleThreadedPQ,
-    CycGreedySingleThreadedPQV1
+    CycGreedySingleThreadedPQV2
 };
 
 constexpr std::array<std::string_view, 17> ALGORITHM_NAMES = {
@@ -42,7 +43,7 @@ constexpr std::array<std::string_view, 17> ALGORITHM_NAMES = {
     "SetCoverSharpGreedy",
     "OracleGreedySingleThreadedPQ",
     "CycGreedySingleThreadedPQ",
-    "CycGreedySingleThreadedPQV1"};
+    "CycGreedySingleThreadedPQV2"};
 
 inline Algorithms algorithm_from_string(const std::string &algo)
 {

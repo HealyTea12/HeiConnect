@@ -14,7 +14,7 @@
 #include "HeiConnect/min_cut/simple_mincut.hpp"
 #include "HeiConnect/set_cover/set_cover.hpp"
 #include "HeiConnect/bfs.hpp"
-#include "HeiConnect/set_cover/cactus_min_cuts.hpp"
+#include "HeiConnect/sc_reduction/cactus_min_cuts.hpp"
 
 using ull = unsigned long long;
 

@@ -7,7 +7,7 @@
 #include "HeiConnect/greedy.hpp"
 #include "HeiConnect/graph.hpp"
 #include "HeiConnect/set_cover/set_cover.hpp"
-#include "HeiConnect/set_cover/transform_single_builders.hpp"
+#include "HeiConnect/sc_reduction/transform_single_builders.hpp"
 
 static void BM_setcovercyc_cover_count(benchmark::State &state)
 {
@@ -26,14 +26,14 @@ static void BM_setcovercyc_cover_count(benchmark::State &state)
         link_graph.graph.edges,
         link_graph.weights);
 
-    SetCoverSolverGreedySingleThreadedPQ<decltype(sc)> solver{std::move(sc)};
+    BasicContext<decltype(sc), USSolution> context{std::make_shared<decltype(sc)>(sc)};
 
     const size_t n_sets = link_graph.weights.size();
     const size_t set_index = 0;
 
     for (auto _ : state)
     {
-        benchmark::DoNotOptimize(solver.cover_count(set_index));
+        benchmark::DoNotOptimize(context.cover_count(set_index));
     }
 
     state.SetItemsProcessed(state.iterations());
@@ -57,7 +57,7 @@ static void BM_setcovercyc_cover_count_all_sets(benchmark::State &state)
         link_graph.graph.edges,
         link_graph.weights);
 
-    SetCoverSolverGreedySingleThreadedPQ<decltype(sc)> solver{std::move(sc)};
+    BasicContext<decltype(sc), USSolution> context{std::make_shared<decltype(sc)>(sc)};
 
     const size_t n_sets = link_graph.weights.size();
 
@@ -66,7 +66,7 @@ static void BM_setcovercyc_cover_count_all_sets(benchmark::State &state)
         size_t total = 0;
         for (size_t set_index = 0; set_index < n_sets; ++set_index)
         {
-            total += solver.cover_count(set_index);
+            total += context.cover_count(set_index);
         }
         benchmark::DoNotOptimize(total);
         benchmark::ClobberMemory();

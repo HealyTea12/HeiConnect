@@ -1,9 +1,11 @@
 // Connecticity augmentation benchmark
 
-#include "HeiConnect/set_cover/set_cover.hpp"
-#include "HeiConnect/set_cover/transform_single.hpp"
 #include <benchmark/benchmark.h>
+
 #include <HeiConnect/data_structures/graph_utils.hpp>
+#include "HeiConnect/set_cover/set_cover.hpp"
+#include "HeiConnect/sc_reduction/ca_sc_reduction.hpp"
+#include "HeiConnect/set_cover/solver_greedy.hpp"
 
 static void BM_cap_pam_stars(benchmark::State &state)
 {
@@ -20,8 +22,9 @@ static void BM_cap_pam_stars(benchmark::State &state)
             link_g.graph.vertices,
             link_g.graph.edges,
             link_g.weights);
-        SetCoverSolverGreedySingleThreadedPQ<decltype(set_cover)> solver{set_cover};
-        solver.solve();
+        GreedySetCoverSolver<decltype(set_cover), USSolution> solver;
+        USSolution solution;
+        solver.solve(set_cover, solution);
     }
 }
 
@@ -39,8 +42,9 @@ static void BM_cap_oracle_stars(benchmark::State &state)
             link_g.graph.vertices,
             link_g.graph.edges,
             link_g.weights);
-        SetCoverSolverGreedySingleThreadedPQ<decltype(set_cover)> solver{set_cover};
-        solver.solve();
+        GreedySetCoverSolver<decltype(set_cover), USSolution> solver;
+        USSolution solution;
+        solver.solve(set_cover, solution);
     }
 }
 

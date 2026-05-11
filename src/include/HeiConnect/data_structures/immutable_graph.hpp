@@ -12,7 +12,7 @@
 
 #include "pugixml.hpp"
 
-#include "HeiConnect/set_cover/transform_single_partition_matrix_utils.hpp"
+#include "HeiConnect/sc_reduction/transform_single_partition_matrix_utils.hpp"
 
 template <typename NodeID = size_t, typename EdgeID = size_t>
 struct CRFGraph

@@ -6,10 +6,35 @@
 #include "experiment_utils.hpp"
 
 #include "HeiConnect/graph.hpp"
-#include "HeiConnect/set_cover/transform_single.hpp"
+#include "HeiConnect/set_cover/common.hpp"
+#include "HeiConnect/sc_reduction/transform_single_builders.hpp"
 #include "HeiConnect/greedy.hpp"
 #include "HeiConnect/set_cover/set_cover.hpp"
+#include "HeiConnect/set_cover/solver_greedy.hpp"
+#include "HeiConnect/set_cover/solver_greedy_cheapest.hpp"
+#include "HeiConnect/set_cover/trimmer.hpp"
 #include "HeiConnect/ilp.hpp"
+
+template <typename SetCoverType>
+using GreedySetCoverPipeline = SolveTrim<
+    SetCoverType,
+    USSolution,
+    GreedySetCoverSolver<SetCoverType, USSolution>,
+    SetCoverTrimmer<SetCoverType, USSolution>>;
+
+template <typename SetCoverType>
+using CheapestSetCoverPipeline = SolveTrim<
+    SetCoverType,
+    USSolution,
+    SetCoverSolverGreedyCheapest<SetCoverType, BasicContext<SetCoverType, USSolution>, USSolution>,
+    SetCoverTrimmer<SetCoverType, USSolution>>;
+
+template <typename SetCoverType>
+using ILPSetCoverPipeline = SolveTrim<
+    SetCoverType,
+    USSolution,
+    SetCoverSolverILP<SetCoverType, USSolution>,
+    SetCoverTrimmer<SetCoverType, USSolution>>;
 
 // ==================== Set Cover Algorithms ====================
 
@@ -81,7 +106,7 @@ public:
     void run(const std::filesystem::path &graph_file) override;
 };
 
-class CycGreedySingleThreadedPQV1Runner : public AlgorithmRunner
+class CycGreedySingleThreadedPQV2Runner : public AlgorithmRunner
 {
 public:
     void run(const std::filesystem::path &graph_file) override;

@@ -1,4 +1,4 @@
-#include <HeiConnect/set_cover/transform_single.hpp>
+#include <HeiConnect/sc_reduction/transform_single_builders.hpp>
 #include <HeiConnect/data_structures/graph_utils.hpp>
 #include <benchmark/benchmark.h>
 
@@ -56,7 +56,7 @@ static void BM_scred_partial_bit(benchmark::State &state)
             link_graph.graph.vertices,
             link_graph.graph.edges,
             link_graph.weights);
-        benchmark::DoNotOptimize(sc.min_cuts.data());
+        benchmark::DoNotOptimize(sc.get_num_sets());
         benchmark::ClobberMemory();
     }
 }

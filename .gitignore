@@ -16,3 +16,8 @@ perf.data
 perf.data.old
 results/
 *.png
+scripts/
+.gitignore
+tcavalcanti*/
+CMakeFiles/
+datasets*/
