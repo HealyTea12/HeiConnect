@@ -222,6 +222,16 @@ public:
         size_t m_k = 0;
     };
 
+private:
+    const size_t m_nCycleMinCuts;
+    const std::vector<std::vector<CycleCross<cycle_pos_T, cycle_id_T>>> m_cycleCrosses;
+    const std::vector<std::vector<cycle_pos_T>> m_cyclePositions;
+    const std::vector<size_t> m_cycleSizes;
+    const std::vector<size_t> m_cycleElementOffsets;
+    const size_t m_cycleElementSpaceSize;
+    const std::vector<SetCost> m_setWeights;
+
+public:
     SetCoverCyc(
         ull n_cycle_min_cuts,
         std::vector<std::vector<CycleCross<cycle_pos_T, cycle_id_T>>> cycle_crosses,
@@ -233,20 +243,11 @@ public:
           m_cyclePositions(std::move(cycle_positions)),
           m_cycleSizes(cycle_sizes),
           m_setWeights(std::move(set_weights)),
-          m_cycleElementOffsets(build_cycle_element_offsets(this->m_cycleSizes)),
-          m_cycleElementSpaceSize(compute_cycle_element_space_size(this->m_cycleSizes)) {
-          };
+          m_cycleElementOffsets(build_cycle_element_offsets(cycle_sizes)),
+          m_cycleElementSpaceSize(compute_cycle_element_space_size(cycle_sizes))
+    {
+    }
 
-private:
-    const size_t m_nCycleMinCuts;
-    const std::vector<std::vector<CycleCross<cycle_pos_T, cycle_id_T>>> m_cycleCrosses;
-    const std::vector<std::vector<cycle_pos_T>> m_cyclePositions;
-    const std::vector<size_t> m_cycleSizes;
-    const std::vector<size_t> m_cycleElementOffsets;
-    const size_t m_cycleElementSpaceSize;
-    const std::vector<SetCost> m_setWeights;
-
-public:
     const std::vector<size_t> &get_cycle_sizes() const
     {
         return m_cycleSizes;
@@ -291,25 +292,25 @@ public:
             const size_t cycle_size = m_cycleSizes[cycle_idx];
             const size_t cycle_offset = m_cycleElementOffsets[cycle_idx];
 
-            size_t a_clamped = static_cast<size_t>(a);
-            size_t b_clamped = static_cast<size_t>(b);
+            const size_t a_cast = static_cast<size_t>(a);
+            const size_t b_cast = static_cast<size_t>(b);
 
             // Iterate first rectangle: [0, a_clamped) × [a_clamped, b_clamped)
-            for (size_t j = 0; j < a_clamped; ++j)
+            for (size_t j = 0; j < a_cast; ++j)
             {
-                for (size_t k = a_clamped; k < b_clamped; ++k)
+                for (size_t k = a_cast; k < b_cast; ++k)
                 {
-                    size_t element = cycle_offset + j * cycle_size + k;
+                    ElementID element = get_element_index(cycle_idx, j, k);
                     fn(element);
                 }
             }
 
             // Iterate second rectangle: [a_clamped, b_clamped) × [b_clamped, cycle_size)
-            for (size_t j = a_clamped; j < b_clamped; ++j)
+            for (size_t j = a_cast; j < b_cast; ++j)
             {
-                for (size_t k = b_clamped; k < cycle_size; ++k)
+                for (size_t k = b_cast; k < cycle_size; ++k)
                 {
-                    size_t element = cycle_offset + j * cycle_size + k;
+                    ElementID element = get_element_index(cycle_idx, j, k);
                     fn(element);
                 }
             }
@@ -328,6 +329,14 @@ public:
     }
 
 private:
+    ElementID get_element_index(size_t cycle_dx, size_t a, size_t b) const
+    {
+        size_t cycle_offset = m_cycleElementOffsets[cycle_dx];
+        size_t cycle_size = m_cycleSizes[cycle_dx];
+
+        return cycle_offset + a * cycle_size - a * (a + 1) / 2 + (b - a - 1);
+    }
+
     static std::vector<size_t> build_cycle_element_offsets(const std::vector<size_t> &sizes)
     {
         std::vector<size_t> offsets(sizes.size(), 0);

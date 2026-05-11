@@ -255,7 +255,7 @@ public:
             cycleSizes.size());
         for (size_t c{0}; c < cycleSizes.size(); c++)
         {
-            m_arcEquivClasses[c].push_back(ArcEquivClass{0, 0, static_cast<CycPos>(cycleSizes[c])});
+            m_arcEquivClasses[c].emplace_back(ArcEquivClass{0, 0, static_cast<CycPos>(cycleSizes[c])});
             m_classSizes.emplace_back(std::vector<CycPos>{static_cast<CycPos>(cycleSizes[c])});
         }
         m_classIntersects = std::vector<size_t>(*std::max_element(cycleSizes.begin(), cycleSizes.end()), 0);

@@ -415,11 +415,11 @@ void CycGreedySingleThreadedPQRunner::run(const std::filesystem::path &graph_fil
     ContextDouble<
         SetCoverPseudo<size_t, size_t>,
         SetCoverCyc<size_t, size_t, double>,
-        BitPackedContext<SetCoverPseudo<size_t, size_t>, USSolution>,
-        BasicContext<SetCoverCyc<size_t, size_t, double>, USSolution>,
-        USSolution>
+        BitPackedContext<SetCoverPseudo<size_t, size_t>, decltype(solution)>,
+        BasicContext<SetCoverCyc<size_t, size_t, double>, decltype(solution)>,
+        decltype(solution)>
         context{std::make_shared<decltype(sc)>(sc)};
-    GreedySetCoverSolver<decltype(sc), USSolution, decltype(context)> solver{};
+    GreedySetCoverSolver<decltype(sc), decltype(solution), decltype(context)> solver{};
     solver.solve(sc, solution, context);
     double solving_time = omp_get_wtime() - start - reduction_time;
     result.solution_cost = std::accumulate(solution.get_solution().begin(), solution.get_solution().end(), 0.0, [&sc](double acc, size_t set_index)
