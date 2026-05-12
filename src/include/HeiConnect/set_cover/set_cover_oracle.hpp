@@ -97,6 +97,26 @@ public:
                 func(m_minCuts.TREE_CUTS.size() + i);
         }
     }
+    void forEachSet(ElementID element_index, const std::function<void(SetID)> &func) const
+    {
+        if (element_index < m_minCuts.TREE_CUTS.size())
+        {
+            for (size_t set_index = 0; set_index < m_links.size(); set_index++)
+            {
+                if (covers_tree(set_index, element_index))
+                    func(set_index);
+            }
+        }
+        else
+        {
+            size_t cycle_element_index = element_index - m_minCuts.TREE_CUTS.size();
+            for (size_t set_index = 0; set_index < m_links.size(); set_index++)
+            {
+                if (covers_cycle(set_index, cycle_element_index))
+                    func(set_index);
+            }
+        }
+    }
 
 private:
     bool isAncestor(size_t anc, size_t node) const
