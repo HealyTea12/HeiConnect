@@ -1,133 +1,149 @@
 #pragma once
+#include <chrono>
+#include <vector>
 
-#include <algorithm>
-#include <cmath>
-#include <omp.h>
+#include "HeiConnect/set_cover/util.hpp"
+#include "HeiConnect/set_cover/solver_greedy_context.hpp"
 
-template<typename MoveGeneratorType, typename RepairSolverType, double Eps = 1e-9, bool Debug = false>
-class LocalSearchStage
+
+// TODO: define concept with requirements so it is not duck typed
+
+
+class DefaultEvaluator
 {
 public:
-    LocalSearchStage(MoveGeneratorType& move_generator, RepairSolverType& repair_solver, double time_limit_seconds) :
-        m_moveGenerator(move_generator),
-        m_repairSolver(repair_solver),
+    DefaultEvaluator(double epsilon = 1e-6) : m_epsilon(epsilon)
+    {}
+    template<typename SetCoverType, typename SolutionType>
+    bool evaluate(const SetCoverType& set_cover, const SolutionType& solution, const SolutionType& candidate)
+    {
+        using SetCost = typename SetCoverType::SetCost;
+        SetCost candidate_cost = HeiConnect::sc::cost(set_cover, candidate);
+        SetCost solution_cost = HeiConnect::sc::cost(set_cover, solution);
+        return solution_cost - candidate_cost > m_epsilon;
+    }
+
+private:
+    double m_epsilon = 1e-6;
+};
+
+template<typename DestroyerType, typename RepairerType, typename EvaluatorType = DefaultEvaluator, bool Debug = false>
+class BreakAndRepairSearch
+{
+public:
+    BreakAndRepairSearch(
+        DestroyerType& destroyer,
+        RepairerType& repairer,
+        double time_limit_seconds,
+        EvaluatorType evaluator = EvaluatorType{}) :
+        m_destroyer(destroyer),
+        m_repairer(repairer),
+        m_evaluator(std::move(evaluator)),
         m_timeLimitSeconds(time_limit_seconds)
     {}
 
-    template<typename SetCoverType, typename SolutionType, typename ContextType>
-    void run(const SetCoverType& set_cover, SolutionType& solution, ContextType& context)
+    template<typename SetCoverType, typename ContextType>
+    void run(const SetCoverType& set_cover, ContextType& context)
     {
-        const double start_time = omp_get_wtime();
+        using SetCost = typename SetCoverType::SetCost;
+        using Clock = std::chrono::steady_clock;
+        bool has_improvement = false;
+        const auto time_limit = std::chrono::duration<double>(m_timeLimitSeconds);
+        const auto start = Clock::now();
 
-        double incumbent_cost = solution_cost(set_cover, solution);
-
-        while (!time_exceeded(start_time))
+        m_move.reserve(context.get_solution().size());
+        while (Clock::now() - start < time_limit)
         {
-            bool improved = false;
-
-            m_moveGenerator.forEachPotentialMove(set_cover, solution, [&](const auto& move) -> bool {
-                if (time_exceeded(start_time))
-                {
-                    return false;
-                }
-
-                SolutionType candidate = solution;
-
-                for (auto set : move)
-                {
-                    candidate.remove_set(set);
-                }
-
-                ContextType candidate_context = context;
-                if constexpr (requires { candidate.remove_set(move[0]); })
-                {
-                    for (auto set : move)
-                    {
-                        candidate_context.remove_set(set);
-                    }
-                }
-                else
-                {
-                    candidate_context.reset();
-                    for (auto set : candidate.get_solution())
-                    {
-                        candidate_context.add_set(set);
-                    }
-                }
-
-
-                repair(set_cover, candidate, candidate_context);
-
-                const double candidate_cost = solution_cost(set_cover, candidate);
-
-                if (candidate_cost + Eps < incumbent_cost)
-                {
-                    if constexpr (Debug)
-                    {
-                        std::cout << "Found improving move with cost " << candidate_cost
-                                  << " (incumbent: " << incumbent_cost
-                                  << ", improvement: " << incumbent_cost - candidate_cost << ")" << std::endl;
-                    }
-                    solution = std::move(candidate);
-                    context = std::move(candidate_context);
-                    incumbent_cost = candidate_cost;
-                    improved = true;
-
-                    // Stop enumeration and restart from the new solution.
-                    return false;
-                }
-
-                return true;
-            });
-
-            if (!improved)
+            m_move.clear();
+            ContextType candidate = context;
+            m_destroyer.generateMove(set_cover, candidate, m_move);
+            for (size_t set : m_move)
             {
-                break;
+                candidate.remove_set(set);
+            }
+
+
+            m_repairer.repair(set_cover, candidate);
+            if (m_evaluator.evaluate(set_cover, context.get_solution(), candidate.get_solution()))
+            {
+                if constexpr (Debug)
+                {
+                    std::cout << "Improvement found! Cost: " << HeiConnect::sc::cost(set_cover, context.get_solution())
+                              << " -> " << HeiConnect::sc::cost(set_cover, candidate.get_solution()) << std::endl;
+                }
+                context = std::move(candidate);
             }
         }
     }
 
 private:
-    template<typename SetCoverType, typename SolutionType>
-    static double solution_cost(const SetCoverType& set_cover, const SolutionType& solution)
-    {
-        double total = 0.0;
-
-        for (auto set : solution.get_solution())
-        {
-            total += set_cover.get_set_cost(set);
-        }
-
-        return total;
-    }
-
-    bool time_exceeded(double start_time) const
-    {
-        return m_timeLimitSeconds > 0.0 && omp_get_wtime() - start_time >= m_timeLimitSeconds;
-    }
-
-    template<typename SetCoverType, typename SolutionType, typename ContextType>
-    void repair(const SetCoverType& set_cover, SolutionType& candidate, ContextType& candidate_context)
-    {
-        if constexpr (requires { m_repairSolver.solve(set_cover, candidate, candidate_context); })
-        {
-            m_repairSolver.solve(set_cover, candidate, candidate_context);
-        }
-        else if constexpr (requires { m_repairSolver.run(set_cover, candidate, candidate_context); })
-        {
-            m_repairSolver.run(set_cover, candidate, candidate_context);
-        }
-        else if constexpr (requires { m_repairSolver.solve(set_cover, candidate); })
-        {
-            m_repairSolver.solve(set_cover, candidate);
-        }
-        else
-        {
-            m_repairSolver.run(set_cover, candidate);
-        }
-    }
-
-    MoveGeneratorType& m_moveGenerator;
-    RepairSolverType& m_repairSolver;
+    DestroyerType& m_destroyer;
+    RepairerType& m_repairer;
+    EvaluatorType m_evaluator;
     double m_timeLimitSeconds;
+    std::vector<size_t> m_move;
+};
+
+
+template<typename DestroyerType, typename RepairerType, typename EvaluatorType = DefaultEvaluator, bool Debug = false>
+class LocalStepBreakAndRepairSearch
+{
+public:
+    LocalStepBreakAndRepairSearch(
+        RepairerType& repairer,
+        double time_limit_seconds,
+        EvaluatorType evaluator = EvaluatorType{},
+        int max_steps,
+        std::mt19937_64 rng) :
+        m_repairer(repairer),
+        m_evaluator(std::move(evaluator)),
+        m_timeLimitSeconds(time_limit_seconds),
+        m_nMaxSteps{max_steps},
+        m_rng{rng}
+    {}
+
+    template<typename SetCoverType, typename ContextType>
+    void run(const SetetCoverType& set_cover, ContextType& context)
+    {
+        using SetCost = typename SetCoverType::SetCost;
+        using Clock = std::chrono::steady_clock;
+        bool has_improvement = false;
+        const auto time_limit = std::chrono::duration<double>(m_timeLimitSeconds);
+        const auto start = Clock::now();
+
+        VectorSolution potential_sets{};
+
+        while (Clock::now() - start < time_limit)
+        {
+            m_move.clear();
+            ContextType candidate = context;
+
+            potential_sets.emplace_back(candidate.get_solution()[rand() % candidate.get_solution().size()]);
+            for (int step{0}; step < m_nMaxSteps; step++)
+            {
+                size_t random_set = rand() % potential_sets.size();
+                candidate.remove_set(potential_sets[random_set]);
+                potential_sets.reset();
+                BoundContext bound_context{candidate, potential_sets};
+                m_repairer.repair(set_cover, bound_context);
+            }
+
+            if (m_evaluator.evaluate(set_cover, context.get_solution(), candidate.get_solution()))
+            {
+                if constexpr (Debug)
+                {
+                    std::cout << "Improvement found! Cost: " << HeiConnect::sc::cost(set_cover, context.get_solution())
+                              << " -> " << HeiConnect::sc::cost(set_cover, candidate.get_solution()) << std::endl;
+                }
+                context = std::move(candidate);
+            }
+        }
+    }
+
+private:
+    RepairerType& m_repairer;
+    EvaluatorType m_evaluator;
+    double m_timeLimitSeconds;
+    int m_nMaxSteps;
+    std::mt19937_64 m_rng;
 };

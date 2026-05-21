@@ -11,6 +11,4 @@
 
 #include "HeiConnect/set_cover/solver_base.hpp"
 #include "HeiConnect/set_cover/solver_greedy.hpp"
-#include "HeiConnect/set_cover/solver_sharp_greedy.hpp"
-#include "HeiConnect/set_cover/solver_greedy_cheapest.hpp"
 #include "HeiConnect/set_cover/solver_ilp.hpp"

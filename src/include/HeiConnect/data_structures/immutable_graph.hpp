@@ -14,32 +14,46 @@
 
 #include "HeiConnect/sc_reduction/transform_single_partition_matrix_utils.hpp"
 
-template <typename NodeID = size_t, typename EdgeID = size_t>
+template<typename NodeID = size_t, typename EdgeID = size_t>
 struct CRFGraph
 {
     std::vector<NodeID> vertices;
     std::vector<EdgeID> edges;
 
-    CRFGraph(const std::vector<NodeID> &vertices,
-             const std::vector<EdgeID> &edges)
-        : vertices(vertices), edges(edges) {}
+    CRFGraph(const std::vector<NodeID>& vertices, const std::vector<EdgeID>& edges) : vertices(vertices), edges(edges)
+    {}
+
+    std::vector<std::tuple<NodeID, NodeID>> edges_vector() const
+    {
+        std::vector<std::tuple<NodeID, NodeID>> edge_list;
+        for (NodeID u{0}; u < vertices.size() - 1; ++u)
+        {
+            for (EdgeID e{vertices[u]}; e < vertices[u + 1]; ++e)
+            {
+                NodeID v = edges[e];
+                edge_list.emplace_back(u, v);
+            }
+        }
+        return edge_list;
+    }
 };
 
-template <typename NodeID = size_t, typename EdgeID = size_t, typename WeightType = double>
+template<typename NodeID = size_t, typename EdgeID = size_t, typename WeightType = double>
 struct WeightedCRFGraph
 {
     CRFGraph<NodeID, EdgeID> graph;
     std::vector<WeightType> weights;
 
 public:
-    WeightedCRFGraph(const CRFGraph<NodeID, EdgeID> &graph,
-                     const std::vector<WeightType> &weights)
-        : graph(graph), weights(weights) {}
+    WeightedCRFGraph(const CRFGraph<NodeID, EdgeID>& graph, const std::vector<WeightType>& weights) :
+        graph(graph),
+        weights(weights)
+    {}
 
-    WeightedCRFGraph(std::vector<NodeID> vertices,
-                     std::vector<EdgeID> edges,
-                     std::vector<WeightType> weights)
-        : graph{std::move(vertices), std::move(edges)}, weights{std::move(weights)} {}
+    WeightedCRFGraph(std::vector<NodeID> vertices, std::vector<EdgeID> edges, std::vector<WeightType> weights) :
+        graph{std::move(vertices), std::move(edges)},
+        weights{std::move(weights)}
+    {}
 
     bool is_edge(NodeID u, NodeID v) const
     {
@@ -130,12 +144,10 @@ public:
             }
             new_vertices[u + 1] = new_edges.size();
         }
-        return WeightedCRFGraph{
-            {new_vertices, new_edges},
-            new_weights};
+        return WeightedCRFGraph{{new_vertices, new_edges}, new_weights};
     }
 
-    static WeightedCRFGraph read_from_file(const std::filesystem::path &path)
+    static WeightedCRFGraph read_from_file(const std::filesystem::path& path)
     {
         size_t n, m;
         if (!std::filesystem::exists(path))
@@ -147,7 +159,8 @@ public:
         do
         {
             std::getline(file, line);
-        } while (line.length() == 0 || line[0] == '%');
+        }
+        while (line.length() == 0 || line[0] == '%');
         std::istringstream iss(line);
         iss >> n >> m;
         int weight_fmt = 0, n_vertex_weights = 0, tmp;
@@ -204,7 +217,7 @@ public:
         return WeightedCRFGraph{{vertices, edges}, weights};
     }
 
-    void write_to_file_metis(const std::filesystem::path &path) const
+    void write_to_file_metis(const std::filesystem::path& path) const
     {
         std::ofstream file{path};
         if (!file.is_open())
@@ -231,7 +244,7 @@ public:
     //  - nodes are zero indexed
     //  - it is an undirected graph, but only one direction is stored
     // TODO: maybe ifdef if we don't care about this file format to get rid of dependency
-    static WeightedCRFGraph read_from_file_graphML(const std::filesystem::path &path)
+    static WeightedCRFGraph read_from_file_graphML(const std::filesystem::path& path)
     {
         if (!std::filesystem::exists(path))
             throw std::runtime_error("File not found: " + path.string());
@@ -244,11 +257,11 @@ public:
         pugi::xml_node xml_graph = doc.child("graphml").child("graph");
         size_t n_nodes = 0;
         size_t n_edges = 0;
-        for (auto &node : xml_graph.children("node"))
+        for (auto& node : xml_graph.children("node"))
         {
             ++n_nodes;
         }
-        for (auto &edge : xml_graph.children("edge"))
+        for (auto& edge : xml_graph.children("edge"))
         {
             ++n_edges;
         }
@@ -276,13 +289,13 @@ public:
         //    }
         //}
 
-        auto adj_list = std::vector<std::vector<std::pair<size_t, double>>>(n_nodes, std::vector<std::pair<size_t, double>>{});
+        auto adj_list =
+            std::vector<std::vector<std::pair<size_t, double>>>(n_nodes, std::vector<std::pair<size_t, double>>{});
 
         // parse edges
-        for (auto &edge : xml_graph.children("edge"))
+        for (auto& edge : xml_graph.children("edge"))
         {
-            double weight =
-                edge.find_child_by_attribute("key", "weight").text().as_double();
+            double weight = edge.find_child_by_attribute("key", "weight").text().as_double();
             size_t source = edge.attribute("source").as_ullong();
             size_t target = edge.attribute("target").as_ullong();
             adj_list[source].emplace_back(target, weight);
@@ -290,7 +303,7 @@ public:
         }
         for (size_t u = 0; u < adj_list.size(); u++)
         {
-            for (auto &neighbor : adj_list[u])
+            for (auto& neighbor : adj_list[u])
             {
                 weights.emplace_back(neighbor.second);
                 edges.emplace_back(neighbor.first);
@@ -300,7 +313,7 @@ public:
         return {{vertices, edges}, weights};
     }
 
-    void write_to_file_graphML(const std::filesystem::path &path) const
+    void write_to_file_graphML(const std::filesystem::path& path) const
     {
         pugi::xml_document doc;
         auto decl = doc.append_child(pugi::node_declaration);
@@ -310,9 +323,8 @@ public:
         auto graphml = doc.append_child("graphml");
         graphml.append_attribute("xmlns") = "http://graphml.graphdrawing.org/xmlns";
         graphml.append_attribute("xmlns:xsi") = "http://www.w3.org/2001/XMLSchema-instance";
-        graphml.append_attribute("xsi:schemaLocation") =
-            "http://graphml.graphdrawing.org/xmlns "
-            "http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd";
+        graphml.append_attribute("xsi:schemaLocation") = "http://graphml.graphdrawing.org/xmlns "
+                                                         "http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd";
 
         auto graph_node = graphml.append_child("graph");
         graph_node.append_attribute("edgedefault") = "undirected";
@@ -340,8 +352,9 @@ public:
         doc.save_file(path.c_str());
     }
 
-    void write_to_file_graphML(const std::filesystem::path &path,
-                               const std::unordered_map<size_t, std::vector<size_t>> &map_to_original_graph) const
+    void write_to_file_graphML(
+        const std::filesystem::path& path,
+        const std::unordered_map<size_t, std::vector<size_t>>& map_to_original_graph) const
     {
         pugi::xml_document doc;
         auto decl = doc.append_child(pugi::node_declaration);
@@ -351,9 +364,8 @@ public:
         auto graphml = doc.append_child("graphml");
         graphml.append_attribute("xmlns") = "http://graphml.graphdrawing.org/xmlns";
         graphml.append_attribute("xmlns:xsi") = "http://www.w3.org/2001/XMLSchema-instance";
-        graphml.append_attribute("xsi:schemaLocation") =
-            "http://graphml.graphdrawing.org/xmlns "
-            "http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd";
+        graphml.append_attribute("xsi:schemaLocation") = "http://graphml.graphdrawing.org/xmlns "
+                                                         "http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd";
 
         auto graph_node = graphml.append_child("graph");
         graph_node.append_attribute("edgedefault") = "undirected";
@@ -367,7 +379,7 @@ public:
             if (map_to_original_graph.find(u) != map_to_original_graph.end())
             {
                 std::string vertices_str;
-                for (auto &v : map_to_original_graph.at(u))
+                for (auto& v : map_to_original_graph.at(u))
                 {
                     vertices_str += std::to_string(v) + ",";
                 }
@@ -403,7 +415,7 @@ public:
 
     // Read graph from simple link file format: first line contains n m wf
     // followed by m lines of u v w representing an edge between u and v with weight
-    static inline WeightedCRFGraph<> read_from_file_links(const std::filesystem::path &link_file)
+    static inline WeightedCRFGraph<> read_from_file_links(const std::filesystem::path& link_file)
     {
         std::ifstream file{link_file};
         size_t n, m, wf;
@@ -424,7 +436,7 @@ public:
         }
         for (size_t i = 0; i < n; ++i)
         {
-            for (const auto &[neighbor, weight] : adj_list[i])
+            for (const auto& [neighbor, weight] : adj_list[i])
             {
                 edges.emplace_back(neighbor);
                 weights.emplace_back(weight);
@@ -469,9 +481,7 @@ public:
     }
 
     WeightedCRFGraph
-    add_links(
-        const WeightedCRFGraph &link_graph,
-        const std::unordered_set<size_t> &selected_edges) const
+    add_links(const WeightedCRFGraph& link_graph, const std::unordered_set<size_t>& selected_edges) const
     {
         auto new_vertices = std::vector<size_t>(graph.vertices.size(), 0);
         std::vector<size_t> new_edges{};
@@ -495,16 +505,15 @@ public:
             }
             new_vertices[u + 1] = new_edges.size();
         }
-        return WeightedCRFGraph{
-            {new_vertices, new_edges},
-            new_weights};
+        return WeightedCRFGraph{{new_vertices, new_edges}, new_weights};
     }
 
     // will probably get rid of this and construct directly the link
     // graph as a vector of links.
     std::vector<std::tuple<NodeID, NodeID, WeightType>> csr_to_vec_links()
     {
-        std::vector<std::tuple<NodeID, NodeID, WeightType>> links = std::vector<std::tuple<NodeID, NodeID, WeightType>>(weights.size());
+        std::vector<std::tuple<NodeID, NodeID, WeightType>> links =
+            std::vector<std::tuple<NodeID, NodeID, WeightType>>(weights.size());
         for (NodeID u{0}; u < graph.vertices.size() - 1; u++)
         {
             for (EdgeID e{graph.vertices[u]}; e < graph.vertices[u + 1]; e++)
@@ -549,10 +558,7 @@ public:
     // TODO: under construction
     // Only works for cactus graphs
     using CycleID = int;
-    std::tuple<
-        WeightedCRFGraph<>,
-        std::vector<std::vector<CycleID>>>
-    cactus_generate_block_tree(size_t root) const
+    std::tuple<WeightedCRFGraph<>, std::vector<std::vector<CycleID>>> cactus_generate_block_tree(size_t root) const
     {
         auto parent = std::vector<NodeID>(graph.vertices.size() - 1, static_cast<NodeID>(-1));
         auto state = std::vector<char>(graph.vertices.size() - 1, 0);
@@ -579,7 +585,7 @@ public:
             }
 
             bool advanced = false;
-            for (EdgeID &e = next_edge[current]; e < graph.vertices[current + 1]; ++e)
+            for (EdgeID& e = next_edge[current]; e < graph.vertices[current + 1]; ++e)
             {
                 NodeID v = graph.edges[e];
                 if (v == parent[current])

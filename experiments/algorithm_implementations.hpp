@@ -10,9 +10,6 @@
 #include "HeiConnect/sc_reduction/transform_single_builders.hpp"
 #include "HeiConnect/greedy.hpp"
 #include "HeiConnect/set_cover/set_cover.hpp"
-#include "HeiConnect/set_cover/set_cover_oracle.hpp"
-#include "HeiConnect/set_cover/solver_greedy.hpp"
-#include "HeiConnect/set_cover/solver_greedy_cheapest.hpp"
 #include "HeiConnect/set_cover/trimmer.hpp"
 #include "HeiConnect/ilp.hpp"
 
@@ -27,7 +24,7 @@ template <typename SetCoverType>
 using CheapestSetCoverPipeline = SolveTrim<
     SetCoverType,
     USSolution,
-    SetCoverSolverGreedyCheapest<SetCoverType, BasicContext<SetCoverType, USSolution>, USSolution>,
+    CheapestSetCoverSolver<SetCoverType, USSolution>,
     SetCoverTrimmer<SetCoverType, USSolution>>;
 
 template <typename SetCoverType>
@@ -105,22 +102,6 @@ class CycGreedySingleThreadedPQRunner : public AlgorithmRunner
 {
 public:
     void run(const std::filesystem::path &graph_file) override;
-};
-
-class CycGreedySingleThreadedPQV2Runner : public AlgorithmRunner
-{
-public:
-    void run(const std::filesystem::path &graph_file) override;
-};
-
-class SetCoverCsrWriterRunner : public AlgorithmRunner
-{
-public:
-    void run(const std::filesystem::path &graph_file) override;
-    void print_results(std::ostream &os) override;
-
-private:
-    std::unique_ptr<SetCoverOracle<size_t, size_t, double>> m_oracle;
 };
 
 // ==================== Direct Graph Algorithms ====================

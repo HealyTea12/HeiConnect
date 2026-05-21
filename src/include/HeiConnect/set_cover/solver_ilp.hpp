@@ -5,7 +5,6 @@
 #include "HeiConnect/set_cover/solver_base.hpp"
 
 template <typename SetCoverType, typename SolutionType>
-    requires SetCoverCon<SetCoverType> && ForEachElementCon<SetCoverType>
 class SetCoverSolverILP
 {
 public:
@@ -26,7 +25,9 @@ public:
         for (size_t set_index = 0; set_index < set_cover.get_num_sets(); ++set_index)
         {
             set_cover.forEachElement(set_index, [&](size_t element)
-                                     { cover_expr[element] += vars[set_index]; });
+            {
+                cover_expr[element] += vars[set_index];
+            });
         }
 
         for (size_t element = 0; element < set_cover.get_num_elements(); ++element)

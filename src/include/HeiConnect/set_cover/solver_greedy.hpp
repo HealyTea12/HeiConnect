@@ -5,20 +5,55 @@
 #include "HeiConnect/set_cover/trimmer.hpp"
 
 template <typename GreedyContext, typename SetCoverType>
-concept GreedyContextCon = requires(GreedyContext context, size_t set_index, const SetCoverType &set_cover, USSolution solution) {
+concept GreedyContextCon = requires(GreedyContext context, size_t set_index) {
     { context.add_set(set_index) };
     { context.cover_count(set_index) } -> std::convertible_to<size_t>;
     { context.get_total_covered_elements() } -> std::convertible_to<size_t>;
-    { set_cover.get_num_sets() } -> std::convertible_to<size_t>;
-    { set_cover.get_set_cost(set_index) } -> std::convertible_to<double>;
-    { set_cover.get_num_elements() } -> std::convertible_to<size_t>;
-    { solution.add_set(set_index) };
-    { solution.get_solution_size() } -> std::convertible_to<size_t>;
 };
 
-// Greedy solver with customizable context
+// Generic greedy solver that works with any solver interface
+template <typename SetCoverT, typename GreedyContext, typename Solution>
+    requires GreedyContextCon<GreedyContext, SetCoverT>
+class GreedyHelper
+{
+public:
+    GreedyHelper() = default;
+
+    void solve(const SetCoverT &set_cover, Solution &solution, GreedyContext &context)
+    {
+        std::priority_queue<std::pair<double, size_t>> pq;
+        for (size_t s{0}; s < set_cover.get_num_sets(); s++)
+        {
+            size_t covered = 0;
+            covered = context.cover_count(s);
+
+            const double cost_benefit_ratio = static_cast<double>(covered) / set_cover.get_set_cost(s);
+            pq.push({cost_benefit_ratio, s});
+        }
+
+        while (context.get_total_covered_elements() < set_cover.get_num_elements() &&
+               solution.get_solution_size() != set_cover.get_num_sets())
+        {
+            auto best_set = pq.top();
+            pq.pop();
+
+            const auto best_set_idx = best_set.second;
+            size_t covered = 0;
+            covered = context.cover_count(best_set_idx);
+
+            const double ratio = static_cast<double>(covered) / set_cover.get_set_cost(best_set_idx);
+            if (ratio < best_set.first)
+            {
+                pq.push({ratio, best_set_idx});
+                continue;
+            }
+            context.add_set(best_set_idx);
+            solution.add_set(best_set_idx);
+        }
+    }
+};
+
 template <typename SetCoverType, typename SolutionType, typename GreedyContext = BasicContext<SetCoverType, SolutionType>>
-    requires GreedyContextCon<GreedyContext, SetCoverType>
 class GreedySetCoverSolver
 {
 public:
@@ -31,37 +66,8 @@ public:
 
     void solve(const SetCoverType &set_cover, SolutionType &solution, GreedyContext &context)
     {
-        // Greedy algorithm: build priority queue of all sets by cost-benefit ratio
-        std::priority_queue<std::pair<double, size_t>> pq;
-        for (size_t s{0}; s < set_cover.get_num_sets(); s++)
-        {
-            const size_t covered = context.cover_count(s);
-            const double cost_benefit_ratio = static_cast<double>(covered) / set_cover.get_set_cost(s);
-            pq.push({cost_benefit_ratio, s});
-        }
-
-        // Greedily select sets until all elements are covered or all sets are selected
-        while (context.get_total_covered_elements() < set_cover.get_num_elements() &&
-               solution.get_solution_size() != set_cover.get_num_sets())
-        {
-            auto best_set = pq.top();
-            pq.pop();
-
-            const auto best_set_idx = best_set.second;
-            const size_t covered = context.cover_count(best_set_idx);
-            const double ratio = static_cast<double>(covered) / set_cover.get_set_cost(best_set_idx);
-
-            // Re-evaluate if ratio has changed; if so, re-insert with new ratio
-            if (ratio < best_set.first)
-            {
-                pq.push({ratio, best_set_idx});
-                continue;
-            }
-
-            context.add_set(best_set_idx);
-            solution.add_set(best_set_idx);
-        }
-
+        GreedyHelper<SetCoverType, GreedyContext, SolutionType> greedy{};
+        greedy.solve(set_cover, solution, context);
         m_feasible = context.get_total_covered_elements() == set_cover.get_num_elements();
         m_total_covered_elements = context.get_total_covered_elements();
     }
@@ -79,4 +85,34 @@ public:
 private:
     bool m_feasible = false;
     size_t m_total_covered_elements = 0;
+};
+
+template <typename SetCoverType, typename SolutionType>
+class CheapestSetCoverSolver
+{
+public:
+    void solve(const SetCoverType &set_cover, SolutionType &solution)
+    {
+        std::vector<size_t> set_indices(set_cover.get_num_sets());
+        std::iota(set_indices.begin(), set_indices.end(), 0);
+        std::sort(set_indices.begin(), set_indices.end(), [&](size_t a, size_t b)
+        {
+            return set_cover.get_set_cost(a) < set_cover.get_set_cost(b);
+        });
+
+        std::vector<size_t> coverage_counts(set_cover.get_num_elements(), 0);
+        for (size_t set_index : set_indices)
+        {
+            if (std::all_of(coverage_counts.begin(), coverage_counts.end(), [](size_t count) { return count > 0; }))
+            {
+                break;
+            }
+
+            solution.add_set(set_index);
+            set_cover.forEachElement(set_index, [&](size_t element)
+            {
+                ++coverage_counts[element];
+            });
+        }
+    }
 };

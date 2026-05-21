@@ -21,14 +21,14 @@ public:
         std::optional<double> time_trimming;
         std::optional<double> time_ls;
         std::optional<double> time_total;
+        std::optional<double> time_data_reduction;
     } result;
 
     virtual ~AlgorithmRunner() = default;
-    virtual void run(const std::filesystem::path &graph_file) = 0;
-    virtual void print_results(std::ostream &os)
+    virtual void run(const std::filesystem::path& graph_file) = 0;
+    virtual void print_results(std::ostream& os)
     {
-        auto print_opt = [&os](const std::string &label, const auto &value)
-        {
+        auto print_opt = [&os](const std::string& label, const auto& value) {
             if (value.has_value())
                 os << label << ": " << *value << "\n";
         };
@@ -43,6 +43,7 @@ public:
         print_opt("Time total (s)", result.time_total);
         print_opt("Time trimming (s)", result.time_trimming);
         print_opt("Time local search (s)", result.time_ls);
+        print_opt("Time data reduction (s)", result.time_data_reduction);
     }
 };
 

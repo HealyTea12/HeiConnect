@@ -7,121 +7,35 @@
 #include "HeiConnect/set_cover/set_cover_pseudo.hpp"
 #include "HeiConnect/set_cover/trimmer.hpp"
 
-#include <algorithm>
-#include <any>
-#include <iostream>
 #include <memory>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-#include <vector>
 
-struct Reuse
-{
-};
-
-template <typename ContextType>
-struct Fresh
-{
-};
-
-template <typename Stage>
-concept HasContextStrategy = requires {
-    typename Stage::context_strategy;
-};
-
-template <typename Stage>
-concept HasExpectedContextType = requires {
-    typename Stage::expected_context_type;
-};
-
-// This adapters just rename the functions so it matches the API for the pipeline
-template <typename Solver, typename ContextStrategy = Fresh<void>, typename ContextType = void>
-struct SolverStageAdapter
-{
-    Solver solver{};
-    using context_strategy = ContextStrategy;
-    using expected_context_type = ContextType;
-
-    template <typename SetCoverType, typename SolutionType>
-    void run(const SetCoverType &set_cover, SolutionType &solution)
-    {
-        solver.solve(set_cover, solution);
-    }
-
-    template <typename SetCoverType, typename SolutionType, typename ContextTypeT>
-    void run(const SetCoverType &set_cover, SolutionType &solution, ContextTypeT &context)
-    {
-        if constexpr (requires {
-                          solver.solve(set_cover, solution, context);
-                      })
-        {
-            solver.solve(set_cover, solution, context);
-        }
-        else
-        {
-            solver.solve(set_cover, solution);
-        }
-    }
-};
-
-template <typename Trimmer, typename ContextStrategy = Reuse, typename ContextType = void>
-struct TrimmerStageAdapter
-{
-    Trimmer trimmer{};
-    using context_strategy = ContextStrategy;
-    using expected_context_type = ContextType;
-
-    template <typename SetCoverType, typename SolutionType>
-    void run(const SetCoverType &set_cover, SolutionType &solution)
-    {
-        trimmer.trim(set_cover, solution);
-    }
-
-    template <typename SetCoverType, typename SolutionType, typename ContextTypeT>
-    void run(const SetCoverType &set_cover, SolutionType &solution, ContextTypeT &context)
-    {
-        if constexpr (requires {
-                          trimmer.trim(set_cover, solution, context);
-                      })
-        {
-            trimmer.trim(set_cover, solution, context);
-        }
-        else
-        {
-            trimmer.trim(set_cover, solution);
-        }
-    }
-};
-
-template <typename SetCoverType, typename SolutionType, typename... Stages>
-class SetCoverPipeline
+template <typename SetCoverType, typename SolutionType, typename Solver, typename Trimmer>
+class SolveTrim
 {
 public:
-    static_assert(sizeof...(Stages) > 0, "SetCoverPipeline requires at least one stage");
-
-    explicit SetCoverPipeline(Stages... stages)
-        : m_stages(std::move(stages)...)
+    struct Config
     {
-    }
+        bool enable_trim = false;
+    };
 
-    SetCoverPipeline() = default;
+    explicit SolveTrim(Config config = {}) : m_config(config) {}
 
     void solve(SetCoverType set_cover)
     {
         double start = omp_get_wtime();
-        m_solution = SolutionType{};
         m_set_cover = std::make_shared<SetCoverType>(std::move(set_cover));
-        m_current_context.reset();
 
-        std::apply(
-            [this](auto &...stages)
-            {
-                (run_stage_wrapper(stages), ...);
-            },
-            m_stages);
+        Solver solver{};
+        solver.solve(*m_set_cover, m_solution);
+
+        if (m_config.enable_trim)
+        {
+            Trimmer trimmer{};
+            trimmer.trim(*m_set_cover, m_solution);
+        }
 
         double end = omp_get_wtime();
+
         m_runtime_seconds = end - start;
         m_objective_value = get_solution_cost();
         m_covered_elements = count_covered_elements();
@@ -171,98 +85,6 @@ public:
     }
 
 private:
-    template <typename Stage>
-    void run_stage_wrapper(Stage &stage)
-    {
-        if constexpr (HasContextStrategy<Stage>)
-        {
-            using Strategy = typename Stage::context_strategy;
-            run_stage_with_strategy(stage, Strategy{});
-        }
-        else
-        {
-            stage.run(*m_set_cover, m_solution);
-        }
-    }
-
-    template <typename Stage>
-    void run_stage_with_strategy(Stage &stage, Reuse)
-    {
-        if (!m_current_context.has_value())
-        {
-            stage.run(*m_set_cover, m_solution);
-            return;
-        }
-
-        if constexpr (HasExpectedContextType<Stage> && !std::is_void_v<typename Stage::expected_context_type>)
-        {
-            using Ctx = typename Stage::expected_context_type;
-            if (auto *ctx = std::any_cast<Ctx>(&m_current_context))
-            {
-                if constexpr (requires {
-                                  stage.run(*m_set_cover, m_solution, *ctx);
-                              })
-                {
-                    stage.run(*m_set_cover, m_solution, *ctx);
-                    return;
-                }
-            }
-        }
-
-        stage.run(*m_set_cover, m_solution);
-    }
-
-    template <typename Stage, typename ContextType>
-    void run_stage_with_strategy(Stage &stage, Fresh<ContextType>)
-    {
-        if constexpr (std::is_void_v<ContextType>)
-        {
-            stage.run(*m_set_cover, m_solution);
-            m_current_context.reset();
-        }
-        else
-        {
-            auto context = create_context<ContextType>();
-            for (const auto set_index : m_solution.get_solution())
-            {
-                context.add_set(set_index);
-            }
-
-            if constexpr (requires {
-                              stage.run(*m_set_cover, m_solution, context);
-                          })
-            {
-                stage.run(*m_set_cover, m_solution, context);
-                m_current_context = std::move(context);
-            }
-            else
-            {
-                stage.run(*m_set_cover, m_solution);
-                m_current_context.reset();
-            }
-        }
-    }
-
-    template <typename ContextType>
-    ContextType create_context() const
-    {
-        if constexpr (std::is_constructible_v<ContextType, std::shared_ptr<const SetCoverType>>)
-        {
-            std::shared_ptr<const SetCoverType> sc = m_set_cover;
-            return ContextType{sc};
-        }
-        else if constexpr (std::is_constructible_v<ContextType, std::shared_ptr<SetCoverType>>)
-        {
-            return ContextType{m_set_cover};
-        }
-        else
-        {
-            static_assert(std::is_constructible_v<ContextType, std::shared_ptr<const SetCoverType>> ||
-                              std::is_constructible_v<ContextType, std::shared_ptr<SetCoverType>>,
-                          "ContextType must be constructible from shared_ptr<const SetCoverType> or shared_ptr<SetCoverType>");
-        }
-    }
-
     size_t count_covered_elements() const
     {
         if (!m_set_cover)
@@ -274,27 +96,21 @@ private:
         for (const auto set_index : m_solution.get_solution())
         {
             m_set_cover->forEachElement(set_index, [&](size_t element)
-                                        { covered[element] = true; });
+            {
+                covered[element] = true;
+            });
         }
         return std::count(covered.begin(), covered.end(), true);
     }
 
-    std::tuple<Stages...> m_stages{};
+    Config m_config;
     SolutionType m_solution{};
     std::shared_ptr<SetCoverType> m_set_cover;
-    std::any m_current_context;
     size_t m_covered_elements = 0;
     double m_runtime_seconds = 0.0;
     double m_objective_value = 0.0;
     SolverStatus m_status = SolverStatus::Unknown;
 };
-
-template <typename SetCoverType, typename SolutionType, typename Solver, typename Trimmer>
-using SolveTrim = SetCoverPipeline<
-    SetCoverType,
-    SolutionType,
-    SolverStageAdapter<Solver>,
-    TrimmerStageAdapter<Trimmer>>;
 
 /*
 class SetCoverSolver<SetCoverBit>
@@ -1086,43 +902,73 @@ public:
             m_cover_count_metrics.time_alloc_class_intersects += omp_get_wtime() - section_start;
             section_start = omp_get_wtime();
             for (size_t arc_i{0}; arc_i < arcs.size(); arc_i++)
-            {
-                auto [cls, start, end] = arcs[arc_i];
-                auto intersect_start = std::max(start, a);
-                auto intersect_end = std::min(end, b);
-                if constexpr (std::signed_integral<cycle_pos_T>)
+            m_runtime_seconds = end - start;
+            m_objective_value = get_solution_cost();
+            m_covered_elements = count_covered_elements();
+            m_status = (m_covered_elements == m_set_cover->get_num_elements()) ? SolverStatus::Feasible : SolverStatus::Unknown;
                 {
                     m_class_intersects[cls] += std::max(cycle_pos_T{0}, intersect_end - intersect_start);
-                }
+        const SolutionType &get_solution() const
                 else
-                {
+            return m_solution;
                     if (intersect_start < intersect_end)
                     {
-                        m_class_intersects[cls] += intersect_end - intersect_start;
+        double get_solution_cost() const
                     }
-                }
+            if (!m_set_cover)
+            {
+                return 0.0;
+            }
+
+            double total_cost = 0.0;
+            for (const auto set_index : m_solution.get_solution())
+            {
+                total_cost += m_set_cover->get_set_cost(set_index);
+            }
+            return total_cost;
             }
             m_cover_count_metrics.time_class_intersects += omp_get_wtime() - section_start;
-
+        size_t get_covered_elements() const noexcept
             section_start = omp_get_wtime();
-            for (size_t i{0}; i < m_class_sizes[cycle].size(); i++)
-            {
-                covered += m_class_intersects[i] * (m_class_sizes[cycle][i] - m_class_intersects[i]);
-            }
-            m_cover_count_metrics.time_cover_count_class_accumulation += omp_get_wtime() - section_start;
+            return m_covered_elements;
         }
-        m_cover_count_metrics.time_cover_count_cycle_part += omp_get_wtime() - cycle_part_start;
 
-        const double tree_part_start = omp_get_wtime();
-        for (size_t k{0}; k < set_cover.get_num_tree_cuts(); k++)
+        double get_runtime_seconds() const noexcept
         {
+            return m_runtime_seconds;
+        }
+
+        SolverStatus get_status() const noexcept
+        {
+            return m_status;
             ull coverage = set_cover.m_tree_partition_matrix[u * set_cover.get_num_tree_cuts() + k] ^ set_cover.m_tree_partition_matrix[v * set_cover.get_num_tree_cuts() + k];
             covered += std::popcount(coverage & ~m_covered_elements[k]);
         }
+        size_t count_covered_elements() const
+        {
+            if (!m_set_cover)
+            {
+                return 0;
+            }
+
+            std::vector<bool> covered(m_set_cover->get_num_elements(), false);
+            for (const auto set_index : m_solution.get_solution())
+            {
+                m_set_cover->forEachElement(set_index, [&](size_t element)
+                {
+                    covered[element] = true;
+                });
+            }
+            return std::count(covered.begin(), covered.end(), true);
+        }
+
         m_cover_count_metrics.time_cover_count_tree_part += omp_get_wtime() - tree_part_start;
-        m_cover_count_metrics.time_cover_count_total += omp_get_wtime() - total_start;
         return covered;
     }
+        size_t m_covered_elements = 0;
+        double m_runtime_seconds = 0.0;
+        double m_objective_value = 0.0;
+        SolverStatus m_status = SolverStatus::Unknown;
 
 private:
     static constexpr cycle_pos_T INVALID_CLASS = std::numeric_limits<cycle_pos_T>::max();

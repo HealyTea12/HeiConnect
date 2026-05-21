@@ -5,51 +5,53 @@
 #include <memory>
 #include <vector>
 
-template <typename SetCoverType, typename Solution>
+template<typename SetCoverType>
     requires SetCoverCon<SetCoverType> && ForEachElementCon<SetCoverType>
 class BasicContext
 {
     using CoverCount = int;
 
 public:
-    explicit BasicContext(std::shared_ptr<const SetCoverType> set_cover)
-        : m_setCover(std::move(set_cover)), m_coveredCount(m_setCover->get_num_elements(), 0)
-    {
-    }
+    explicit BasicContext(const SetCoverType& set_cover) :
+        m_setCover(std::make_shared<const SetCoverType>(set_cover)),
+        m_coveredCount(m_setCover->get_num_elements(), 0)
+    {}
 
     void add_set(size_t set_index)
     {
-        m_setCover->forEachElement(set_index, [this](typename SetCoverType::ElementID element)
-                                   { ++m_coveredCount[element]; });
+        m_setCover->forEachElement(set_index, [this](typename SetCoverType::ElementID element) {
+            ++m_coveredCount[element];
+        });
     }
 
     void remove_set(size_t set_index)
     {
-        m_setCover->forEachElement(set_index, [this](typename SetCoverType::ElementID element)
-                                   { --m_coveredCount[element]; });
+        m_setCover->forEachElement(set_index, [this](typename SetCoverType::ElementID element) {
+            --m_coveredCount[element];
+        });
     }
 
     size_t cover_count(size_t set_index) const
     {
         size_t count = 0;
-        m_setCover->forEachElement(set_index, [this, &count](typename SetCoverType::ElementID element)
-                                   {
+        m_setCover->forEachElement(set_index, [this, &count](typename SetCoverType::ElementID element) {
             if (m_coveredCount[element] == 0)
             {
                 ++count;
-            } });
+            }
+        });
         return count;
     }
-
-    bool can_remove(size_t set_index, const Solution &) const
+    template<typename Solution>
+    bool can_remove(size_t set_index, const Solution&) const
     {
         bool removable = true;
-        m_setCover->forEachElement(set_index, [this, &removable](typename SetCoverType::ElementID element)
-                                   {
+        m_setCover->forEachElement(set_index, [this, &removable](typename SetCoverType::ElementID element) {
             if (m_coveredCount[element] == 1)
             {
                 removable = false;
-            } });
+            }
+        });
         return removable;
     }
 
@@ -60,8 +62,7 @@ public:
 
     size_t get_total_covered_elements() const
     {
-        return std::count_if(m_coveredCount.begin(), m_coveredCount.end(), [](CoverCount count)
-                             { return count > 0; });
+        return std::count_if(m_coveredCount.begin(), m_coveredCount.end(), [](CoverCount count) { return count > 0; });
     }
 
     void reset()
@@ -75,7 +76,7 @@ private:
 };
 
 // Specialized context for bit-packed representation (SetCoverBit)
-template <typename SetCoverType, typename Solution>
+template<typename SetCoverType>
 class BitPackedContext
 {
     using CoverCount = int;
@@ -83,18 +84,18 @@ class BitPackedContext
     constexpr static size_t WORD_BITS = 8 * sizeof(ull);
 
 public:
-    explicit BitPackedContext(std::shared_ptr<const SetCoverType> set_cover)
-        : m_setCover(std::move(set_cover)), m_coverageMask(m_setCover->get_n_cols(), 0)
-    {
-    }
+    explicit BitPackedContext(const SetCoverType& set_cover) :
+        m_setCover(std::make_shared<const SetCoverType>(set_cover)),
+        m_coverageMask(m_setCover->get_n_cols(), 0)
+    {}
 
     void add_set(typename SetCoverType::SetID set_index)
     {
         size_t col = 0;
-        m_setCover->forEachElementBitMasked(set_index, [this, &col](size_t word)
-                                            {
+        m_setCover->forEachElementBitMasked(set_index, [this, &col](size_t word) {
             m_coverageMask[col] |= word;
-            col++; });
+            col++;
+        });
     }
 
     // ATTENTION: Need to be very careful when calling this one because it breaks the underlying state
@@ -110,23 +111,24 @@ public:
     {
         size_t count = 0;
         size_t col = 0;
-        m_setCover->forEachElementBitMasked(set_index, [&](size_t word)
-                                            {
+        m_setCover->forEachElementBitMasked(set_index, [&](size_t word) {
             ull new_bits = word & ~m_coverageMask[col];
             count += std::popcount(new_bits);
-            col++; });
+            col++;
+        });
         return count;
     }
 
     // this repeats the same as the trimmer context for bitpacked maybe remove repetition
-    bool can_remove(SetCoverType::SetID set_index, const Solution &solution) const
+    template<typename Solution>
+    bool can_remove(SetCoverType::SetID set_index, const Solution& solution) const
     {
-        const auto &solSet = solution.get_solution();
+        const auto& solSet = solution.get_solution();
         for (size_t k{0}; k < m_setCover->get_n_cols(); k++)
         {
             ull set_coverage = m_setCover->get_col(set_index, k);
 
-            for (const auto &other_set_index : solSet)
+            for (const auto& other_set_index : solSet)
             {
                 if (other_set_index == set_index)
                     continue;
@@ -169,43 +171,45 @@ private:
     std::vector<ull> m_coverageMask;
 };
 
-template <typename SetCoverType1, typename SetCoverType2,
-          typename FirstContext, typename SecondContext, typename SolutionType>
+template<typename SetCoverType1, typename SetCoverType2, typename FirstContext, typename SecondContext>
 class ContextDouble
 {
 public:
-    explicit ContextDouble(std::shared_ptr<const SetCoverDouble<SetCoverType1, SetCoverType2>> set_cover)
-        : m_context1(std::make_shared<FirstContext>(std::make_shared<SetCoverType1>(set_cover->first()))),
-          m_context2(std::make_shared<SecondContext>(std::make_shared<SetCoverType2>(set_cover->second()))),
-          m_setCover(set_cover)
-    {
-    }
+    explicit ContextDouble(
+        const SetCoverDouble<SetCoverType1, SetCoverType2>& set_cover,
+        FirstContext context1,
+        SecondContext context2) :
+        m_context1(std::move(context1)),
+        m_context2(std::move(context2)),
+        m_setCover(std::make_shared<const SetCoverDouble<SetCoverType1, SetCoverType2>>(set_cover))
+    {}
 
     void add_set(size_t set_index)
     {
-        m_context1->add_set(set_index);
-        m_context2->add_set(set_index);
+        m_context1.add_set(set_index);
+        m_context2.add_set(set_index);
     }
 
     void remove_set(size_t set_index)
     {
-        m_context1->remove_set(set_index);
-        m_context2->remove_set(set_index);
+        m_context1.remove_set(set_index);
+        m_context2.remove_set(set_index);
     }
 
-    bool can_remove(size_t set_index, const SolutionType &solution) const
+    template<typename SolutionType>
+    bool can_remove(size_t set_index, const SolutionType& solution) const
     {
-        return m_context1->can_remove(set_index, solution) && m_context2->can_remove(set_index, solution);
+        return m_context1.can_remove(set_index, solution) && m_context2.can_remove(set_index, solution);
     }
 
     size_t cover_count(size_t set_index) const
     {
-        return m_context1->cover_count(set_index) + m_context2->cover_count(set_index);
+        return m_context1.cover_count(set_index) + m_context2.cover_count(set_index);
     }
 
     size_t get_total_covered_elements() const
     {
-        return m_context1->get_total_covered_elements() + m_context2->get_total_covered_elements();
+        return m_context1.get_total_covered_elements() + m_context2.get_total_covered_elements();
     }
 
     // this might be incorrect
@@ -214,28 +218,28 @@ public:
         size_t firstElements = m_setCover->first().get_num_elements();
         if (element_index < firstElements)
         {
-            return m_context1->is_element_covered(element_index);
+            return m_context1.is_element_covered(element_index);
         }
         else
         {
-            return m_context2->is_element_covered(element_index - firstElements);
+            return m_context2.is_element_covered(element_index - firstElements);
         }
     }
 
     void reset()
     {
-        m_context1->reset();
-        m_context2->reset();
+        m_context1.reset();
+        m_context2.reset();
     }
 
 private:
-    std::shared_ptr<FirstContext> m_context1;
-    std::shared_ptr<SecondContext> m_context2;
+    FirstContext m_context1;
+    SecondContext m_context2;
     std::shared_ptr<const SetCoverDouble<SetCoverType1, SetCoverType2>> m_setCover;
 };
 
 // specialization for set cover cyc
-template <class link_node_T, class link_edge_T, class link_weight_T, typename SolutionType>
+template<class link_node_T, class link_edge_T, class link_weight_T>
 class CycContext
 {
     using CycPos = size_t;
@@ -247,12 +251,10 @@ class CycContext
     };
 
 public:
-    CycContext(std::shared_ptr<SetCoverCyc<link_node_T, link_edge_T, link_weight_T>> sc)
-        : m_setCover(std::move(sc))
+    CycContext(const SetCoverCyc<link_node_T, link_edge_T, link_weight_T>& sc) : m_setCover(std::make_shared<const SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>(sc))
     {
-        const auto &cycleSizes = m_setCover->get_cycle_sizes();
-        m_arcEquivClasses = std::vector<std::vector<ArcEquivClass>>(
-            cycleSizes.size());
+        const auto& cycleSizes = m_setCover->get_cycle_sizes();
+        m_arcEquivClasses = std::vector<std::vector<ArcEquivClass>>(cycleSizes.size());
         for (size_t c{0}; c < cycleSizes.size(); c++)
         {
             m_arcEquivClasses[c].emplace_back(ArcEquivClass{0, 0, static_cast<CycPos>(cycleSizes[c])});
@@ -261,14 +263,14 @@ public:
         m_classIntersects = std::vector<size_t>(*std::max_element(cycleSizes.begin(), cycleSizes.end()), 0);
     }
 
-    size_t cover_count(size_t set_index)
+    size_t cover_count(size_t set_index) const
     {
         size_t covered = 0;
-        const auto &ccs = m_setCover->get_cycle_crosses()[set_index];
-        for (const auto &cc : ccs)
+        const auto& ccs = m_setCover->get_cycle_crosses()[set_index];
+        for (const auto& cc : ccs)
         {
             auto [cycle, a, b] = cc;
-            std::vector<ArcEquivClass> &arcs = m_arcEquivClasses[cycle];
+            const std::vector<ArcEquivClass>& arcs = m_arcEquivClasses[cycle];
             m_classIntersects.assign(m_classSizes[cycle].size(), 0);
             for (size_t arc_i{0}; arc_i < arcs.size(); arc_i++)
             {
@@ -301,8 +303,8 @@ public:
     {
         size_t gained = 0;
 
-        const auto &ccs = m_setCover->get_cycle_crosses()[set_index];
-        for (const auto &cc : ccs)
+        const auto& ccs = m_setCover->get_cycle_crosses()[set_index];
+        for (const auto& cc : ccs)
         {
             auto [cycle, a, b] = cc;
             gained += refine_cycle_partition(cycle, a, b);
@@ -313,14 +315,21 @@ public:
 
     // TODO: right now there is no way of going backwards
     // or calculating if a set is removable in this context
-    // bool can_remove(size_t) const
-    //{
-    //    return false;
-    //}
+    template<typename Solution>
+    bool can_remove(size_t, const Solution&) const
+    {
+        return false;
+    }
 
-    // void remove_set(size_t)
-    //{
-    // }
+    bool can_remove(size_t) const
+    {
+        return false;
+    }
+
+    void remove_set(size_t)
+    {
+        // not supported for CycContext
+    }
 
     size_t get_total_covered_elements() const
     {
@@ -330,7 +339,7 @@ public:
 private:
     static constexpr CycPos INVALID_CLASS = std::numeric_limits<CycPos>::max();
 
-    static void merge_adjacent_arcs(std::vector<ArcEquivClass> &arcs)
+    static void merge_adjacent_arcs(std::vector<ArcEquivClass>& arcs)
     {
         if (arcs.empty())
             return;
@@ -341,7 +350,7 @@ private:
 
         for (size_t i = 1; i < arcs.size(); ++i)
         {
-            auto &back = merged.back();
+            auto& back = merged.back();
             if (back.cls == arcs[i].cls && back.end == arcs[i].start)
             {
                 back.end = arcs[i].end;
@@ -356,14 +365,14 @@ private:
 
     size_t refine_cycle_partition(size_t cycle, CycPos a, CycPos b)
     {
-        auto &arcs = m_arcEquivClasses[cycle];
-        auto &class_sizes = m_classSizes[cycle];
+        auto& arcs = m_arcEquivClasses[cycle];
+        auto& class_sizes = m_classSizes[cycle];
 
         const size_t old_num_classes = class_sizes.size();
 
         std::vector<CycPos> inside(old_num_classes, 0);
 
-        for (const auto &arc : arcs)
+        for (const auto& arc : arcs)
         {
             const CycPos l = std::max(arc.start, a);
             const CycPos r = std::min(arc.end, b);
@@ -404,7 +413,7 @@ private:
         std::vector<ArcEquivClass> new_arcs;
         new_arcs.reserve(arcs.size() * 2 + 4);
 
-        for (const auto &arc : arcs)
+        for (const auto& arc : arcs)
         {
             const CycPos l = std::max(arc.start, a);
             const CycPos r = std::min(arc.end, b);
@@ -443,10 +452,10 @@ private:
     }
 
 private:
-    std::shared_ptr<SetCoverCyc<link_node_T, link_edge_T, link_weight_T>> m_setCover;
+    std::shared_ptr<const SetCoverCyc<link_node_T, link_edge_T, link_weight_T>> m_setCover;
 
     // this vector is used to store intersections during cover count cacluatlions to avoid multiple allocs
-    std::vector<size_t> m_classIntersects;
+    mutable std::vector<size_t> m_classIntersects;
     std::vector<std::vector<ArcEquivClass>> m_arcEquivClasses;
     std::vector<std::vector<CycPos>> m_classSizes;
     size_t m_totalCoveredElements = 0;
