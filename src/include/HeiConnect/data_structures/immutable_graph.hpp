@@ -510,7 +510,7 @@ public:
 
     // will probably get rid of this and construct directly the link
     // graph as a vector of links.
-    std::vector<std::tuple<NodeID, NodeID, WeightType>> csr_to_vec_links()
+    std::vector<std::tuple<NodeID, NodeID, WeightType>> csr_to_vec_links() const
     {
         std::vector<std::tuple<NodeID, NodeID, WeightType>> links =
             std::vector<std::tuple<NodeID, NodeID, WeightType>>(weights.size());

@@ -156,6 +156,38 @@ public:
         return m_context.can_remove(set_index, solution);
     }
 
+    bool can_remove(size_t set_index) const
+    {
+        return m_context.can_remove(set_index, m_solution);
+    }
+
+
+    using SolutionContainer = decltype(std::declval<SolutionType>().get_solution());
+
+    SolutionContainer& get_solution()
+    {
+        return m_solution.get_solution();
+    }
+
+    const SolutionContainer& get_solution() const
+    {
+        return m_solution.get_solution();
+    }
+
+    size_t get_solution_size() const
+    {
+        return m_solution.get_solution_size();
+    }
+
+    BoundContext& operator=(const BoundContext& other)
+    {
+        if (this != &other)
+        {
+            m_solution = other.m_solution;
+        }
+        return *this;
+    }
+
     size_t cover_count(size_t set_index) const
     {
         return m_context.cover_count(set_index);

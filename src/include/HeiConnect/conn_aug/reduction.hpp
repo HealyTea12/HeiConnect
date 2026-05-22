@@ -10,6 +10,7 @@
 template<int RecordStatsLevel = 0>
 class BasicLinkDomReducer
 {
+public:
     template<typename NodeID, typename EdgeID, typename EdgeWeight, typename LinkEdgeID, typename LinkEdgeWeight>
     void
     run(const WeightedCRFGraph<NodeID, EdgeID, EdgeWeight>& graph,

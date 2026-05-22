@@ -4,11 +4,11 @@
 
 #include "HeiConnect/set_cover/solver_base.hpp"
 
-template <typename SetCoverType, typename SolutionType>
 class SetCoverSolverILP
 {
 public:
-    bool solve(const SetCoverType &set_cover, SolutionType &solution)
+    template<typename SetCoverType, typename SolutionType>
+    bool solve(const SetCoverType& set_cover, SolutionType& solution)
     {
         GRBEnv env = GRBEnv(true);
         env.set("LogFile", "set_cover_ilp.log");
@@ -18,16 +18,14 @@ public:
         std::vector<GRBVar> vars(set_cover.get_num_sets());
         for (size_t set_index = 0; set_index < set_cover.get_num_sets(); ++set_index)
         {
-            vars[set_index] = model.addVar(0.0, 1.0, set_cover.get_set_cost(set_index), GRB_BINARY, "s" + std::to_string(set_index));
+            vars[set_index] =
+                model.addVar(0.0, 1.0, set_cover.get_set_cost(set_index), GRB_BINARY, "s" + std::to_string(set_index));
         }
 
         std::vector<GRBLinExpr> cover_expr(set_cover.get_num_elements());
         for (size_t set_index = 0; set_index < set_cover.get_num_sets(); ++set_index)
         {
-            set_cover.forEachElement(set_index, [&](size_t element)
-            {
-                cover_expr[element] += vars[set_index];
-            });
+            set_cover.forEachElement(set_index, [&](size_t element) { cover_expr[element] += vars[set_index]; });
         }
 
         for (size_t element = 0; element < set_cover.get_num_elements(); ++element)

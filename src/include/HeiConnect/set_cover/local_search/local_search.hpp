@@ -1,6 +1,7 @@
 #pragma once
 #include <chrono>
 #include <vector>
+#include <random>
 
 #include "HeiConnect/set_cover/util.hpp"
 #include "HeiConnect/set_cover/solver_greedy_context.hpp"
@@ -93,8 +94,8 @@ public:
         RepairerType& repairer,
         double time_limit_seconds,
         EvaluatorType evaluator = EvaluatorType{},
-        int max_steps,
-        std::mt19937_64 rng) :
+        int max_steps = 10,
+        std::mt19937_64 rng = std::mt19937_64{std::random_device{}()}) :
         m_repairer(repairer),
         m_evaluator(std::move(evaluator)),
         m_timeLimitSeconds(time_limit_seconds),
@@ -103,7 +104,7 @@ public:
     {}
 
     template<typename SetCoverType, typename ContextType>
-    void run(const SetetCoverType& set_cover, ContextType& context)
+    void run(const SetCoverType& set_cover, ContextType& context)
     {
         using SetCost = typename SetCoverType::SetCost;
         using Clock = std::chrono::steady_clock;
@@ -113,16 +114,17 @@ public:
 
         VectorSolution potential_sets{};
 
+        std::vector<size_t> m_move_local;
+
         while (Clock::now() - start < time_limit)
         {
             m_move.clear();
             ContextType candidate = context;
-
-            potential_sets.emplace_back(candidate.get_solution()[rand() % candidate.get_solution().size()]);
+            potential_sets.add_set(candidate.get_solution()[rand() % candidate.get_solution().size()]);
             for (int step{0}; step < m_nMaxSteps; step++)
             {
                 size_t random_set = rand() % potential_sets.size();
-                candidate.remove_set(potential_sets[random_set]);
+                candidate.remove_set(potential_sets.get_solution()[random_set]);
                 potential_sets.reset();
                 BoundContext bound_context{candidate, potential_sets};
                 m_repairer.repair(set_cover, bound_context);
@@ -146,4 +148,5 @@ private:
     double m_timeLimitSeconds;
     int m_nMaxSteps;
     std::mt19937_64 m_rng;
+    std::vector<size_t> m_move;
 };
