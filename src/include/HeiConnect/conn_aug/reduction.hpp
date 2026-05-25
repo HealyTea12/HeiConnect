@@ -17,22 +17,33 @@ public:
         const WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>& link_graph)
     {
         TableDistOracle distance_oracle(graph.graph);
-        std::vector<std::tuple<NodeID, NodeID, LinkEdgeWeight>> link_edges = link_graph.csr_to_vec_links();
-        std::sort(link_edges.begin(), link_edges.end(), [&](const auto& a, const auto& b) {
-            auto [u_a, v_a, w_a] = a;
-            auto [u_b, v_b, w_b] = b;
-            return w_a < w_b;
-        });
-        std::vector<bool> removable = std::vector<bool>(link_edges.size(), false);
+        struct LinkRecord
+        {
+            size_t original_index;
+            NodeID u;
+            NodeID v;
+            LinkEdgeWeight w;
+        };
+
+        std::vector<LinkRecord> link_edges;
+        link_edges.reserve(link_graph.num_edges());
+        auto original_link_edges = link_graph.csr_to_vec_links();
+        for (size_t i = 0; i < original_link_edges.size(); ++i)
+        {
+            auto [u, v, w] = original_link_edges[i];
+            link_edges.push_back({i, u, v, w});
+        }
+        std::sort(link_edges.begin(), link_edges.end(), [&](const auto& a, const auto& b) { return a.w < b.w; });
+        std::vector<bool> removable = std::vector<bool>(link_graph.num_edges(), false);
         for (size_t i{0}; i < link_edges.size(); i++)
         {
-            auto [u_i, v_i, w_i] = link_edges[i];
+            const auto& link_i = link_edges[i];
             for (size_t j{0}; j < i; j++)
             {
-                auto [u_j, v_j, w_j] = link_edges[j];
-                if (dominates(link_edges[j], link_edges[i], distance_oracle))
+                const auto& link_j = link_edges[j];
+                if (dominates(link_j, link_i, distance_oracle))
                 {
-                    removable[i] = true;
+                    removable[link_i.original_index] = true;
                     break;
                 }
             }
@@ -48,15 +59,11 @@ public:
 
 
 private:
-    template<typename NodeID, typename LinkEdgeWeight>
-    bool dominates(
-        const std::tuple<NodeID, NodeID, LinkEdgeWeight>& link_i,
-        const std::tuple<NodeID, NodeID, LinkEdgeWeight>& link_j,
-        const TableDistOracle& distance_oracle)
+    template<typename LinkRecord>
+    bool dominates(const LinkRecord& link_i, const LinkRecord& link_j, const TableDistOracle& distance_oracle)
     {
-        auto [u_i, v_i, w_i] = link_i;
-        auto [u_j, v_j, w_j] = link_j;
-        return on_path(u_i, v_i, u_j, distance_oracle) && on_path(u_i, v_i, v_j, distance_oracle);
+        return on_path(link_i.u, link_i.v, link_j.u, distance_oracle) &&
+            on_path(link_i.u, link_i.v, link_j.v, distance_oracle);
     }
 
     template<typename NodeID>
