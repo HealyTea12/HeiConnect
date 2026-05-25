@@ -12,7 +12,7 @@ class BasicLinkDomReducer
 {
 public:
     template<typename NodeID, typename EdgeID, typename EdgeWeight, typename LinkEdgeID, typename LinkEdgeWeight>
-    void
+    std::tuple<WeightedCRFGraph<NodeID, EdgeID, EdgeWeight>, WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>>
     run(const WeightedCRFGraph<NodeID, EdgeID, EdgeWeight>& graph,
         const WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>& link_graph)
     {
@@ -30,7 +30,7 @@ public:
             for (size_t j{0}; j < i; j++)
             {
                 auto [u_j, v_j, w_j] = link_edges[j];
-                if (dominates(link_edges[i], link_edges[j], distance_oracle))
+                if (dominates(link_edges[j], link_edges[i], distance_oracle))
                 {
                     removable[i] = true;
                     break;
@@ -42,6 +42,8 @@ public:
             size_t num_removed = std::count(removable.begin(), removable.end(), true);
             m_stats.num_removed_links = num_removed;
         }
+        auto new_link_graph = remove_links<NodeID, LinkEdgeID, LinkEdgeWeight>(link_graph, removable);
+        return {graph, new_link_graph};
     }
 
 
@@ -62,6 +64,32 @@ private:
     {
         return distance_oracle.get_distance(u, x) + distance_oracle.get_distance(x, v) ==
             distance_oracle.get_distance(u, v);
+    }
+
+
+    template<typename NodeID, typename LinkEdgeID, typename LinkEdgeWeight>
+    WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight> remove_links(
+        const WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>& link_graph,
+        const std::vector<bool>& removable)
+    {
+        std::vector<NodeID> new_vertices(link_graph.num_vertices() + 1, 0);
+        std::vector<LinkEdgeID> new_edges{};
+        new_edges.reserve(link_graph.num_edges());
+        std::vector<LinkEdgeWeight> new_weights{};
+        new_edges.reserve(link_graph.num_edges());
+        for (NodeID u{0}; u < link_graph.num_vertices(); u++)
+        {
+            for (LinkEdgeID e{link_graph.graph.vertices[u]}; e < link_graph.graph.vertices[u + 1]; e++)
+            {
+                if (!removable[e])
+                {
+                    new_edges.push_back(link_graph.graph.edges[e]);
+                    new_weights.push_back(link_graph.weights[e]);
+                }
+            }
+            new_vertices[u + 1] = new_edges.size();
+        }
+        return {{new_vertices, new_edges}, new_weights};
     }
 
 public:

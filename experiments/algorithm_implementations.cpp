@@ -25,6 +25,16 @@ void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path& grap
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
     double start = omp_get_wtime();
+
+    BasicLinkDomReducer<1> reducer{};
+    std::cout << "pruning\n";
+    auto reduced = reducer.run(graph, link_graph);
+    graph = std::move(std::get<0>(reduced));
+    link_graph = std::move(std::get<1>(reduced));
+    std::cout << "Pruned " << reducer.m_stats.num_removed_links << " links!\n";
+
+    double data_reduction_time = omp_get_wtime() - start;
+
     auto sc = construct_set_cover(
         graph.graph.vertices,
         graph.graph.edges,
@@ -32,12 +42,7 @@ void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path& grap
         link_graph.graph.vertices,
         link_graph.graph.edges,
         link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
-    BasicLinkDomReducer reducer{};
-    std::cout << "prunning\n";
-    reducer.run(graph, link_graph);
-    std::cout << "Prunned!\n";
-    double data_reduction_time = omp_get_wtime() - start - reduction_time;
+    double reduction_time = omp_get_wtime() - start - data_reduction_time;
 
     USSolution solution{};
     BasicContext context{sc};
