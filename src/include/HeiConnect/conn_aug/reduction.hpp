@@ -2,6 +2,9 @@
 #pragma once
 
 #include <algorithm>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "HeiConnect/data_structures/immutable_graph.hpp"
@@ -11,6 +14,14 @@ template<int RecordStatsLevel = 0>
 class BasicLinkDomReducer
 {
 public:
+    static constexpr std::string_view name = "Data pruning";
+
+    template<typename GraphType, typename LinkGraphType>
+    auto operator()(const GraphType& graph, const LinkGraphType& link_graph)
+    {
+        return run(graph, link_graph);
+    }
+
     template<typename NodeID, typename EdgeID, typename EdgeWeight, typename LinkEdgeID, typename LinkEdgeWeight>
     std::tuple<WeightedCRFGraph<NodeID, EdgeID, EdgeWeight>, WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>>
     run(const WeightedCRFGraph<NodeID, EdgeID, EdgeWeight>& graph,
@@ -51,10 +62,22 @@ public:
         if constexpr (RecordStatsLevel > 0)
         {
             size_t num_removed = std::count(removable.begin(), removable.end(), true);
-            m_stats.num_removed_links = num_removed;
+            m_metrics = StageMetrics{{"num_removed_links", std::to_string(num_removed)}};
         }
         auto new_link_graph = remove_links<NodeID, LinkEdgeID, LinkEdgeWeight>(link_graph, removable);
         return {graph, new_link_graph};
+    }
+
+    std::optional<StageMetrics> emit_metrics() const
+    {
+        if constexpr (RecordStatsLevel > 0)
+        {
+            return m_metrics;
+        }
+        else
+        {
+            return std::nullopt;
+        }
     }
 
 
@@ -100,8 +123,5 @@ private:
     }
 
 public:
-    struct Stats
-    {
-        size_t num_removed_links{0};
-    } m_stats;
+    std::optional<StageMetrics> m_metrics;
 };

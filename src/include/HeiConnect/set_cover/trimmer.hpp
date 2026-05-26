@@ -2,10 +2,14 @@
 
 #include "HeiConnect/set_cover/common.hpp"
 #include "HeiConnect/set_cover/trimmer_context.hpp"
-// Default trimmer context uses the same basic context as the greedy solver.
 #include "HeiConnect/set_cover/solver_greedy_context.hpp"
+#include "HeiConnect/set_cover/util.hpp"
 
 #include <algorithm>
+#include <memory>
+#include <stdexcept>
+#include <string_view>
+#include <variant>
 #include <unordered_set>
 #include <vector>
 
@@ -20,9 +24,20 @@ concept TrimmerRequirements = requires(const SetCoverT& set_cover, TrimmerContex
     { context.can_remove(size_t{}) } -> std::convertible_to<bool>;
 };
 
+template<size_t RecordMetricsLevel = 0>
 class SetCoverTrimmer
 {
 public:
+    static constexpr std::string_view name = "Trim redundant sets";
+    SetCoverTrimmer() = default;
+
+    template<typename SetCoverT, typename TrimmerContext>
+    auto operator()(std::shared_ptr<const SetCoverT> set_cover, TrimmerContext context)
+    {
+        trim(*set_cover, context);
+        return std::tuple{std::move(set_cover), std::move(context)};
+    }
+
     template<typename SetCoverT, typename TrimmerContext>
         requires TrimmerRequirements<SetCoverT, TrimmerContext>
     void trim(const SetCoverT& set_cover, TrimmerContext& context)
@@ -40,5 +55,31 @@ public:
                 context.remove_set(set_index);
             }
         }
+
+        if constexpr (RecordMetricsLevel > 0)
+        {
+            m_metrics = StageMetrics{
+                {"cost", std::to_string(HeiConnect::sc::cost(set_cover, context.get_solution()))},
+                {"size", std::to_string(context.get_solution().size())}
+            };
+        }
     }
+
+    std::optional<StageMetrics> emit_metrics() const
+    {
+        if constexpr (RecordMetricsLevel > 0)
+        {
+            return m_metrics;
+        }
+        else
+        {
+            return std::nullopt;
+        }
+    }
+
+private:
+    std::optional<StageMetrics> m_metrics;
 };
+
+template<size_t RecordMetricsLevel = 0>
+SetCoverTrimmer() -> SetCoverTrimmer<RecordMetricsLevel>;

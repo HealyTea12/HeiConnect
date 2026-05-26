@@ -33,7 +33,7 @@ int main(int argc, char **argv)
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in CSR form took " << (end - start) << " seconds." << std::endl;
             timer.add_checkpoint("reduction");
-            GreedySetCoverSolver<SetCover, USSolution> solver;
+            GreedySetCoverSolver<SetCover, 0> solver;
             USSolution solution;
             solver.solve(set_cover, solution);
             timer.add_checkpoint("solving");
@@ -60,7 +60,7 @@ int main(int argc, char **argv)
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in BIT MATRIX form took " << (end - start) << " seconds." << std::endl;
             timer.add_checkpoint("reduction");
-            GreedySetCoverSolver<SetCoverBit, USSolution> solver;
+            GreedySetCoverSolver<SetCoverBit, 0> solver;
             USSolution solution;
             solver.solve(set_cover_bit, solution);
             timer.add_checkpoint("solving");
@@ -87,7 +87,7 @@ int main(int argc, char **argv)
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in PSEUDO form took " << (end - start) << " seconds." << std::endl;
             timer.add_checkpoint("reduction");
-            GreedySetCoverSolver<decltype(set_cover_pseudo), USSolution> solver;
+            GreedySetCoverSolver<decltype(set_cover_pseudo), 0> solver;
             USSolution solution;
             solver.solve(set_cover_pseudo, solution);
             timer.add_checkpoint("solving");
@@ -114,7 +114,7 @@ int main(int argc, char **argv)
             double end = omp_get_wtime();
             std::cout << "Constructing set cover in PSEUDO ANCESTRY form took " << (end - start) << " seconds." << std::endl;
             timer.add_checkpoint("reduction");
-            GreedySetCoverSolver<decltype(set_cover_pseudo), USSolution> solver;
+            GreedySetCoverSolver<decltype(set_cover_pseudo), 0> solver;
             USSolution solution;
             solver.solve(set_cover_pseudo, solution);
             timer.add_checkpoint("solving");

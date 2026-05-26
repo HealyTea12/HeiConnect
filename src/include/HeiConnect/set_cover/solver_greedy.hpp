@@ -2,7 +2,12 @@
 
 #include "HeiConnect/set_cover/solver_base.hpp"
 #include "HeiConnect/set_cover/solver_greedy_context.hpp"
-#include "HeiConnect/set_cover/trimmer.hpp"
+#include "HeiConnect/set_cover/util.hpp"
+
+#include <memory>
+#include <queue>
+#include <string_view>
+#include <variant>
 
 template<typename GreedyContext, typename SetCoverType>
 concept GreedyContextCon = requires(GreedyContext context, size_t set_index) {
@@ -11,11 +16,32 @@ concept GreedyContextCon = requires(GreedyContext context, size_t set_index) {
     { context.get_total_covered_elements() } -> std::convertible_to<size_t>;
 };
 
-// Generic greedy solver that works with any solver interface
+template<size_t RecordMetricsLevel = 0>
 class GreedySetCoverSolver
 {
 public:
+    static constexpr std::string_view name = "Greedy solve";
+
     GreedySetCoverSolver() = default;
+
+    template<typename SetCoverT, typename GreedyContext>
+    auto operator()(std::shared_ptr<const SetCoverT> set_cover, GreedyContext context)
+    {
+        solve(*set_cover, context);
+        return std::tuple{std::move(set_cover), std::move(context)};
+    }
+
+    std::optional<StageMetrics> emit_metrics() const
+    {
+        if constexpr (RecordMetricsLevel > 0)
+        {
+            return m_metrics;
+        }
+        else
+        {
+            return std::nullopt;
+        }
+    }
 
     template<typename SetCoverT, typename GreedyContext>
         requires GreedyContextCon<GreedyContext, SetCoverT>
@@ -24,9 +50,7 @@ public:
         std::priority_queue<std::pair<double, size_t>> pq;
         for (size_t s{0}; s < set_cover.get_num_sets(); s++)
         {
-            size_t covered = 0;
-            covered = context.cover_count(s);
-
+            size_t covered = context.cover_count(s);
             const double cost_benefit_ratio = static_cast<double>(covered) / set_cover.get_set_cost(s);
             pq.push({cost_benefit_ratio, s});
         }
@@ -38,9 +62,7 @@ public:
             pq.pop();
 
             const auto best_set_idx = best_set.second;
-            size_t covered = 0;
-            covered = context.cover_count(best_set_idx);
-
+            size_t covered = context.cover_count(best_set_idx);
             const double ratio = static_cast<double>(covered) / set_cover.get_set_cost(best_set_idx);
             if (ratio < best_set.first)
             {
@@ -48,6 +70,14 @@ public:
                 continue;
             }
             context.add_set(best_set_idx);
+        }
+
+        if constexpr (RecordMetricsLevel > 0)
+        {
+            m_metrics = StageMetrics{
+                {"cost", std::to_string(HeiConnect::sc::cost(set_cover, context.get_solution()))},
+                {"size", std::to_string(context.get_solution().size())}
+            };
         }
     }
 
@@ -57,4 +87,7 @@ public:
     {
         solve(set_cover, context);
     }
+
+private:
+    std::optional<StageMetrics> m_metrics;
 };

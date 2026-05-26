@@ -2,8 +2,10 @@
 #include <iostream>
 #include <numeric>
 #include <random>
+#include <sstream>
 #include "algorithm_implementations.hpp"
 #include "HeiConnect/link_reduction.hpp"
+#include "HeiConnect/sc_reduction/transform_single_builders.hpp"
 #include "HeiConnect/set_cover/file_writer.hpp"
 #include "HeiConnect/set_cover/set_cover.hpp"
 #include "HeiConnect/set_cover/trimmer.hpp"
@@ -15,7 +17,9 @@
 #include "HeiConnect/set_cover/solver_greedy_cheapest.hpp"
 #include "HeiConnect/set_cover/util.hpp"
 #include "HeiConnect/conn_aug/reduction.hpp"
+#include "HeiConnect/pipeline/pipeline.hpp"
 // #include "HeiConnect/set_cover/local_search/kset_move_generator.hpp"
+
 
 // ==================== Set Cover Greedy PQ ====================
 void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path& graph_file)
@@ -24,69 +28,50 @@ void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path& grap
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-    double start = omp_get_wtime();
 
-    BasicLinkDomReducer<1> reducer{};
-    std::cout << "pruning\n";
-    auto reduced = reducer.run(graph, link_graph);
-    graph = std::move(std::get<0>(reduced));
-    link_graph = std::move(std::get<1>(reduced));
-    std::cout << "Pruned " << reducer.m_stats.num_removed_links << " links!\n";
-
-    double data_reduction_time = omp_get_wtime() - start;
-
-    auto sc = construct_set_cover(
+    using GraphType = std::decay_t<decltype(graph)>;
+    using LinkGraphType = std::decay_t<decltype(link_graph)>;
+    using SetCoverType = decltype(construct_set_cover(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start - data_reduction_time;
+        link_graph.weights));
+    using BoundCtx = BoundContext<BasicContext<SetCoverType>, USSolution>;
 
-    USSolution solution{};
-    BasicContext context{sc};
-    BoundContext bound_context{context, solution};
-    GreedySetCoverSolver greedy_solver{};
-    SetCoverTrimmer trimmer{};
-    std::cout << "Solving...\n";
-    greedy_solver.solve(sc, bound_context);
-    std::cout << "Solved!\n";
-    double solving_time = omp_get_wtime() - start - reduction_time - data_reduction_time;
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
-    trimmer.trim(sc, bound_context);
-    double trimming_time = omp_get_wtime() - start - reduction_time - data_reduction_time - solving_time;
-    result.time_trimming = trimming_time;
-
-    result.solution_cost_trimmed = HeiConnect::sc::cost(sc, solution);
-    result.solution_size_trimmed = solution.get_solution().size();
-    // SingleSetRemovalMoveGenerator move_generator{true};
-    // TopKDestroyMoveGenerator<3> move_generator{3, 100, 1000};
-    // ExhaustiveCombinationMoveGenerator<true> move_generator{};
-    // LocalSearchStage<
-    //     ExhaustiveCombinationMoveGenerator<true>,
-    //     GreedySetCoverSolver<SetCover, USSolution, BasicContext<SetCover, USSolution>>,
-    //     1e-3,
-    //     true>
-    //     local_search(move_generator, greedy_solver, 60.0 * 60.0);
-    // local_search.run(sc, solution, context);
-
+    BasicLinkDomReducer<1> reducer{};
+    auto build_stage = ConstructSetCoverStage{};
+    GreedySetCoverSolver<1> greedy_solver{};
+    SetCoverTrimmer<1> trimmer{};
     auto engine = std::mt19937_64{std::random_device{}()};
     auto move_generator = CostFractionPerturbator(.5, engine);
-    auto local_search = BreakAndRepairSearch<decltype(move_generator), decltype(greedy_solver), DefaultEvaluator, true>{
-        move_generator,
-        greedy_solver,
-        5.0};
-    local_search.run(sc, bound_context);
-    result.solution_cost_ls = HeiConnect::sc::cost(sc, solution);
-    result.solution_size_ls = solution.get_solution().size();
-    result.time_ls = omp_get_wtime() - start - reduction_time - solving_time - trimming_time;
+    auto local_search =
+        BreakAndRepairSearch<decltype(move_generator), decltype(greedy_solver), 1, DefaultEvaluator, true>{
+            move_generator,
+            greedy_solver,
+            5.0};
 
-    result.time_reduction = reduction_time;
-    result.time_data_reduction = data_reduction_time;
-    result.time_solving = solving_time;
-    result.time_total = reduction_time + data_reduction_time + solving_time;
+    auto build_context_stage = [&](std::shared_ptr<const SetCoverType> set_cover) {
+        BoundCtx ctx{BasicContext<SetCoverType>(*set_cover), USSolution{}};
+        return std::tuple{std::move(set_cover), std::move(ctx)};
+    };
+    auto pipeline = Pipeline{reducer, build_stage, build_context_stage, greedy_solver, trimmer, local_search};
+
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
+
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    std::cout << "Solving...\n";
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.solution_cost_ls = result.solution_cost;
+    result.solution_size_ls = result.solution_size;
+    std::cout << "Solved!\n";
 }
 
 // ==================== Set Cover Greedy PQ Bit ====================
@@ -108,8 +93,8 @@ void SetCoverGreedySingleThreadedPQBitRunner::run(const std::filesystem::path& g
     USSolution solution{};
     BitPackedContext context{sc};
     BoundContext bound_context{context, solution};
-    GreedySetCoverSolver greedy_solver{};
-    SetCoverTrimmer trimmer{};
+    GreedySetCoverSolver<1> greedy_solver{};
+    SetCoverTrimmer<1> trimmer{};
     greedy_solver.solve(sc, bound_context);
     result.solution_cost = HeiConnect::sc::cost(sc, solution);
     result.solution_size = solution.get_solution().size();
@@ -142,8 +127,8 @@ void SetCoverGreedySingleThreadedPQPseudoRunner::run(const std::filesystem::path
     USSolution solution{};
     BitPackedContext context{sc};
     BoundContext bound_context{context, solution};
-    GreedySetCoverSolver greedy_solver{};
-    SetCoverTrimmer trimmer{};
+    GreedySetCoverSolver<1> greedy_solver{};
+    SetCoverTrimmer<1> trimmer{};
     greedy_solver.solve(sc, bound_context);
     double solving_time = omp_get_wtime() - start - reduction_time;
     result.solution_cost = HeiConnect::sc::cost(sc, solution);
@@ -178,8 +163,8 @@ void SCGWCPseudoAncestryRunner::run(const std::filesystem::path& graph_file)
     USSolution solution{};
     BitPackedContext context{sc};
     BoundContext bound_context{context, solution};
-    GreedySetCoverSolver greedy_solver{};
-    SetCoverTrimmer trimmer{};
+    GreedySetCoverSolver<1> greedy_solver{};
+    SetCoverTrimmer<1> trimmer{};
     greedy_solver.solve(sc, bound_context);
     double solving_time = omp_get_wtime() - start - reduction_time;
     result.solution_cost = HeiConnect::sc::cost(sc, solution);
@@ -215,7 +200,7 @@ void SetCoverGreedyCheapestRunner::run(const std::filesystem::path& graph_file)
     BasicContext context{sc};
     BoundContext bound_context{context, solution};
     SetCoverSolverGreedyCheapest solver{};
-    SetCoverTrimmer trimmer{};
+    SetCoverTrimmer<1> trimmer{};
     solver.solve(sc, bound_context);
     double solving_time = omp_get_wtime() - start - reduction_time;
     result.solution_cost = HeiConnect::sc::cost(sc, solution);
@@ -256,7 +241,7 @@ void SetCoverGreedyCheapestBitRunner::run(const std::filesystem::path& graph_fil
     std::cout << "pruning\n";
     BoundContext bound_context{context, solution};
     SetCoverSolverGreedyCheapest solver{};
-    SetCoverTrimmer trimmer{};
+    SetCoverTrimmer<1> trimmer{};
     solver.solve(sc, bound_context);
     double solving_time = omp_get_wtime() - start - reduction_time;
     result.solution_cost = HeiConnect::sc::cost(sc, solution);
@@ -295,7 +280,7 @@ void SetCoverPseudoGreedyCheapestRunner::run(const std::filesystem::path& graph_
     BitPackedContext context{sc};
     BoundContext bound_context{context, solution};
     SetCoverSolverGreedyCheapest solver{};
-    SetCoverTrimmer trimmer{};
+    SetCoverTrimmer<1> trimmer{};
     solver.solve(sc, bound_context);
     double solving_time = omp_get_wtime() - start - reduction_time;
     result.solution_cost = HeiConnect::sc::cost(sc, solution);
@@ -388,7 +373,7 @@ void OracleGreedySingleThreadedPQRunner::run(const std::filesystem::path& graph_
     USSolution solution{};
     BasicContext context{sc};
     BoundContext bound_context{context, solution};
-    GreedySetCoverSolver greedy_solver{};
+    GreedySetCoverSolver<1> greedy_solver{};
     greedy_solver.solve(sc, bound_context);
     double solving_time = omp_get_wtime() - start - reduction_time;
 
@@ -420,8 +405,8 @@ void CycGreedySingleThreadedPQRunner::run(const std::filesystem::path& graph_fil
     CycContext cyc_context{sc.second()};
     ContextDouble context{sc, pseudo_context, cyc_context};
     BoundContext<decltype(context), decltype(solution)> bound_context{context, solution};
-    GreedySetCoverSolver solver{};
-    SetCoverTrimmer trimmer{};
+    GreedySetCoverSolver<1> solver{};
+    SetCoverTrimmer<1> trimmer{};
     solver.solve(sc, bound_context);
     double solving_time = omp_get_wtime() - start - reduction_time;
     result.solution_cost = HeiConnect::sc::cost(sc, solution);
@@ -457,8 +442,8 @@ void CycGreedySingleThreadedPQV2Runner::run(const std::filesystem::path& graph_f
     CycContext cyc_context{sc.second()};
     ContextDouble context{sc, pseudo_context, cyc_context};
     BoundContext<decltype(context), decltype(solution)> bound_context{context, solution};
-    GreedySetCoverSolver solver{};
-    SetCoverTrimmer trimmer{};
+    GreedySetCoverSolver<1> solver{};
+    SetCoverTrimmer<1> trimmer{};
     solver.solve(sc, bound_context);
     double solving_time = omp_get_wtime() - start - reduction_time;
     result.solution_cost = HeiConnect::sc::cost(sc, solution);
@@ -508,8 +493,6 @@ void DirectGreedyRunner::run(const std::filesystem::path& graph_file)
     auto solution = solver::greedy_heuristic_strong(g);
     double solving_time = omp_get_wtime() - start;
     double solution_cost = calculate_edge_list_cost(solution);
-    result.solution_cost = solution_cost;
-    result.solution_size = solution.size();
     result.time_total = solving_time;
 }
 

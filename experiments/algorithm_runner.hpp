@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include "algorithm_registry.hpp"
+#include "HeiConnect/pipeline/pipeline.hpp"
 
 class AlgorithmRunner
 {
@@ -23,27 +24,17 @@ public:
         std::optional<double> time_total;
         std::optional<double> time_data_reduction;
     } result;
+    std::optional<Pipeline<>::PipelineMetrics> pipeline_metrics;
 
     virtual ~AlgorithmRunner() = default;
     virtual void run(const std::filesystem::path& graph_file) = 0;
     virtual void print_results(std::ostream& os)
     {
-        auto print_opt = [&os](const std::string& label, const auto& value) {
-            if (value.has_value())
-                os << label << ": " << *value << "\n";
-        };
-        print_opt("Solution cost", result.solution_cost);
-        print_opt("Solution cost (trimmed)", result.solution_cost_trimmed);
-        print_opt("Solution cost (local search)", result.solution_cost_ls);
-        print_opt("Solution size", result.solution_size);
-        print_opt("Solution size (trimmed)", result.solution_size_trimmed);
-        print_opt("Solution size (local search)", result.solution_size_ls);
-        print_opt("Time reduction (s)", result.time_reduction);
-        print_opt("Time solving (s)", result.time_solving);
-        print_opt("Time total (s)", result.time_total);
-        print_opt("Time trimming (s)", result.time_trimming);
-        print_opt("Time local search (s)", result.time_ls);
-        print_opt("Time data reduction (s)", result.time_data_reduction);
+        // If pipeline metrics exist, use the pipeline printer. Otherwise, do nothing.
+        if (pipeline_metrics.has_value())
+        {
+            Pipeline<>::print_pipeline_metrics(*pipeline_metrics, os);
+        }
     }
 };
 

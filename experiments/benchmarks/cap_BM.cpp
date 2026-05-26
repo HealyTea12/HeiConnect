@@ -22,7 +22,7 @@ static void BM_cap_pam_stars(benchmark::State &state)
             link_g.graph.vertices,
             link_g.graph.edges,
             link_g.weights);
-        GreedySetCoverSolver<decltype(set_cover), USSolution> solver;
+        GreedySetCoverSolver<decltype(set_cover), 0> solver;
         USSolution solution;
         solver.solve(set_cover, solution);
     }
@@ -42,7 +42,7 @@ static void BM_cap_oracle_stars(benchmark::State &state)
             link_g.graph.vertices,
             link_g.graph.edges,
             link_g.weights);
-        GreedySetCoverSolver<decltype(set_cover), USSolution> solver;
+        GreedySetCoverSolver<decltype(set_cover), 0> solver;
         USSolution solution;
         solver.solve(set_cover, solution);
     }

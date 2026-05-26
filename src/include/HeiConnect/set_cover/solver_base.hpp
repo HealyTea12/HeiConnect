@@ -6,111 +6,7 @@
 #include "HeiConnect/set_cover/set_cover_oracle.hpp"
 #include "HeiConnect/set_cover/set_cover_pseudo.hpp"
 #include "HeiConnect/set_cover/trimmer.hpp"
-
-#include <memory>
-
-template <typename SetCoverType, typename SolutionType, typename Solver, typename Trimmer>
-class SolveTrim
-{
-public:
-    struct Config
-    {
-        bool enable_trim = false;
-    };
-
-    explicit SolveTrim(Config config = {}) : m_config(config) {}
-
-    void solve(SetCoverType set_cover)
-    {
-        double start = omp_get_wtime();
-        m_set_cover = std::make_shared<SetCoverType>(std::move(set_cover));
-
-        Solver solver{};
-        solver.solve(*m_set_cover, m_solution);
-
-        if (m_config.enable_trim)
-        {
-            Trimmer trimmer{};
-            trimmer.trim(*m_set_cover, m_solution);
-        }
-
-        double end = omp_get_wtime();
-
-        m_runtime_seconds = end - start;
-        m_objective_value = get_solution_cost();
-        m_covered_elements = count_covered_elements();
-        m_status = (m_covered_elements == m_set_cover->get_num_elements()) ? SolverStatus::Feasible : SolverStatus::Unknown;
-    }
-
-    const SolutionType &get_solution() const
-    {
-        return m_solution;
-    }
-
-    size_t get_covered_elements() const noexcept
-    {
-        return m_covered_elements;
-    }
-
-    double get_runtime_seconds() const noexcept
-    {
-        return m_runtime_seconds;
-    }
-
-    SolverStatus get_status() const noexcept
-    {
-        return m_status;
-    }
-
-    void print_metrics() const
-    {
-        std::cout << "runtime_seconds: " << m_runtime_seconds << '\n';
-        std::cout << "objective_value: " << m_objective_value << '\n';
-        std::cout << "covered_elements: " << m_covered_elements << '\n';
-    }
-
-    double get_solution_cost() const
-    {
-        if (!m_set_cover)
-        {
-            return 0.0;
-        }
-
-        double total_cost = 0.0;
-        for (const auto set_index : m_solution.get_solution())
-        {
-            total_cost += m_set_cover->get_set_cost(set_index);
-        }
-        return total_cost;
-    }
-
-private:
-    size_t count_covered_elements() const
-    {
-        if (!m_set_cover)
-        {
-            return 0;
-        }
-
-        std::vector<bool> covered(m_set_cover->get_num_elements(), false);
-        for (const auto set_index : m_solution.get_solution())
-        {
-            m_set_cover->forEachElement(set_index, [&](size_t element)
-            {
-                covered[element] = true;
-            });
-        }
-        return std::count(covered.begin(), covered.end(), true);
-    }
-
-    Config m_config;
-    SolutionType m_solution{};
-    std::shared_ptr<SetCoverType> m_set_cover;
-    size_t m_covered_elements = 0;
-    double m_runtime_seconds = 0.0;
-    double m_objective_value = 0.0;
-    SolverStatus m_status = SolverStatus::Unknown;
-};
+#include "HeiConnect/set_cover/solver_greedy_context.hpp"
 
 /*
 class SetCoverSolver<SetCoverBit>
@@ -125,7 +21,8 @@ public:
 #if __AVX512__
         for (; k + 7 < this->set_cover->n_cols; k += 8)
         {
-            __m512i set_vec = _mm512_loadu_si512((__m512i *)(this->set_cover->set_cover.data() + set_index * this->set_cover->n_cols + k));
+            __m512i set_vec = _mm512_loadu_si512((__m512i *)(this->set_cover->set_cover.data() + set_index *
+this->set_cover->n_cols + k));
             __m512i covered_vec = _mm512_loadu_si512((__m512i *)(&m_covered_elements[k]));
             __m512i new_bits = _mm512_andnot_si512(covered_vec, set_vec);
             for (int i = 0; i < 8; i++)
@@ -138,7 +35,8 @@ public:
 #elif __AVX2__
         for (; k + 3 < this->set_cover->n_cols; k += 4)
         {
-            __m256i set_vec = _mm256_loadu_si256((__m256i *)(this->set_cover->set_cover.data() + set_index * this->set_cover->n_cols + k));
+            __m256i set_vec = _mm256_loadu_si256((__m256i *)(this->set_cover->set_cover.data() + set_index *
+this->set_cover->n_cols + k));
             __m256i covered_vec = _mm256_loadu_si256((__m256i *)(&m_covered_elements[k]));
             __m256i new_bits = _mm256_andnot_si256(covered_vec, set_vec);
             for (int i = 0; i < 4; i++)
@@ -168,7 +66,8 @@ protected:
 #ifdef __AVX512VPOPCNTDQ__
         for (; k + 7 < this->set_cover->n_cols; k += 8)
         {
-            __m512i vec_set = _mm512_loadu_si512((__m512i *)(this->set_cover->set_cover.data() + set_index * this->set_cover->n_cols + k));
+            __m512i vec_set = _mm512_loadu_si512((__m512i *)(this->set_cover->set_cover.data() + set_index *
+this->set_cover->n_cols + k));
             __m512i vec_covered = _mm512_loadu_si512(&m_covered_elements[k]);
             __m512i vec_new_bits = _mm512_andnot_si512(vec_covered, vec_set);
             __m512i vec_popcnt = _mm512_popcnt_epi64(vec_new_bits);
@@ -177,7 +76,8 @@ protected:
 #elif __AVX512__
         for (; k + 7 < this->set_cover->n_cols; k += 8)
         {
-            __m512i vec_set = _mm512_loadu_si512((__m512i *)(this->set_cover->set_cover.data() + set_index * this->set_cover->n_cols + k));
+            __m512i vec_set = _mm512_loadu_si512((__m512i *)(this->set_cover->set_cover.data() + set_index *
+this->set_cover->n_cols + k));
             __m512i vec_covered = _mm512_loadu_si512(&m_covered_elements[k]);
             __m512i vec_new_bits = _mm512_andnot_si512(vec_covered, vec_set);
             for (int i = 0; i < 8; i++)
@@ -188,7 +88,8 @@ protected:
 #elif __AVX2__
         for (; k + 3 < this->set_cover->n_cols; k += 4)
         {
-            __m256i vec_set = _mm256_loadu_si256((__m256i *)(this->set_cover->set_cover.data() + set_index * this->set_cover->n_cols + k));
+            __m256i vec_set = _mm256_loadu_si256((__m256i *)(this->set_cover->set_cover.data() + set_index *
+this->set_cover->n_cols + k));
             __m256i covered_vec = _mm256_loadu_si256((__m256i *)(&m_covered_elements[k]));
             __m256i new_bits = _mm256_andnot_si256(covered_vec, vec_set);
             for (int i = 0; i < 4; i++)
@@ -295,9 +196,8 @@ public:
         m_config = config;
         NUM_ELEMENTS = set_cover->get_num_elements();
         m_covered_elements = std::vector<ull>(set_cover->n_cols, 0);
-        m_covered_elements[set_cover->n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover->get_num_elements() % (8 * sizeof(ull)));
-        WeightedCRFGraph<> g = WeightedCRFGraph<>{
-            {set_cover->link_vertices, set_cover->link_edges},
+        m_covered_elements[set_cover->n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover->get_num_elements() % (8 *
+sizeof(ull))); WeightedCRFGraph<> g = WeightedCRFGraph<>{ {set_cover->link_vertices, set_cover->link_edges},
             set_cover->link_weights};
         m_links = g.csr_to_vec_links();
         static_cast<Derived *>(this)->algorithm_solve();
@@ -361,7 +261,8 @@ public:
     {
         m_total_covered_elements = 0;
         m_covered_elements = std::vector<ull>(set_cover->n_cols, 0);
-        m_covered_elements[set_cover->n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover->get_num_elements() % (8 * sizeof(ull)));
+        m_covered_elements[set_cover->n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover->get_num_elements() % (8 *
+sizeof(ull)));
     }
 
     void trim_solution()
@@ -425,8 +326,8 @@ public:
             if (new_solution_cost < current_solution_cost - epsilon)
             {
                 std::cout << k << " local search:" << "Improved cost from "
-                          << std::fixed << std::setprecision(10) << current_solution_cost << " to " << new_solution_cost << std::endl;
-                return true;
+                          << std::fixed << std::setprecision(10) << current_solution_cost << " to " << new_solution_cost
+<< std::endl; return true;
             }
             else
             {
@@ -787,8 +688,8 @@ public:
             m_arc_equiv_classes[c].push_back({0, 0, static_cast<cycle_pos_T>(set_cover.cycle_sizes[c])});
             m_class_sizes.emplace_back(std::vector<cycle_pos_T>{static_cast<cycle_pos_T>(set_cover.cycle_sizes[c])});
         }
-        m_class_intersects = std::vector<size_t>(*std::max_element(set_cover.cycle_sizes.begin(), set_cover.cycle_sizes.end()), 0);
-        static_cast<Derived *>(this)->algorithm_solve();
+        m_class_intersects = std::vector<size_t>(*std::max_element(set_cover.cycle_sizes.begin(),
+set_cover.cycle_sizes.end()), 0); static_cast<Derived *>(this)->algorithm_solve();
     }
 
     virtual void algorithm_solve() = 0;
@@ -829,7 +730,8 @@ protected:
     {
         m_total_covered_elements = 0;
         m_covered_elements = std::vector<ull>(set_cover.n_cols, 0);
-        m_covered_elements[set_cover.n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover.get_num_tree_cuts() % (8 * sizeof(ull)));
+        m_covered_elements[set_cover.n_cols - 1] = 0xFFFFFFFFFFFFFFFFULL << (set_cover.get_num_tree_cuts() % (8 *
+sizeof(ull)));
     }
 
     void trim_solution()
@@ -849,8 +751,9 @@ protected:
     void on_greedy_solve_finished()
     {
         const double denom = static_cast<double>(m_solution.size()) * static_cast<double>(set_cover.get_num_sets());
-        const double spared_coverage = denom > 0.0 ? (1.0 - (static_cast<double>(m_cover_count_metrics.cover_count_counter) / denom)) : 0.0;
-        std::cout << "Cover count spare ratio: " << spared_coverage << std::endl;
+        const double spared_coverage = denom > 0.0 ? (1.0 -
+(static_cast<double>(m_cover_count_metrics.cover_count_counter) / denom)) : 0.0; std::cout << "Cover count spare ratio:
+" << spared_coverage << std::endl;
     }
 
 private:
@@ -905,7 +808,8 @@ public:
             m_runtime_seconds = end - start;
             m_objective_value = get_solution_cost();
             m_covered_elements = count_covered_elements();
-            m_status = (m_covered_elements == m_set_cover->get_num_elements()) ? SolverStatus::Feasible : SolverStatus::Unknown;
+            m_status = (m_covered_elements == m_set_cover->get_num_elements()) ? SolverStatus::Feasible :
+SolverStatus::Unknown;
                 {
                     m_class_intersects[cls] += std::max(cycle_pos_T{0}, intersect_end - intersect_start);
         const SolutionType &get_solution() const
@@ -941,8 +845,9 @@ public:
         SolverStatus get_status() const noexcept
         {
             return m_status;
-            ull coverage = set_cover.m_tree_partition_matrix[u * set_cover.get_num_tree_cuts() + k] ^ set_cover.m_tree_partition_matrix[v * set_cover.get_num_tree_cuts() + k];
-            covered += std::popcount(coverage & ~m_covered_elements[k]);
+            ull coverage = set_cover.m_tree_partition_matrix[u * set_cover.get_num_tree_cuts() + k] ^
+set_cover.m_tree_partition_matrix[v * set_cover.get_num_tree_cuts() + k]; covered += std::popcount(coverage &
+~m_covered_elements[k]);
         }
         size_t count_covered_elements() const
         {
@@ -1163,9 +1068,8 @@ public:
         auto covered = 0ull;
         for (size_t k{0}; k < set_cover.n_cols; k++)
         {
-            auto cov = set_cover.m_tree_partition_matrix[u * set_cover.n_cols + k] ^ set_cover.m_tree_partition_matrix[v * set_cover.n_cols + k];
-            covered += std::popcount(cov & ~m_covered_elements[k]);
-            m_covered_elements[k] |= cov;
+            auto cov = set_cover.m_tree_partition_matrix[u * set_cover.n_cols + k] ^ set_cover.m_tree_partition_matrix[v
+* set_cover.n_cols + k]; covered += std::popcount(cov & ~m_covered_elements[k]); m_covered_elements[k] |= cov;
         }
         const auto &cc = set_cover.m_cycle_crosses[set_index];
         for (size_t i{0}; i < cc.size(); i++)
@@ -1223,16 +1127,24 @@ public:
         std::cout << "Cover count calls: " << m_cover_count_metrics.cover_count_counter << std::endl;
 
         std::cout << "Cover count total time: " << cover_total << " seconds" << std::endl;
-        std::cout << "  Cover count cycle part time: " << m_cover_count_metrics.time_cover_count_cycle_part << " seconds (" << pct(m_cover_count_metrics.time_cover_count_cycle_part, cover_total) << "%)" << std::endl;
-        std::cout << "  Cover count tree part time: " << m_cover_count_metrics.time_cover_count_tree_part << " seconds (" << pct(m_cover_count_metrics.time_cover_count_tree_part, cover_total) << "%)" << std::endl;
-        std::cout << "  Cover count class intersects time: " << m_cover_count_metrics.time_class_intersects << " seconds (" << pct(m_cover_count_metrics.time_class_intersects, cover_total) << "%)" << std::endl;
-        std::cout << "  Cover count allocate class intersects time: " << m_cover_count_metrics.time_alloc_class_intersects << " seconds (" << pct(m_cover_count_metrics.time_alloc_class_intersects, cover_total) << "%)" << std::endl;
-        std::cout << "  Cover count class accumulation time: " << m_cover_count_metrics.time_cover_count_class_accumulation << " seconds (" << pct(m_cover_count_metrics.time_cover_count_class_accumulation, cover_total) << "%)" << std::endl;
+        std::cout << "  Cover count cycle part time: " << m_cover_count_metrics.time_cover_count_cycle_part << " seconds
+(" << pct(m_cover_count_metrics.time_cover_count_cycle_part, cover_total) << "%)" << std::endl; std::cout << "  Cover
+count tree part time: " << m_cover_count_metrics.time_cover_count_tree_part << " seconds (" <<
+pct(m_cover_count_metrics.time_cover_count_tree_part, cover_total) << "%)" << std::endl; std::cout << "  Cover count
+class intersects time: " << m_cover_count_metrics.time_class_intersects << " seconds (" <<
+pct(m_cover_count_metrics.time_class_intersects, cover_total) << "%)" << std::endl; std::cout << "  Cover count allocate
+class intersects time: " << m_cover_count_metrics.time_alloc_class_intersects << " seconds (" <<
+pct(m_cover_count_metrics.time_alloc_class_intersects, cover_total) << "%)" << std::endl; std::cout << "  Cover count
+class accumulation time: " << m_cover_count_metrics.time_cover_count_class_accumulation << " seconds (" <<
+pct(m_cover_count_metrics.time_cover_count_class_accumulation, cover_total) << "%)" << std::endl;
 
         std::cout << "Add set total time: " << add_total << " seconds" << std::endl;
-        std::cout << "  Add set cycle refine time: " << m_cover_count_metrics.time_add_set_cycle_refine << " seconds (" << pct(m_cover_count_metrics.time_add_set_cycle_refine, add_total) << "%)" << std::endl;
-        std::cout << "  Add set insert solution time: " << m_cover_count_metrics.time_add_set_insert_solution << " seconds (" << pct(m_cover_count_metrics.time_add_set_insert_solution, add_total) << "%)" << std::endl;
-        std::cout << "  Add set covered-elements update time: " << m_cover_count_metrics.time_add_set_update_total_covered << " seconds (" << pct(m_cover_count_metrics.time_add_set_update_total_covered, add_total) << "%)" << std::endl;
+        std::cout << "  Add set cycle refine time: " << m_cover_count_metrics.time_add_set_cycle_refine << " seconds ("
+<< pct(m_cover_count_metrics.time_add_set_cycle_refine, add_total) << "%)" << std::endl; std::cout << "  Add set insert
+solution time: " << m_cover_count_metrics.time_add_set_insert_solution << " seconds (" <<
+pct(m_cover_count_metrics.time_add_set_insert_solution, add_total) << "%)" << std::endl; std::cout << "  Add set
+covered-elements update time: " << m_cover_count_metrics.time_add_set_update_total_covered << " seconds (" <<
+pct(m_cover_count_metrics.time_add_set_update_total_covered, add_total) << "%)" << std::endl;
     }
 
 protected:

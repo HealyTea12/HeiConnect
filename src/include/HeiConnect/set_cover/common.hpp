@@ -123,7 +123,7 @@ template<typename ContextType, typename SolutionType = USSolution>
 class BoundContext
 {
 public:
-    BoundContext(ContextType& context, SolutionType& solution) : m_context(context), m_solution(solution)
+    BoundContext(ContextType context, SolutionType solution) : m_context(std::move(context)), m_solution(std::move(solution))
     {}
 
     ContextType& get_context() noexcept
@@ -210,8 +210,8 @@ public:
     }
 
 private:
-    ContextType& m_context;
-    SolutionType& m_solution;
+    ContextType m_context;
+    SolutionType m_solution;
 };
 
 template<typename SetCoverType>

@@ -9,23 +9,11 @@
 #include "HeiConnect/set_cover/common.hpp"
 #include "HeiConnect/sc_reduction/transform_single_builders.hpp"
 #include "HeiConnect/greedy.hpp"
-#include "HeiConnect/set_cover/solver_greedy.hpp"
 #include "HeiConnect/set_cover/solver_greedy_cheapest.hpp"
-#include "HeiConnect/set_cover/solver_greedy_context.hpp"
 #include "HeiConnect/set_cover/set_cover.hpp"
-#include "HeiConnect/set_cover/trimmer.hpp"
 #include "HeiConnect/ilp.hpp"
 #include "HeiConnect/set_cover/file_writer.hpp"
 #include "HeiConnect/set_cover/set_cover_oracle.hpp"
-
-template<typename SetCoverType>
-using GreedySetCoverPipeline = SolveTrim<SetCoverType, USSolution, GreedySetCoverSolver, SetCoverTrimmer>;
-
-template<typename SetCoverType>
-using CheapestSetCoverPipeline = SolveTrim<SetCoverType, USSolution, SetCoverSolverGreedyCheapest, SetCoverTrimmer>;
-
-template<typename SetCoverType>
-using ILPSetCoverPipeline = SolveTrim<SetCoverType, USSolution, SetCoverSolverILP, SetCoverTrimmer>;
 
 // ==================== Set Cover Algorithms ====================
 

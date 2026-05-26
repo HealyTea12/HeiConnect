@@ -2,6 +2,9 @@
 
 #include <concepts>
 #include <iostream>
+#include <memory>
+#include <optional>
+#include <string_view>
 #include <vector>
 
 #include <omp.h>
@@ -14,28 +17,19 @@
 #include "HeiConnect/sc_reduction/transform_single_partition_matrix.hpp"
 #include "HeiConnect/sc_reduction/transform_single_partition_matrix_utils.hpp"
 
-/*
- * This is the public api for the reduction from connectivity augmentation to set cover.
- */
-
-template <typename node_T, typename edge_T>
+template<typename node_T, typename edge_T>
     requires std::integral<node_T> && std::integral<edge_T>
 SetCover construct_set_cover(
-    const std::vector<edge_T> &vertices,
-    const std::vector<node_T> &edges,
-    const std::vector<double> &weights,
-    const std::vector<size_t> &link_vertices,
-    const std::vector<size_t> &link_edges,
-    const std::vector<double> &link_weights)
+    const std::vector<edge_T>& vertices,
+    const std::vector<node_T>& edges,
+    const std::vector<double>& weights,
+    const std::vector<size_t>& link_vertices,
+    const std::vector<size_t>& link_edges,
+    const std::vector<double>& link_weights)
 {
     // generate min cut matrix
-    auto [min_cuts, n_min_cuts] = HeiConnect_details::generate_min_cut_matrix(
-        vertices,
-        edges,
-        weights,
-        link_vertices,
-        link_edges,
-        link_weights);
+    auto [min_cuts, n_min_cuts] =
+        HeiConnect_details::generate_min_cut_matrix(vertices, edges, weights, link_vertices, link_edges, link_weights);
 
     // for each link, determine which cuts it crosses
     double start = omp_get_wtime();
@@ -53,24 +47,41 @@ SetCover construct_set_cover(
     return set_cover;
 }
 
-template <typename node_T, typename edge_T>
+/*
+ * This is the public api for the reduction from connectivity augmentation to set cover.
+ */
+
+struct ConstructSetCoverStage
+{
+    static constexpr std::string_view name = "Construct set cover";
+
+    template<typename GraphType, typename LinkGraphType>
+    auto operator()(const GraphType& graph, const LinkGraphType& link_graph) const
+    {
+        auto constructed_set_cover = construct_set_cover(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+        return std::make_shared<const decltype(constructed_set_cover)>(std::move(constructed_set_cover));
+    }
+};
+
+template<typename node_T, typename edge_T>
     requires std::integral<node_T> && std::integral<edge_T>
 SetCoverBit construct_set_cover_bit_matrix(
-    const std::vector<edge_T> &vertices,
-    const std::vector<node_T> &edges,
-    const std::vector<double> &weights,
-    const std::vector<size_t> &link_vertices,
-    const std::vector<size_t> &link_edges,
-    const std::vector<double> &link_weights)
+    const std::vector<edge_T>& vertices,
+    const std::vector<node_T>& edges,
+    const std::vector<double>& weights,
+    const std::vector<size_t>& link_vertices,
+    const std::vector<size_t>& link_edges,
+    const std::vector<double>& link_weights)
 {
     // generate min cut matrix
-    auto [min_cuts, n_min_cuts] = HeiConnect_details::generate_min_cut_matrix(
-        vertices,
-        edges,
-        weights,
-        link_vertices,
-        link_edges,
-        link_weights);
+    auto [min_cuts, n_min_cuts] =
+        HeiConnect_details::generate_min_cut_matrix(vertices, edges, weights, link_vertices, link_edges, link_weights);
 
     // for each link, determine which cuts it crosses
     double start = omp_get_wtime();
@@ -89,23 +100,18 @@ SetCoverBit construct_set_cover_bit_matrix(
 }
 
 // Constructs "set cover" by only calculating the min cut partitions into a matrix
-template <typename node_T, typename edge_T, class link_node_T, class link_edge_T>
+template<typename node_T, typename edge_T, class link_node_T, class link_edge_T>
     requires std::integral<node_T> && std::integral<edge_T>
 SetCoverPseudo<link_node_T, link_edge_T> construct_set_cover_pseudo(
-    const std::vector<edge_T> &vertices,
-    const std::vector<node_T> &edges,
-    const std::vector<double> &weights,
-    const std::vector<link_edge_T> &link_vertices,
-    const std::vector<link_node_T> &link_edges,
-    const std::vector<double> &link_weights)
+    const std::vector<edge_T>& vertices,
+    const std::vector<node_T>& edges,
+    const std::vector<double>& weights,
+    const std::vector<link_edge_T>& link_vertices,
+    const std::vector<link_node_T>& link_edges,
+    const std::vector<double>& link_weights)
 {
-    auto [min_cuts, n_min_cuts] = HeiConnect_details::generate_min_cut_matrix(
-        vertices,
-        edges,
-        weights,
-        link_vertices,
-        link_edges,
-        link_weights);
+    auto [min_cuts, n_min_cuts] =
+        HeiConnect_details::generate_min_cut_matrix(vertices, edges, weights, link_vertices, link_edges, link_weights);
 
     std::vector<typename SetCoverPseudo<link_node_T, link_edge_T>::Link> links;
     links.reserve(link_weights.size());
@@ -121,20 +127,27 @@ SetCoverPseudo<link_node_T, link_edge_T> construct_set_cover_pseudo(
     return {min_cuts, n_min_cuts, static_cast<ull>(link_vertices.size()), std::move(links)};
 }
 
-template <class node_T, class edge_T, class weight_T, class link_node_T, class link_edge_T, class link_weight_T>
+template<class node_T, class edge_T, class weight_T, class link_node_T, class link_edge_T, class link_weight_T>
     requires std::integral<node_T> && std::integral<edge_T> && std::integral<link_node_T> && std::integral<link_edge_T>
 SetCoverOracle<link_node_T, link_edge_T, link_weight_T> construct_set_cover_oracle(
-    std::vector<edge_T> &vertices,
-    std::vector<node_T> &edges,
-    std::vector<weight_T> &weights,
-    std::vector<link_node_T> &link_vertices,
-    std::vector<link_edge_T> &link_edges,
-    std::vector<link_weight_T> &link_weights)
+    std::vector<edge_T>& vertices,
+    std::vector<node_T>& edges,
+    std::vector<weight_T>& weights,
+    std::vector<link_node_T>& link_vertices,
+    std::vector<link_edge_T>& link_edges,
+    std::vector<link_weight_T>& link_weights)
 {
     auto [tin, tout, cycles, is_cycle_edge, parent] = HeiConnect_details::dfs_tin_tout_cycles(vertices, edges);
     weight_T min_cut = HeiConnect_details::calculate_cactus_min_cut(vertices, edges, weights, cycles, is_cycle_edge);
     auto cactus_min_cuts = HeiConnect_details::calculate_all_cactus_min_cuts(
-        vertices, edges, weights, cycles, is_cycle_edge, min_cut, parent, static_cast<node_T>(0));
+        vertices,
+        edges,
+        weights,
+        cycles,
+        is_cycle_edge,
+        min_cut,
+        parent,
+        static_cast<node_T>(0));
 
     std::vector<typename SetCoverOracle<link_node_T, link_edge_T, link_weight_T>::Link> links;
     links.reserve(link_weights.size());
@@ -149,24 +162,35 @@ SetCoverOracle<link_node_T, link_edge_T, link_weight_T> construct_set_cover_orac
     return SetCoverOracle<link_node_T, link_edge_T, link_weight_T>{tin, tout, cactus_min_cuts, std::move(links)};
 }
 
-template <typename node_T, typename edge_T, typename weight_T, typename link_node_T, typename link_edge_T, typename link_weight_T>
+template<
+    typename node_T,
+    typename edge_T,
+    typename weight_T,
+    typename link_node_T,
+    typename link_edge_T,
+    typename link_weight_T>
     requires std::integral<node_T> && std::integral<edge_T> && std::integral<link_node_T> && std::integral<link_edge_T>
 SetCoverPseudo<link_node_T, link_edge_T> construct_set_cover_pseudo_ancestry(
-    const std::vector<edge_T> &vertices,
-    const std::vector<node_T> &edges,
-    const std::vector<weight_T> &weights,
-    const std::vector<link_node_T> &link_vertices,
-    const std::vector<link_edge_T> &link_edges,
-    const std::vector<link_weight_T> &link_weights)
+    const std::vector<edge_T>& vertices,
+    const std::vector<node_T>& edges,
+    const std::vector<weight_T>& weights,
+    const std::vector<link_node_T>& link_vertices,
+    const std::vector<link_edge_T>& link_edges,
+    const std::vector<link_weight_T>& link_weights)
 {
     auto [tin, tout, cycles, is_cycle_edge, parent] = HeiConnect_details::dfs_tin_tout_cycles(vertices, edges);
     weight_T min_cut = HeiConnect_details::calculate_cactus_min_cut(vertices, edges, weights, cycles, is_cycle_edge);
-    auto cactus_min_cuts = HeiConnect_details::calculate_all_cactus_min_cuts(vertices, edges, weights, cycles, is_cycle_edge, min_cut, parent, static_cast<node_T>(0));
-    auto min_cuts = HeiConnect_details::__calculate_min_cut_partitions_ull_ancestry(
+    auto cactus_min_cuts = HeiConnect_details::calculate_all_cactus_min_cuts(
         vertices,
-        cactus_min_cuts,
-        tin,
-        tout);
+        edges,
+        weights,
+        cycles,
+        is_cycle_edge,
+        min_cut,
+        parent,
+        static_cast<node_T>(0));
+    auto min_cuts =
+        HeiConnect_details::__calculate_min_cut_partitions_ull_ancestry(vertices, cactus_min_cuts, tin, tout);
     std::vector<typename SetCoverPseudo<link_node_T, link_edge_T>::Link> links;
     links.reserve(link_weights.size());
     for (link_node_T u{0}; u < link_vertices.size() - 1; ++u)
@@ -181,24 +205,35 @@ SetCoverPseudo<link_node_T, link_edge_T> construct_set_cover_pseudo_ancestry(
 }
 
 // Construct "set cover" by only calculating the parition matrix using ancestry relations instead of DFS/BFS
-template <typename node_T, typename edge_T, typename weight_T, typename link_node_T, typename link_edge_T, typename link_weight_T>
+template<
+    typename node_T,
+    typename edge_T,
+    typename weight_T,
+    typename link_node_T,
+    typename link_edge_T,
+    typename link_weight_T>
     requires std::integral<node_T> && std::integral<edge_T> && std::integral<link_node_T> && std::integral<link_edge_T>
 SetCoverPseudo<link_node_T, link_edge_T> construct_set_cover_pseudo_ancestry_vec(
-    const std::vector<edge_T> &vertices,
-    const std::vector<node_T> &edges,
-    const std::vector<weight_T> &weights,
-    const std::vector<link_node_T> &link_vertices,
-    const std::vector<link_edge_T> &link_edges,
-    const std::vector<link_weight_T> &link_weights)
+    const std::vector<edge_T>& vertices,
+    const std::vector<node_T>& edges,
+    const std::vector<weight_T>& weights,
+    const std::vector<link_node_T>& link_vertices,
+    const std::vector<link_edge_T>& link_edges,
+    const std::vector<link_weight_T>& link_weights)
 {
     auto [tin, tout, cycles, is_cycle_edge, parent] = HeiConnect_details::dfs_tin_tout_cycles(vertices, edges);
     weight_T min_cut = HeiConnect_details::calculate_cactus_min_cut(vertices, edges, weights, cycles, is_cycle_edge);
-    auto cactus_min_cuts = HeiConnect_details::calculate_all_cactus_min_cuts(vertices, edges, weights, cycles, is_cycle_edge, min_cut, parent, static_cast<node_T>(0));
-    auto min_cuts = HeiConnect_details::__calculate_min_cut_partitions_ull_ancestry_vec(
+    auto cactus_min_cuts = HeiConnect_details::calculate_all_cactus_min_cuts(
         vertices,
-        cactus_min_cuts,
-        tin,
-        tout);
+        edges,
+        weights,
+        cycles,
+        is_cycle_edge,
+        min_cut,
+        parent,
+        static_cast<node_T>(0));
+    auto min_cuts =
+        HeiConnect_details::__calculate_min_cut_partitions_ull_ancestry_vec(vertices, cactus_min_cuts, tin, tout);
     std::vector<typename SetCoverPseudo<link_node_T, link_edge_T>::Link> links;
     links.reserve(link_weights.size());
     for (link_node_T u{0}; u < link_vertices.size() - 1; ++u)
@@ -212,29 +247,37 @@ SetCoverPseudo<link_node_T, link_edge_T> construct_set_cover_pseudo_ancestry_vec
     return {min_cuts, cactus_min_cuts.get_n_min_cuts(), static_cast<ull>(link_vertices.size()), std::move(links)};
 }
 
-template <typename node_T, typename edge_T, typename weight_T, typename link_node_T, typename link_edge_T, typename link_weight_T>
+template<
+    typename node_T,
+    typename edge_T,
+    typename weight_T,
+    typename link_node_T,
+    typename link_edge_T,
+    typename link_weight_T>
     requires std::integral<node_T> && std::integral<edge_T> && std::integral<link_node_T> && std::integral<link_edge_T>
-SetCoverDouble<
-    SetCoverPseudo<link_node_T, link_edge_T>,
-    SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>
+SetCoverDouble<SetCoverPseudo<link_node_T, link_edge_T>, SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>
 construct_set_cover_cyc_pseudo_ancestry_vec(
-    const std::vector<edge_T> &vertices,
-    const std::vector<node_T> &edges,
-    const std::vector<weight_T> &weights,
-    const std::vector<link_node_T> &link_vertices,
-    const std::vector<link_edge_T> &link_edges,
-    const std::vector<link_weight_T> &link_weights)
+    const std::vector<edge_T>& vertices,
+    const std::vector<node_T>& edges,
+    const std::vector<weight_T>& weights,
+    const std::vector<link_node_T>& link_vertices,
+    const std::vector<link_edge_T>& link_edges,
+    const std::vector<link_weight_T>& link_weights)
 {
     WeightedCRFGraph<> original_graph{{vertices, edges}, weights};
     auto [tin, tout, cycles, is_cycle_edge, parent] = HeiConnect_details::dfs_tin_tout_cycles(vertices, edges);
     weight_T min_cut = HeiConnect_details::calculate_cactus_min_cut(vertices, edges, weights, cycles, is_cycle_edge);
-    std::vector<node_T> tree_cactus_min_cuts = HeiConnect_details::calculate_tree_cactus_min_cuts(vertices, edges, weights, is_cycle_edge, min_cut, parent, static_cast<node_T>(0));
-    CactusMinCuts<node_T> cactus_min_cuts{tree_cactus_min_cuts, {}};
-    auto partition_matrix = HeiConnect_details::__calculate_min_cut_partitions_ull_ancestry(
+    std::vector<node_T> tree_cactus_min_cuts = HeiConnect_details::calculate_tree_cactus_min_cuts(
         vertices,
-        cactus_min_cuts,
-        tin,
-        tout);
+        edges,
+        weights,
+        is_cycle_edge,
+        min_cut,
+        parent,
+        static_cast<node_T>(0));
+    CactusMinCuts<node_T> cactus_min_cuts{tree_cactus_min_cuts, {}};
+    auto partition_matrix =
+        HeiConnect_details::__calculate_min_cut_partitions_ull_ancestry(vertices, cactus_min_cuts, tin, tout);
     auto start = omp_get_wtime();
     auto [block_tree, cycle_positions] = original_graph.cactus_generate_block_tree(0);
     auto end = omp_get_wtime();
@@ -321,10 +364,8 @@ construct_set_cover_cyc_pseudo_ancestry_vec(
                     {
                         std::swap(a_pos, b_pos);
                     }
-                    cycle_crosses[e].emplace_back(CycleCross<int, int>{
-                        cid,
-                        static_cast<int>(a_pos),
-                        static_cast<int>(b_pos)});
+                    cycle_crosses[e].emplace_back(
+                        CycleCross<int, int>{cid, static_cast<int>(a_pos), static_cast<int>(b_pos)});
                 }
             }
             emit_time += omp_get_wtime() - section_start;
@@ -392,6 +433,7 @@ construct_set_cover_cyc_pseudo_ancestry_vec(
         cycle_positions,
         cycle_sizes,
         link_weights};
-    return SetCoverDouble<SetCoverPseudo<link_node_T, link_edge_T>,
-                          SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>{sc_pseudo, sc_cyc};
+    return SetCoverDouble<
+        SetCoverPseudo<link_node_T, link_edge_T>,
+        SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>{sc_pseudo, sc_cyc};
 }
