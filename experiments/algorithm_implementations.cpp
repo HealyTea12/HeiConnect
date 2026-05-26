@@ -20,6 +20,28 @@
 #include "HeiConnect/pipeline/pipeline.hpp"
 // #include "HeiConnect/set_cover/local_search/kset_move_generator.hpp"
 
+namespace
+{
+    template<typename SetCoverType, typename ContextType>
+    auto make_bound_context_stage()
+    {
+        return [](std::shared_ptr<const SetCoverType> set_cover) {
+            ContextType context{*set_cover};
+            BoundContext bound_context{std::move(context), USSolution{}};
+            return std::tuple{std::move(set_cover), std::move(bound_context)};
+        };
+    }
+
+    template<typename Solver>
+    auto make_solver_stage(Solver& solver)
+    {
+        return [&solver](auto set_cover, auto context) {
+            solver.solve(*set_cover, context);
+            return std::tuple{std::move(set_cover), std::move(context)};
+        };
+    }
+} // namespace
+
 
 // ==================== Set Cover Greedy PQ ====================
 void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path& graph_file)
@@ -28,20 +50,12 @@ void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path& grap
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-
-    using GraphType = std::decay_t<decltype(graph)>;
-    using LinkGraphType = std::decay_t<decltype(link_graph)>;
-    using SetCoverType = decltype(construct_set_cover(
-        graph.graph.vertices,
-        graph.graph.edges,
-        graph.weights,
-        link_graph.graph.vertices,
-        link_graph.graph.edges,
-        link_graph.weights));
-    using BoundCtx = BoundContext<BasicContext<SetCoverType>, USSolution>;
-
     BasicLinkDomReducer<1> reducer{};
     auto build_stage = ConstructSetCoverStage{};
+    auto build_context_stage = [&](auto set_cover) {
+        BoundContext ctx{BasicContext(*set_cover), USSolution{}};
+        return std::tuple{std::move(set_cover), std::move(ctx)};
+    };
     GreedySetCoverSolver<1> greedy_solver{};
     SetCoverTrimmer<1> trimmer{};
     auto engine = std::mt19937_64{std::random_device{}()};
@@ -52,10 +66,6 @@ void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path& grap
             greedy_solver,
             5.0};
 
-    auto build_context_stage = [&](std::shared_ptr<const SetCoverType> set_cover) {
-        BoundCtx ctx{BasicContext<SetCoverType>(*set_cover), USSolution{}};
-        return std::tuple{std::move(set_cover), std::move(ctx)};
-    };
     auto pipeline = Pipeline{reducer, build_stage, build_context_stage, greedy_solver, trimmer, local_search};
 
     auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
@@ -63,15 +73,7 @@ void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path& grap
 
     auto final_state = std::move(pipeline_result.first);
     auto sc = *std::get<0>(final_state);
-    std::cout << "Solving...\n";
     auto& bound_context = std::get<1>(final_state);
-    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
-    result.solution_size = bound_context.get_solution().size();
-    result.solution_cost_trimmed = result.solution_cost;
-    result.solution_size_trimmed = result.solution_size;
-    result.solution_cost_ls = result.solution_cost;
-    result.solution_size_ls = result.solution_size;
-    std::cout << "Solved!\n";
 }
 
 // ==================== Set Cover Greedy PQ Bit ====================
@@ -81,31 +83,46 @@ void SetCoverGreedySingleThreadedPQBitRunner::run(const std::filesystem::path& g
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-    double start = omp_get_wtime();
-    auto sc = construct_set_cover_bit_matrix(
+    using GraphType = std::decay_t<decltype(graph)>;
+    using LinkGraphType = std::decay_t<decltype(link_graph)>;
+    using SetCoverType = decltype(construct_set_cover_bit_matrix(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
-    USSolution solution{};
-    BitPackedContext context{sc};
-    BoundContext bound_context{context, solution};
+        link_graph.weights));
+
+    auto build_stage = [](const GraphType& graph, const LinkGraphType& link_graph) {
+        auto constructed_set_cover = construct_set_cover_bit_matrix(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+        return std::make_shared<const SetCoverType>(std::move(constructed_set_cover));
+    };
+    auto build_context_stage = make_bound_context_stage<SetCoverType, BitPackedContext<SetCoverType>>();
     GreedySetCoverSolver<1> greedy_solver{};
     SetCoverTrimmer<1> trimmer{};
-    greedy_solver.solve(sc, bound_context);
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
-    trimmer.trim(sc, bound_context);
-    double solving_time = omp_get_wtime() - start - reduction_time;
+    auto pipeline = Pipeline{build_stage, build_context_stage, greedy_solver, trimmer};
 
-    result.solution_cost_trimmed = HeiConnect::sc::cost(sc, solution);
-    result.solution_size_trimmed = solution.get_solution().size();
-    result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_total = reduction_time + solving_time;
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
+
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_trimming = this->pipeline_metrics.stages[3].duration_seconds;
+    result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
+        result.time_solving.value_or(0.0) + result.time_trimming.value_or(0.0);
 }
 
 // ==================== Set Cover Greedy PQ Pseudo ====================
@@ -115,33 +132,46 @@ void SetCoverGreedySingleThreadedPQPseudoRunner::run(const std::filesystem::path
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-    double start = omp_get_wtime();
-    auto sc = construct_set_cover_pseudo(
+    using GraphType = std::decay_t<decltype(graph)>;
+    using LinkGraphType = std::decay_t<decltype(link_graph)>;
+    using SetCoverType = decltype(construct_set_cover_pseudo(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
-    USSolution solution{};
-    BitPackedContext context{sc};
-    BoundContext bound_context{context, solution};
+        link_graph.weights));
+
+    auto build_stage = [](const GraphType& graph, const LinkGraphType& link_graph) {
+        auto constructed_set_cover = construct_set_cover_pseudo(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+        return std::make_shared<const SetCoverType>(std::move(constructed_set_cover));
+    };
+    auto build_context_stage = make_bound_context_stage<SetCoverType, BitPackedContext<SetCoverType>>();
     GreedySetCoverSolver<1> greedy_solver{};
     SetCoverTrimmer<1> trimmer{};
-    greedy_solver.solve(sc, bound_context);
-    double solving_time = omp_get_wtime() - start - reduction_time;
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
-    trimmer.trim(sc, bound_context);
-    double trimming_time = omp_get_wtime() - start - reduction_time - solving_time;
+    auto pipeline = Pipeline{build_stage, build_context_stage, greedy_solver, trimmer};
 
-    result.solution_cost_trimmed = HeiConnect::sc::cost(sc, solution);
-    result.solution_size_trimmed = solution.get_solution().size();
-    result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_trimming = trimming_time;
-    result.time_total = reduction_time + solving_time + trimming_time;
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
+
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_trimming = this->pipeline_metrics.stages[3].duration_seconds;
+    result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
+        result.time_solving.value_or(0.0) + result.time_trimming.value_or(0.0);
 }
 
 // ==================== Set Cover Greedy PQ Pseudo Ancestry ====================
@@ -151,33 +181,46 @@ void SCGWCPseudoAncestryRunner::run(const std::filesystem::path& graph_file)
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-    double start = omp_get_wtime();
-    auto sc = construct_set_cover_pseudo_ancestry(
+    using GraphType = std::decay_t<decltype(graph)>;
+    using LinkGraphType = std::decay_t<decltype(link_graph)>;
+    using SetCoverType = decltype(construct_set_cover_pseudo_ancestry(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
-    USSolution solution{};
-    BitPackedContext context{sc};
-    BoundContext bound_context{context, solution};
+        link_graph.weights));
+
+    auto build_stage = [](const GraphType& graph, const LinkGraphType& link_graph) {
+        auto constructed_set_cover = construct_set_cover_pseudo_ancestry(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+        return std::make_shared<const SetCoverType>(std::move(constructed_set_cover));
+    };
+    auto build_context_stage = make_bound_context_stage<SetCoverType, BitPackedContext<SetCoverType>>();
     GreedySetCoverSolver<1> greedy_solver{};
     SetCoverTrimmer<1> trimmer{};
-    greedy_solver.solve(sc, bound_context);
-    double solving_time = omp_get_wtime() - start - reduction_time;
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
-    trimmer.trim(sc, bound_context);
-    double trimming_time = omp_get_wtime() - start - reduction_time - solving_time;
+    auto pipeline = Pipeline{build_stage, build_context_stage, greedy_solver, trimmer};
 
-    result.solution_cost_trimmed = HeiConnect::sc::cost(sc, solution);
-    result.solution_size_trimmed = solution.get_solution().size();
-    result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_trimming = trimming_time;
-    result.time_total = reduction_time + solving_time + trimming_time;
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
+
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_trimming = this->pipeline_metrics.stages[3].duration_seconds;
+    result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
+        result.time_solving.value_or(0.0) + result.time_trimming.value_or(0.0);
 }
 
 // ==================== Set Cover Greedy Cheapest ====================
@@ -187,113 +230,136 @@ void SetCoverGreedyCheapestRunner::run(const std::filesystem::path& graph_file)
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-    double start = omp_get_wtime();
-    auto sc = construct_set_cover(
+    using SetCoverType = decltype(construct_set_cover(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
-    USSolution solution{};
-    BasicContext context{sc};
-    BoundContext bound_context{context, solution};
+        link_graph.weights));
+
+    auto build_stage = ConstructSetCoverStage{};
+    auto build_context_stage = make_bound_context_stage<SetCoverType, BasicContext<SetCoverType>>();
     SetCoverSolverGreedyCheapest solver{};
     SetCoverTrimmer<1> trimmer{};
-    solver.solve(sc, bound_context);
-    double solving_time = omp_get_wtime() - start - reduction_time;
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
-    trimmer.trim(sc, bound_context);
-    double trimming_time = omp_get_wtime() - start - reduction_time - solving_time;
+    auto solve_stage = make_solver_stage(solver);
+    auto pipeline = Pipeline{build_stage, build_context_stage, solve_stage, trimmer};
 
-    result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_trimming = trimming_time;
-    result.time_total = reduction_time + solving_time + trimming_time;
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
 
-    result.solution_cost_trimmed = HeiConnect::sc::cost(sc, solution);
-    result.solution_size_trimmed = solution.get_solution().size();
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_trimming = this->pipeline_metrics.stages[3].duration_seconds;
+    result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
+        result.time_solving.value_or(0.0) + result.time_trimming.value_or(0.0);
 }
 
 // ==================== (Set Cover Bit) Greedy Cheapest ====================
 void SetCoverGreedyCheapestBitRunner::run(const std::filesystem::path& graph_file)
 {
-    double start = omp_get_wtime();
     const std::string link_file = graph_file.parent_path() / (graph_file.filename().stem().string() + ".links");
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
-    double end = omp_get_wtime();
-    std::cout << "Initialization time: " << end - start << "s\n";
 
-    start = omp_get_wtime();
-    auto sc = construct_set_cover_bit_matrix(
+    using GraphType = std::decay_t<decltype(graph)>;
+    using LinkGraphType = std::decay_t<decltype(link_graph)>;
+    using SetCoverType = decltype(construct_set_cover_bit_matrix(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
-    USSolution solution{};
-    BitPackedContext context{sc};
-    std::cout << "pruning\n";
-    BoundContext bound_context{context, solution};
+        link_graph.weights));
+
+    auto build_stage = [](const GraphType& graph, const LinkGraphType& link_graph) {
+        auto constructed_set_cover = construct_set_cover_bit_matrix(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+        return std::make_shared<const SetCoverType>(std::move(constructed_set_cover));
+    };
+    auto build_context_stage = make_bound_context_stage<SetCoverType, BitPackedContext<SetCoverType>>();
     SetCoverSolverGreedyCheapest solver{};
     SetCoverTrimmer<1> trimmer{};
-    solver.solve(sc, bound_context);
-    double solving_time = omp_get_wtime() - start - reduction_time;
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
-    trimmer.trim(sc, bound_context);
-    double trimming_time = omp_get_wtime() - start - reduction_time - solving_time;
+    auto solve_stage = make_solver_stage(solver);
+    auto pipeline = Pipeline{build_stage, build_context_stage, solve_stage, trimmer};
 
-    result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_trimming = trimming_time;
-    result.time_total = reduction_time + solving_time + trimming_time;
-    result.solution_cost_trimmed = HeiConnect::sc::cost(sc, solution);
-    result.solution_size_trimmed = solution.get_solution().size();
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
+
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_trimming = this->pipeline_metrics.stages[3].duration_seconds;
+    result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
+        result.time_solving.value_or(0.0) + result.time_trimming.value_or(0.0);
 }
 
 // ==================== (Set Cover Pseudo) Greedy Cheapest ====================
 void SetCoverPseudoGreedyCheapestRunner::run(const std::filesystem::path& graph_file)
 {
-    double start = omp_get_wtime();
     const std::string link_file = graph_file.parent_path() / (graph_file.filename().stem().string() + ".links");
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
-    double end = omp_get_wtime();
-    std::cout << "Initialization time: " << end - start << "s\n";
 
-    start = omp_get_wtime();
-    auto sc = construct_set_cover_pseudo(
+    using GraphType = std::decay_t<decltype(graph)>;
+    using LinkGraphType = std::decay_t<decltype(link_graph)>;
+    using SetCoverType = decltype(construct_set_cover_pseudo(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
-    USSolution solution{};
-    BitPackedContext context{sc};
-    BoundContext bound_context{context, solution};
+        link_graph.weights));
+
+    auto build_stage = [](const GraphType& graph, const LinkGraphType& link_graph) {
+        auto constructed_set_cover = construct_set_cover_pseudo(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+        return std::make_shared<const SetCoverType>(std::move(constructed_set_cover));
+    };
+    auto build_context_stage = make_bound_context_stage<SetCoverType, BitPackedContext<SetCoverType>>();
     SetCoverSolverGreedyCheapest solver{};
     SetCoverTrimmer<1> trimmer{};
-    solver.solve(sc, bound_context);
-    double solving_time = omp_get_wtime() - start - reduction_time;
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
-    trimmer.trim(sc, bound_context);
-    double trimming_time = omp_get_wtime() - start - reduction_time - solving_time;
+    auto solve_stage = make_solver_stage(solver);
+    auto pipeline = Pipeline{build_stage, build_context_stage, solve_stage, trimmer};
 
-    result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_trimming = trimming_time;
-    result.time_total = reduction_time + solving_time + trimming_time;
-    result.solution_cost_trimmed = HeiConnect::sc::cost(sc, solution);
-    result.solution_size_trimmed = solution.get_solution().size();
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
+
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_trimming = this->pipeline_metrics.stages[3].duration_seconds;
+    result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
+        result.time_solving.value_or(0.0) + result.time_trimming.value_or(0.0);
 }
 // ==================== Set Cover ILP ====================
 void SetCoverILPRunner::run(const std::filesystem::path& graph_file)
@@ -302,27 +368,36 @@ void SetCoverILPRunner::run(const std::filesystem::path& graph_file)
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-    double start = omp_get_wtime();
-    SetCover sc = construct_set_cover(
+    using GraphType = std::decay_t<decltype(graph)>;
+    using LinkGraphType = std::decay_t<decltype(link_graph)>;
+    using SetCoverType = decltype(construct_set_cover(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
-    USSolution solution{};
-    BasicContext context{sc};
-    BoundContext bound_context{context, solution};
-    SetCoverSolverILP solver{};
-    solver.solve(sc, bound_context);
-    double solving_time = omp_get_wtime() - start - reduction_time;
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
+        link_graph.weights));
 
-    result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_total = reduction_time + solving_time;
+    auto build_stage = ConstructSetCoverStage{};
+    auto build_context_stage = make_bound_context_stage<SetCoverType, BasicContext<SetCoverType>>();
+    SetCoverSolverILP solver{};
+    auto solve_stage = make_solver_stage(solver);
+    auto pipeline = Pipeline{build_stage, build_context_stage, solve_stage};
+
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
+
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
+        result.time_solving.value_or(0.0);
 }
 
 // ==================== Set Cover ILP (Pseudo) ====================
@@ -332,26 +407,45 @@ void SetCoverPseudoILPRunner::run(const std::filesystem::path& graph_file)
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-    double start = omp_get_wtime();
-    auto sc = construct_set_cover_pseudo_ancestry_vec(
+    using GraphType = std::decay_t<decltype(graph)>;
+    using LinkGraphType = std::decay_t<decltype(link_graph)>;
+    using SetCoverType = decltype(construct_set_cover_pseudo_ancestry_vec(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
-    USSolution solution{};
-    BasicContext context{sc};
-    BoundContext bound_context{context, solution};
+        link_graph.weights));
+
+    auto build_stage = [](const GraphType& graph, const LinkGraphType& link_graph) {
+        auto constructed_set_cover = construct_set_cover_pseudo_ancestry_vec(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+        return std::make_shared<const SetCoverType>(std::move(constructed_set_cover));
+    };
+    auto build_context_stage = make_bound_context_stage<SetCoverType, BasicContext<SetCoverType>>();
     SetCoverSolverILP solver{};
-    solver.solve(sc, bound_context);
-    double solving_time = omp_get_wtime() - start - reduction_time;
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
-    result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_total = reduction_time + solving_time;
+    auto solve_stage = make_solver_stage(solver);
+    auto pipeline = Pipeline{build_stage, build_context_stage, solve_stage};
+
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
+
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
+        result.time_solving.value_or(0.0);
 }
 
 // ==================== Oracle Greedy Single Threaded PQ ====================
@@ -361,27 +455,44 @@ void OracleGreedySingleThreadedPQRunner::run(const std::filesystem::path& graph_
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-    double start = omp_get_wtime();
-    auto sc = construct_set_cover_oracle(
+    using GraphType = std::decay_t<decltype(graph)>;
+    using LinkGraphType = std::decay_t<decltype(link_graph)>;
+    using SetCoverType = decltype(construct_set_cover_oracle(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
-    USSolution solution{};
-    BasicContext context{sc};
-    BoundContext bound_context{context, solution};
-    GreedySetCoverSolver<1> greedy_solver{};
-    greedy_solver.solve(sc, bound_context);
-    double solving_time = omp_get_wtime() - start - reduction_time;
+        link_graph.weights));
 
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
-    result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_total = reduction_time + solving_time;
+    auto build_stage = [](GraphType graph, LinkGraphType link_graph) {
+        auto constructed_set_cover = construct_set_cover_oracle(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+        return std::make_shared<const SetCoverType>(std::move(constructed_set_cover));
+    };
+    auto build_context_stage = make_bound_context_stage<SetCoverType, BasicContext<SetCoverType>>();
+    GreedySetCoverSolver<1> greedy_solver{};
+    auto pipeline = Pipeline{build_stage, build_context_stage, greedy_solver};
+
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
+
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
+        result.time_solving.value_or(0.0);
 }
 
 // ==================== Cyc Greedy Single Threaded PQ ====================
@@ -391,33 +502,52 @@ void CycGreedySingleThreadedPQRunner::run(const std::filesystem::path& graph_fil
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-    double start = omp_get_wtime();
-    auto sc = construct_set_cover_cyc_pseudo_ancestry_vec(
+    using GraphType = std::decay_t<decltype(graph)>;
+    using LinkGraphType = std::decay_t<decltype(link_graph)>;
+    using SetCoverType = decltype(construct_set_cover_cyc_pseudo_ancestry_vec(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
-    USSolution solution{};
-    BitPackedContext pseudo_context{sc.first()};
-    CycContext cyc_context{sc.second()};
-    ContextDouble context{sc, pseudo_context, cyc_context};
-    BoundContext<decltype(context), decltype(solution)> bound_context{context, solution};
+        link_graph.weights));
+
+    auto build_stage = [](const GraphType& graph, const LinkGraphType& link_graph) {
+        auto constructed_set_cover = construct_set_cover_cyc_pseudo_ancestry_vec(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+        return std::make_shared<const SetCoverType>(std::move(constructed_set_cover));
+    };
+    auto build_context_stage = [](std::shared_ptr<const SetCoverType> set_cover) {
+        BitPackedContext pseudo_context{set_cover->first()};
+        CycContext cyc_context{set_cover->second()};
+        ContextDouble context{*set_cover, std::move(pseudo_context), std::move(cyc_context)};
+        BoundContext bound_context{std::move(context), USSolution{}};
+        return std::tuple{std::move(set_cover), std::move(bound_context)};
+    };
     GreedySetCoverSolver<1> solver{};
     SetCoverTrimmer<1> trimmer{};
-    solver.solve(sc, bound_context);
-    double solving_time = omp_get_wtime() - start - reduction_time;
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
-    trimmer.trim(sc, bound_context);
-    result.solution_cost_trimmed = HeiConnect::sc::cost(sc, solution);
-    result.solution_size_trimmed = solution.get_solution().size();
+    auto pipeline = Pipeline{build_stage, build_context_stage, solver, trimmer};
 
-    result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_total = reduction_time + solving_time;
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
+
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_trimming = this->pipeline_metrics.stages[3].duration_seconds;
+    result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
+        result.time_solving.value_or(0.0) + result.time_trimming.value_or(0.0);
 }
 
 // ==================== Cyc Greedy Single Threaded PQ V2 ====================
@@ -427,31 +557,52 @@ void CycGreedySingleThreadedPQV2Runner::run(const std::filesystem::path& graph_f
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-    double start = omp_get_wtime();
-    auto sc = construct_set_cover_cyc_pseudo_ancestry_vec(
+    using GraphType = std::decay_t<decltype(graph)>;
+    using LinkGraphType = std::decay_t<decltype(link_graph)>;
+    using SetCoverType = decltype(construct_set_cover_cyc_pseudo_ancestry_vec(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights);
-    double reduction_time = omp_get_wtime() - start;
+        link_graph.weights));
 
-    USSolution solution{};
-    BitPackedContext pseudo_context{sc.first()};
-    CycContext cyc_context{sc.second()};
-    ContextDouble context{sc, pseudo_context, cyc_context};
-    BoundContext<decltype(context), decltype(solution)> bound_context{context, solution};
+    auto build_stage = [](const GraphType& graph, const LinkGraphType& link_graph) {
+        auto constructed_set_cover = construct_set_cover_cyc_pseudo_ancestry_vec(
+            graph.graph.vertices,
+            graph.graph.edges,
+            graph.weights,
+            link_graph.graph.vertices,
+            link_graph.graph.edges,
+            link_graph.weights);
+        return std::make_shared<const SetCoverType>(std::move(constructed_set_cover));
+    };
+    auto build_context_stage = [](std::shared_ptr<const SetCoverType> set_cover) {
+        BitPackedContext pseudo_context{set_cover->first()};
+        CycContext cyc_context{set_cover->second()};
+        ContextDouble context{*set_cover, std::move(pseudo_context), std::move(cyc_context)};
+        BoundContext bound_context{std::move(context), USSolution{}};
+        return std::tuple{std::move(set_cover), std::move(bound_context)};
+    };
     GreedySetCoverSolver<1> solver{};
     SetCoverTrimmer<1> trimmer{};
-    solver.solve(sc, bound_context);
-    double solving_time = omp_get_wtime() - start - reduction_time;
-    result.solution_cost = HeiConnect::sc::cost(sc, solution);
-    result.solution_size = solution.get_solution().size();
+    auto pipeline = Pipeline{build_stage, build_context_stage, solver, trimmer};
 
-    result.time_reduction = reduction_time;
-    result.time_solving = solving_time;
-    result.time_total = reduction_time + solving_time;
+    auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
+    this->pipeline_metrics = std::move(pipeline_result.second);
+
+    auto final_state = std::move(pipeline_result.first);
+    auto sc = *std::get<0>(final_state);
+    auto& bound_context = std::get<1>(final_state);
+    result.solution_cost = HeiConnect::sc::cost(sc, bound_context.get_solution());
+    result.solution_size = bound_context.get_solution().size();
+    result.solution_cost_trimmed = result.solution_cost;
+    result.solution_size_trimmed = result.solution_size;
+    result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_trimming = this->pipeline_metrics.stages[3].duration_seconds;
+    result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
+        result.time_solving.value_or(0.0) + result.time_trimming.value_or(0.0);
 }
 
 // ==================== Set Cover CSR Writer ====================

@@ -2,7 +2,6 @@
 
 #include <filesystem>
 #include <memory>
-#include <optional>
 #include "algorithm_registry.hpp"
 #include "HeiConnect/pipeline/pipeline.hpp"
 
@@ -24,16 +23,16 @@ public:
         std::optional<double> time_total;
         std::optional<double> time_data_reduction;
     } result;
-    std::optional<Pipeline<>::PipelineMetrics> pipeline_metrics;
+    Pipeline<>::PipelineMetrics pipeline_metrics;
 
     virtual ~AlgorithmRunner() = default;
     virtual void run(const std::filesystem::path& graph_file) = 0;
     virtual void print_results(std::ostream& os)
     {
         // If pipeline metrics exist, use the pipeline printer. Otherwise, do nothing.
-        if (pipeline_metrics.has_value())
+        if (!pipeline_metrics.stages.empty())
         {
-            Pipeline<>::print_pipeline_metrics(*pipeline_metrics, os);
+            Pipeline<>::print_pipeline_metrics(pipeline_metrics, os);
         }
     }
 };
