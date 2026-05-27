@@ -1,17 +1,25 @@
 #pragma once
+#include <algorithm>
 #include <tuple>
 #include <vector>
 #include <queue>
 #include <array>
+#include <limits>
+#include <string_view>
+#include <optional>
 
 #include "HeiConnect/data_structures/immutable_graph.hpp"
 
 #include "common.hpp"
 
+template<int RecordStatsLevel = 0>
 class StarReducer
 {
 public:
     static constexpr std::string_view name = "Star reduction";
+
+    StarReducer(size_t degree_threshold = 10) : m_degreeThreshold(degree_threshold)
+    {}
 
     template<typename GraphType, typename LinkGraphType>
     auto operator()(const GraphType& graph, const LinkGraphType& link_graph) const
@@ -22,7 +30,7 @@ public:
     template<typename NodeID, typename EdgeID, typename EdgeWeight, typename LinkEdgeID, typename LinkEdgeWeight>
     std::tuple<WeightedCRFGraph<NodeID, EdgeID, EdgeWeight>, WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>>
     run(const WeightedCRFGraph<NodeID, EdgeID, EdgeWeight>& graph,
-        const WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>& link_graph)
+        const WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>& link_graph) const
     {
         std::vector<bool> removable_edges = std::vector<bool>(link_graph.num_edges(), false);
         // identify high degree vertices
@@ -47,7 +55,7 @@ public:
             std::vector<EdgeWeight>(graph.num_vertices(), std::numeric_limits<EdgeWeight>::max());
         for (NodeID u : high_degree_vertices)
         {
-            auto [parent, depth] = bfs_parent_depth(graph, u);
+            auto [parent, depth] = bfs_parent_depth(graph.graph, u);
             calculate_min_weight_star(graph, link_graph, u, parent, depth, min_weight);
             for (NodeID i{0}; i < link_graph.num_vertices(); i++)
             {
@@ -65,6 +73,12 @@ public:
             }
         }
         auto new_link_graph = remove_links<NodeID, LinkEdgeID, LinkEdgeWeight>(link_graph, removable_edges);
+
+        if constexpr (RecordStatsLevel > 0)
+        {
+            size_t num_removed = std::count(removable_edges.begin(), removable_edges.end(), true);
+            m_metrics = StageMetrics{{"num_removed_links", std::to_string(num_removed)}};
+        }
         return {graph, new_link_graph};
     }
 
@@ -72,6 +86,7 @@ private:
     template<typename NodeID>
     std::pair<NodeID, NodeID>
     projected_edge(NodeID i, NodeID j, const std::vector<NodeID>& parent, const std::vector<size_t>& depth, NodeID u)
+        const
     {
         std::array<NodeID, 2> endpoints;
         int k = 0;
@@ -125,7 +140,7 @@ private:
             for (LinkEdgeID e{link_graph.graph.vertices[i]}; e < link_graph.graph.vertices[i + 1]; e++)
             {
                 NodeID j = link_graph.graph.edges[e];
-                LinkWeight w = link_graph.weights[e];
+                LinkEdgeWeight w = link_graph.weights[e];
                 auto [a, b] = projected_edge(i, j, parent, depth, u);
                 if (a != std::numeric_limits<NodeID>::max())
                 {
@@ -140,8 +155,8 @@ private:
     std::tuple<std::vector<NodeID>, std::vector<size_t>>
     bfs_parent_depth(const CRFGraph<NodeID, EdgeID>& graph, NodeID start) const
     {
-        std::vector<NodeID> parent(graph.num_vertices(), std::numeric_limits<NodeID>::max());
-        std::vector<size_t> depth(graph.num_vertices(), std::numeric_limits<size_t>::max());
+        std::vector<NodeID> parent(graph.vertices.size() - 1, std::numeric_limits<NodeID>::max());
+        std::vector<size_t> depth(graph.vertices.size() - 1, std::numeric_limits<size_t>::max());
         std::queue<NodeID> q;
         parent[start] = start;
         depth[start] = 0;
@@ -150,9 +165,9 @@ private:
         {
             NodeID u = q.front();
             q.pop();
-            for (EdgeID e{graph.graph.vertices[u]}; e < graph.graph.vertices[u + 1]; ++e)
+            for (EdgeID e{graph.vertices[u]}; e < graph.vertices[u + 1]; ++e)
             {
-                NodeID v = graph.graph.edges[e];
+                NodeID v = graph.edges[e];
                 if (parent[v] == std::numeric_limits<NodeID>::max())
                 {
                     parent[v] = u;
@@ -163,5 +178,21 @@ private:
         }
         return {parent, depth};
     }
-    size_t m_degreeThreshold = 10;
+
+public:
+    std::optional<StageMetrics> emit_metrics() const
+    {
+        if constexpr (RecordStatsLevel > 0)
+        {
+            return m_metrics;
+        }
+        else
+        {
+            return std::nullopt;
+        }
+    }
+
+private:
+    size_t m_degreeThreshold;
+    mutable std::optional<StageMetrics> m_metrics;
 };
