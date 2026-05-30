@@ -1,7 +1,13 @@
 #pragma once
 
 #include "HeiConnect/data_structures/immutable_graph.hpp"
-#include "HeiConnect/bfs.hpp"
+
+#include <limits>
+#include <queue>
+#include <stdexcept>
+#include <tuple>
+#include <type_traits>
+#include <vector>
 
 class TableDistOracle
 {
@@ -61,4 +67,75 @@ public:
 private:
     std::vector<Distance> m_distances;
     size_t n{0};
+};
+
+template<typename NodeID = size_t, typename EdgeID = size_t, typename WeightType = double>
+class WeightedTableDistOracle
+{
+public:
+    using Distance = WeightType;
+
+    WeightedTableDistOracle(const WeightedCRFGraph<NodeID, EdgeID, WeightType>& graph)
+    {
+        n = graph.num_vertices();
+        const Distance inf = std::numeric_limits<Distance>::max();
+        m_distances.assign(n * n, inf);
+
+        std::vector<Distance> dist(n, inf);
+        using QueueEntry = std::pair<Distance, NodeID>;
+        std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> pq;
+
+        for (NodeID source{0}; source < n; ++source)
+        {
+            std::fill(dist.begin(), dist.end(), inf);
+            while (!pq.empty())
+            {
+                pq.pop();
+            }
+
+            dist[source] = static_cast<Distance>(0);
+            pq.emplace(static_cast<Distance>(0), source);
+
+            while (!pq.empty())
+            {
+                auto [du, u] = pq.top();
+                pq.pop();
+                if (du != dist[u])
+                {
+                    continue;
+                }
+
+                for (EdgeID e = graph.graph.vertices[u]; e < graph.graph.vertices[u + 1]; ++e)
+                {
+                    const NodeID v = graph.graph.edges[e];
+                    const Distance w = static_cast<Distance>(graph.weights[e]);
+                    if (w < static_cast<Distance>(0))
+                    {
+                        throw std::runtime_error("WeightedTableDistOracle requires non-negative edge weights");
+                    }
+
+                    const Distance candidate = du + w;
+                    if (candidate < dist[v])
+                    {
+                        dist[v] = candidate;
+                        pq.emplace(candidate, v);
+                    }
+                }
+            }
+
+            for (NodeID target{0}; target < n; ++target)
+            {
+                m_distances[source * n + target] = dist[target];
+            }
+        }
+    }
+
+    Distance get_distance(NodeID u, NodeID v) const
+    {
+        return m_distances[u * n + v];
+    }
+
+private:
+    std::vector<Distance> m_distances;
+    NodeID n{0};
 };

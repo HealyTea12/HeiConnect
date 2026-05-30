@@ -17,7 +17,7 @@ using timer_type = uint32_t;
 
 namespace HeiConnect_details
 {
-    template <class node_T>
+    template<class node_T>
         requires std::unsigned_integral<node_T>
     struct TinToutResult
     {
@@ -32,12 +32,9 @@ namespace HeiConnect_details
         std::vector<node_T> parent;
     };
 
-    template <typename node_T, typename edge_T>
+    template<typename node_T, typename edge_T>
         requires std::integral<node_T> && std::integral<edge_T>
-    TinToutResult<node_T>
-    dfs_tin_tout_cycles(
-        const std::vector<edge_T> &vertices,
-        const std::vector<node_T> &edges)
+    TinToutResult<node_T> dfs_tin_tout_cycles(const std::vector<edge_T>& vertices, const std::vector<node_T>& edges)
     {
         // maybe having a vector of structs is faster
         auto tin = std::vector<timer_type>(vertices.size() - 1, -1);
@@ -65,7 +62,7 @@ namespace HeiConnect_details
             }
 
             bool advanced = false;
-            for (edge_T &i = next_edge[current_node]; i < vertices[current_node + 1]; ++i)
+            for (edge_T& i = next_edge[current_node]; i < vertices[current_node + 1]; ++i)
             {
                 node_T neighbor = edges[i];
                 if (neighbor == parent[current_node])
@@ -98,7 +95,7 @@ namespace HeiConnect_details
         }
 
         std::vector<std::vector<node_T>> cycles{};
-        for (const auto &edge : cycle_edges)
+        for (const auto& edge : cycle_edges)
         {
             std::vector<node_T> cycle{};
             node_T u = edge.first;
@@ -123,14 +120,14 @@ namespace HeiConnect_details
         return {tin, tout, cycles, is_cycle_edge, parent};
     }
 
-    template <typename node_T, typename edge_T, typename weight_T>
+    template<typename node_T, typename edge_T, typename weight_T>
         requires std::integral<node_T> && std::integral<edge_T>
     weight_T calculate_cactus_min_cut(
-        const std::vector<edge_T> &vertices,
-        const std::vector<node_T> &edges,
-        const std::vector<weight_T> &weights,
-        const std::vector<std::vector<node_T>> &cycles,
-        const std::vector<char> &is_cycle_edge)
+        const std::vector<edge_T>& vertices,
+        const std::vector<node_T>& edges,
+        const std::vector<weight_T>& weights,
+        const std::vector<std::vector<node_T>>& cycles,
+        const std::vector<char>& is_cycle_edge)
     {
         weight_T min_cut = std::numeric_limits<weight_T>::max();
         // iterate over all edges to find min cuts
@@ -144,7 +141,7 @@ namespace HeiConnect_details
                 }
             }
         }
-        for (const auto &cycle : cycles)
+        for (const auto& cycle : cycles)
         {
             for (auto i = 0; i < cycle.size() - 1; i++)
             {
@@ -167,15 +164,15 @@ namespace HeiConnect_details
         return min_cut;
     }
 
-    template <typename node_T, typename edge_T, typename weight_T>
+    template<typename node_T, typename edge_T, typename weight_T>
         requires std::integral<node_T> && std::integral<edge_T>
     std::vector<node_T> calculate_tree_cactus_min_cuts(
-        const std::vector<edge_T> &vertices,
-        const std::vector<node_T> &edges,
-        const std::vector<weight_T> &weights,
-        const std::vector<char> &is_cycle_edge,
+        const std::vector<edge_T>& vertices,
+        const std::vector<node_T>& edges,
+        const std::vector<weight_T>& weights,
+        const std::vector<char>& is_cycle_edge,
         weight_T min_cut,
-        std::vector<node_T> &parent,
+        std::vector<node_T>& parent,
         node_T root)
     {
         std::vector<node_T> tree_mcs{};
@@ -184,6 +181,8 @@ namespace HeiConnect_details
             for (edge_T e{vertices[u]}; e < vertices[u + 1]; e++)
             {
                 node_T v = edges[e];
+                if (u < v)
+                    continue;
                 if (!is_cycle_edge[e] && weights[e] == min_cut)
                 {
                     if (u == parent[v])
@@ -200,23 +199,23 @@ namespace HeiConnect_details
         return tree_mcs;
     }
 
-    template <typename node_T, typename edge_T, typename weight_T>
+    template<typename node_T, typename edge_T, typename weight_T>
         requires std::integral<node_T> && std::integral<edge_T>
     CactusMinCuts<node_T> calculate_all_cactus_min_cuts(
-        const std::vector<edge_T> &vertices,
-        const std::vector<node_T> &edges,
-        const std::vector<weight_T> &weights,
-        const std::vector<std::vector<node_T>> &cycles,
-        const std::vector<char> &is_cycle_edge,
+        const std::vector<edge_T>& vertices,
+        const std::vector<node_T>& edges,
+        const std::vector<weight_T>& weights,
+        const std::vector<std::vector<node_T>>& cycles,
+        const std::vector<char>& is_cycle_edge,
         weight_T min_cut,
-        std::vector<node_T> &parent,
+        std::vector<node_T>& parent,
         node_T root)
 
     {
         // TODO: might be adding duplicate cuts
         // don't forget to squeeze
-        std::vector<node_T> tree_mcs = calculate_tree_cactus_min_cuts(
-            vertices, edges, weights, is_cycle_edge, min_cut, parent, root);
+        std::vector<node_T> tree_mcs =
+            calculate_tree_cactus_min_cuts(vertices, edges, weights, is_cycle_edge, min_cut, parent, root);
 
         // There is an important exception case to take care of here
         // We assume that the cycles are stored in traversal order
@@ -224,11 +223,11 @@ namespace HeiConnect_details
         std::vector<std::pair<node_T, node_T>> cycle_mcs{};
         // TODO: THIS TEMPORARILY REVERSES THE CYCLE ORDER FOR DEBUGGING
         auto reversed_cycles = cycles;
-        for (auto &cycle : reversed_cycles)
+        for (auto& cycle : reversed_cycles)
         {
             std::reverse(cycle.begin(), cycle.end());
         }
-        for (const auto &cycle : reversed_cycles)
+        for (const auto& cycle : reversed_cycles)
         {
             assert(cycle.size() >= 3 && "Cycles must have at least 3 nodes; bug in cycle detection");
             for (size_t i = 0; i < cycle.size() - 2; i++)
@@ -269,13 +268,9 @@ namespace HeiConnect_details
     }
 
     // is u ancestor of v
-    template <typename node_T>
+    template<typename node_T>
         requires std::integral<node_T>
-    bool isAncestor(
-        const std::vector<timer_type> &tin,
-        const std::vector<timer_type> &tout,
-        node_T u,
-        node_T v)
+    bool isAncestor(const std::vector<timer_type>& tin, const std::vector<timer_type>& tout, node_T u, node_T v)
     {
         return tin[u] <= tin[v] && tout[u] >= tout[v];
     }
@@ -298,7 +293,8 @@ namespace HeiConnect_details
 //     // BFS to find cycles and rooted tree
 //     std::vector<std::pair<node_T, node_T>> cycle_edge_vec{};
 //     std::vector<find_cycles_and_root_tree::Info> info{};
-//     auto [cycle_edge_vec, info] = find_cycles_and_root_tree(vertices, edges, weights, link_vertices, link_edges, link_weights);
+//     auto [cycle_edge_vec, info] = find_cycles_and_root_tree(vertices, edges, weights, link_vertices, link_edges,
+//     link_weights);
 //     // for each cycle edge, reconstruct the cycle
 //     // could rethink data struct
 //     auto cycles = std::vector<std::vector<std::pair<node_T, node_T>>>(cycle_edge_vec.size());
