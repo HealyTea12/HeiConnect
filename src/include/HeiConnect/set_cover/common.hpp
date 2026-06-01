@@ -123,7 +123,9 @@ template<typename ContextType, typename SolutionType = USSolution>
 class BoundContext
 {
 public:
-    BoundContext(ContextType context, SolutionType solution) : m_context(std::move(context)), m_solution(std::move(solution))
+    BoundContext(ContextType context, SolutionType solution) :
+        m_context(std::move(context)),
+        m_solution(std::move(solution))
     {}
 
     ContextType& get_context() noexcept
@@ -239,10 +241,20 @@ enum class SolverStatus
     Unknown
 };
 
+
 template<typename Range, typename T>
 concept range_of = std::ranges::input_range<Range> && std::same_as<std::ranges::range_value_t<Range>, T>;
 
 using ull = unsigned long long;
+
+template<typename NewRangeElementType, typename Range>
+auto discretize_weights(const Range& weights, size_t num_bins)
+{
+    auto max_weight = *std::ranges::max_element(weights);
+    return weights | std::views::transform([num_bins, max_weight](auto w) {
+               return static_cast<NewRangeElementType>(std::ceil(w / max_weight * num_bins));
+           });
+}
 
 class BitSetIterator
 {

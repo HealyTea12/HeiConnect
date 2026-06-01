@@ -26,9 +26,9 @@ TEST(SetCoverTest, SetCoverBasic)
     std::vector<size_t> a = {0, 2, 4, 7};
     std::vector<size_t> b = {0, 1, 1, 2, 0, 2, 3};
     std::vector<double> costs = {3.0, 2.0, 4.0};
-    SetCover sc{a, b, costs, 4};
+    SetCover<> sc{a, b, costs, 4};
 
-    GreedySetCoverSolver<SetCover, 0> solver;
+    GreedySetCoverSolver<SetCover<>, 0> solver;
     USSolution solution;
     solver.solve(sc, solution);
 

@@ -95,7 +95,7 @@ public:
     void print_results(std::ostream& os) override;
 
 private:
-    std::unique_ptr<SetCoverOracle<size_t, size_t, double>> m_oracle;
+    std::unique_ptr<SetCover<size_t, size_t, size_t>> m_oracle;
 };
 
 // ==================== Direct Graph Algorithms ====================

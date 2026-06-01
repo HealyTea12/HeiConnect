@@ -19,7 +19,7 @@
 
 template<typename node_T, typename edge_T>
     requires std::integral<node_T> && std::integral<edge_T>
-SetCover construct_set_cover(
+SetCover<> construct_set_cover(
     const std::vector<edge_T>& vertices,
     const std::vector<node_T>& edges,
     const std::vector<double>& weights,
@@ -71,7 +71,7 @@ struct ConstructSetCoverStage
 
 template<typename node_T, typename edge_T>
     requires std::integral<node_T> && std::integral<edge_T>
-SetCoverBit construct_set_cover_bit_matrix(
+SetCoverBit<> construct_set_cover_bit_matrix(
     const std::vector<edge_T>& vertices,
     const std::vector<node_T>& edges,
     const std::vector<double>& weights,

@@ -43,6 +43,42 @@ namespace
     }
 } // namespace
 
+class GraphMetricsCalculator
+{
+public:
+    struct StageMetrics
+    {
+        std::string instance;
+        size_t n;
+        size_t m;
+        size_t d_min;
+        size_t d_max;
+        double d_avg;
+    };
+    auto run(const std::filesystem::path& graph_file)
+    {
+        m_metrics.instance = graph_file.string();
+        auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
+        m_metrics.n = graph.num_vertices();
+        m_metrics.m = graph.num_edges();
+        m_metrics.d_min = graph.min_degree();
+        m_metrics.d_max = graph.max_degree();
+        m_metrics.d_avg = graph.average_degree();
+        return graph_file;
+    }
+    auto operator()(const std::filesystem::path& graph_file)
+    {
+        return run(graph_file);
+    }
+
+    StageMetrics emit_metrics() const
+    {
+        return m_metrics;
+    }
+
+private:
+    StageMetrics m_metrics;
+};
 
 // ==================== Set Cover Greedy PQ ====================
 void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path& graph_file)
@@ -616,14 +652,24 @@ void SetCoverCsrWriterRunner::run(const std::filesystem::path& graph_file)
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
     double start = omp_get_wtime();
-    m_oracle = std::make_unique<SetCoverOracle<size_t, size_t, double>>(construct_set_cover_oracle(
+    auto sc_orig = construct_set_cover(
         graph.graph.vertices,
         graph.graph.edges,
         graph.weights,
         link_graph.graph.vertices,
         link_graph.graph.edges,
-        link_graph.weights));
+        link_graph.weights);
     double reduction_time = omp_get_wtime() - start;
+    // discretize costs into integer bins and store as size_t in m_oracle
+    auto sc_disc = sc_orig.discretize_costs<size_t>(10);
+    {
+        auto discretized = sc_disc;
+        m_oracle = std::make_unique<SetCover<size_t, size_t, size_t>>(
+            discretized.get_a(),
+            discretized.get_b(),
+            discretized.get_costs(),
+            discretized.get_num_elements());
+    }
 
     result.time_reduction = reduction_time;
     result.time_total = reduction_time;
@@ -631,9 +677,10 @@ void SetCoverCsrWriterRunner::run(const std::filesystem::path& graph_file)
 
 void SetCoverCsrWriterRunner::print_results(std::ostream& os)
 {
+    std::cout << "Printing graph...\n";
     if (m_oracle)
     {
-        SetCoverWriter::write(*m_oracle, os);
+        SetCoverWriter::write(*m_oracle, os, SetCoverWriter::Format::DEFAULT);
         os << '\n';
     }
 }

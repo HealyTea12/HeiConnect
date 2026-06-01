@@ -4,7 +4,7 @@
 
 #include <ranges>
 
-template <typename node_T, typename cycle_id_T>
+template<typename node_T, typename cycle_id_T>
 struct CycleCross
 {
     cycle_id_T cycle_id;
@@ -12,7 +12,7 @@ struct CycleCross
     node_T v2;
 };
 
-template <class link_node_T, class link_edge_T, class link_weight_T>
+template<class link_node_T, class link_edge_T, class link_weight_T>
     requires std::integral<link_node_T> && std::integral<link_edge_T>
 class SetCoverCyc
 {
@@ -22,7 +22,7 @@ public:
     using ull = unsigned long long;
     using ElementID = size_t;
     using SetID = size_t;
-    using SetCost = double;
+    using SetCost = link_weight_T;
     struct Link
     {
         link_node_T u;
@@ -38,15 +38,17 @@ public:
         using iterator_concept = std::input_iterator_tag;
         using iterator_category = std::input_iterator_tag;
 
-        SetElementsIterator(const SetCoverCyc &owner, size_t set_index, bool is_end)
-            : m_owner(owner), m_set_index(set_index), m_is_end(is_end)
+        SetElementsIterator(const SetCoverCyc& owner, size_t set_index, bool is_end) :
+            m_owner(owner),
+            m_set_index(set_index),
+            m_is_end(is_end)
         {
             if (m_is_end)
             {
                 return;
             }
 
-            const auto &cyc = m_owner.get();
+            const auto& cyc = m_owner.get();
             if (m_set_index >= cyc.links.size())
             {
                 m_is_end = true;
@@ -56,7 +58,7 @@ public:
             advance();
         }
 
-        SetElementsIterator &operator++()
+        SetElementsIterator& operator++()
         {
             advance();
             return *this;
@@ -74,12 +76,12 @@ public:
             return m_current_element;
         }
 
-        bool operator!=(const SetElementsIterator &other) const
+        bool operator!=(const SetElementsIterator& other) const
         {
             return m_is_end != other.m_is_end;
         }
 
-        friend bool operator==(const SetElementsIterator &a, const SetElementsIterator &b)
+        friend bool operator==(const SetElementsIterator& a, const SetElementsIterator& b)
         {
             return !(a != b);
         }
@@ -93,11 +95,11 @@ public:
 
         bool prepare_cycle_cross()
         {
-            const auto &cyc = m_owner.get();
-            const auto &crosses = cyc.m_cycle_crosses[m_set_index];
+            const auto& cyc = m_owner.get();
+            const auto& crosses = cyc.m_cycle_crosses[m_set_index];
             while (m_cross_idx < crosses.size())
             {
-                const auto &[cid, a, b] = crosses[m_cross_idx];
+                const auto& [cid, a, b] = crosses[m_cross_idx];
                 const size_t cycle_idx = static_cast<size_t>(cid);
                 if (cycle_idx >= cyc.cycle_sizes.size())
                 {
@@ -133,8 +135,8 @@ public:
 
         bool advance_cycle()
         {
-            const auto &cyc = m_owner.get();
-            const auto &crosses = cyc.m_cycle_crosses[m_set_index];
+            const auto& cyc = m_owner.get();
+            const auto& crosses = cyc.m_cycle_crosses[m_set_index];
 
             while (true)
             {
@@ -237,26 +239,25 @@ public:
         std::vector<std::vector<CycleCross<cycle_pos_T, cycle_id_T>>> cycle_crosses,
         std::vector<std::vector<cycle_pos_T>> cycle_positions,
         std::vector<size_t> cycle_sizes,
-        std::vector<SetCost> set_weights)
-        : m_nCycleMinCuts(n_cycle_min_cuts),
-          m_cycleCrosses(std::move(cycle_crosses)),
-          m_cyclePositions(std::move(cycle_positions)),
-          m_cycleSizes(cycle_sizes),
-          m_setWeights(std::move(set_weights)),
-          m_cycleElementOffsets(build_cycle_element_offsets(cycle_sizes)),
-          m_cycleElementSpaceSize(compute_cycle_element_space_size(cycle_sizes))
-    {
-    }
+        std::vector<SetCost> set_weights) :
+        m_nCycleMinCuts(n_cycle_min_cuts),
+        m_cycleCrosses(std::move(cycle_crosses)),
+        m_cyclePositions(std::move(cycle_positions)),
+        m_cycleSizes(cycle_sizes),
+        m_setWeights(std::move(set_weights)),
+        m_cycleElementOffsets(build_cycle_element_offsets(cycle_sizes)),
+        m_cycleElementSpaceSize(compute_cycle_element_space_size(cycle_sizes))
+    {}
 
-    const std::vector<size_t> &get_cycle_sizes() const
+    const std::vector<size_t>& get_cycle_sizes() const
     {
         return m_cycleSizes;
     }
-    const std::vector<std::vector<CycleCross<cycle_pos_T, cycle_id_T>>> &get_cycle_crosses() const
+    const std::vector<std::vector<CycleCross<cycle_pos_T, cycle_id_T>>>& get_cycle_crosses() const
     {
         return m_cycleCrosses;
     }
-    const std::vector<std::vector<cycle_pos_T>> &get_cycle_positions() const
+    const std::vector<std::vector<cycle_pos_T>>& get_cycle_positions() const
     {
         return m_cyclePositions;
     }
@@ -274,18 +275,20 @@ public:
     }
     auto set_elements(size_t set_index) const
     {
-        return std::ranges::subrange(SetElementsIterator(*this, set_index, false), SetElementsIterator(*this, set_index, true));
+        return std::ranges::subrange(
+            SetElementsIterator(*this, set_index, false),
+            SetElementsIterator(*this, set_index, true));
     }
 
     /// Apply a function to each covered cycle element in this set.
     /// Passes individual element indices for element-level operations on cycle coverage tracking.
     /// In this representation, there are more elements than there should be
-    template <typename Callable>
-    void for_each_covered_cycle_element(size_t set_index, Callable &&fn) const
+    template<typename Callable>
+    void for_each_covered_cycle_element(size_t set_index, Callable&& fn) const
     {
         // Iterate cycle crosses with (j, k) rectangles
-        const auto &crosses = m_cycleCrosses[set_index];
-        for (const auto &[cid, a, b] : crosses)
+        const auto& crosses = m_cycleCrosses[set_index];
+        for (const auto& [cid, a, b] : crosses)
         {
             const size_t cycle_idx = static_cast<size_t>(cid);
 
@@ -317,15 +320,28 @@ public:
         }
     }
 
-    void forEachElement(size_t set_index, const std::function<void(ElementID)> &func) const
+    void forEachElement(size_t set_index, const std::function<void(ElementID)>& func) const
     {
-        for_each_covered_cycle_element(set_index, [&](size_t element)
-                                       { func(element); });
+        for_each_covered_cycle_element(set_index, [&](size_t element) { func(element); });
     }
 
     size_t get_num_cycle_cuts() const
     {
         return m_nCycleMinCuts;
+    }
+
+    template<typename NewSetCost>
+    SetCoverCyc<link_node_T, link_edge_T, NewSetCost> discretize_costs(size_t num_bins) const
+    {
+        using NewSetCoverCyc = SetCoverCyc<link_node_T, link_edge_T, NewSetCost>;
+        auto dc = discretize_weights<NewSetCost>(m_setWeights, num_bins);
+        std::vector<NewSetCost> new_weights;
+        new_weights.reserve(m_setWeights.size());
+        for (size_t i = 0; i < m_setWeights.size(); ++i)
+        {
+            new_weights.emplace_back(static_cast<NewSetCost>(dc[i]));
+        }
+        return NewSetCoverCyc(m_nCycleMinCuts, m_cycleCrosses, m_cyclePositions, m_cycleSizes, new_weights);
     }
 
 private:
@@ -337,7 +353,7 @@ private:
         return cycle_offset + a * cycle_size - a * (a + 1) / 2 + (b - a - 1);
     }
 
-    static std::vector<size_t> build_cycle_element_offsets(const std::vector<size_t> &sizes)
+    static std::vector<size_t> build_cycle_element_offsets(const std::vector<size_t>& sizes)
     {
         std::vector<size_t> offsets(sizes.size(), 0);
         size_t prefix = 0;
@@ -349,7 +365,7 @@ private:
         return offsets;
     }
 
-    static size_t compute_cycle_element_space_size(const std::vector<size_t> &sizes)
+    static size_t compute_cycle_element_space_size(const std::vector<size_t>& sizes)
     {
         size_t total = 0;
         for (const auto sz : sizes)

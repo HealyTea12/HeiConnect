@@ -14,7 +14,7 @@ namespace HeiConnect_details
     // haven't bothered making a char version of this one since ull is faster
     template <class node_T, class edge_T>
         requires std::integral<node_T> && std::integral<edge_T>
-    SetCoverBit construct_set_cover_bit_matrix_ull(
+    SetCoverBit<> construct_set_cover_bit_matrix_ull(
         const std::vector<edge_T> &vertices,
         const std::vector<node_T> &edges,
         const std::vector<double> &weights,
@@ -44,6 +44,6 @@ namespace HeiConnect_details
                 current_link_idx++;
             }
         }
-        return SetCoverBit{std::move(set_cover), N_ROWS, n_min_cuts, std::move(link_weights)};
+        return SetCoverBit<>{std::move(set_cover), N_ROWS, n_min_cuts, std::move(link_weights)};
     }
 };

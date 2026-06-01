@@ -9,10 +9,10 @@
 #include "HeiConnect/set_cover/solver_greedy_context.hpp"
 
 /*
-class SetCoverSolver<SetCoverBit>
+class SetCoverSolver<SetCoverBit<>>
 {
 public:
-    using SetCoverType = SetCoverBit;
+    using SetCoverType = SetCoverBit<>;
 
     void add_set(size_t set_index)
     {

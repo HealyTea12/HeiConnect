@@ -4,25 +4,21 @@
 
 #include <ranges>
 
+template<typename SetCostT = double>
 struct SetCoverBit
 {
     using ull = unsigned long long;
     using ElementID = size_t;
     using SetID = size_t;
-    using SetCost = double;
+    using SetCost = SetCostT;
 
-    SetCoverBit(
-        std::vector<ull> set_cover,
-        size_t n_sets,
-        size_t n_elements,
-        std::vector<SetCost> costs)
-        : m_adjacencyMatrix(std::move(set_cover)),
-          m_nSets(n_sets),
-          m_nElements(n_elements),
-          m_nCols((n_elements - 1) / WORD_BITS + 1),
-          m_costs(std::move(costs))
-    {
-    }
+    SetCoverBit(std::vector<ull> set_cover, size_t n_sets, size_t n_elements, std::vector<SetCost> costs) :
+        m_adjacencyMatrix(std::move(set_cover)),
+        m_nSets(n_sets),
+        m_nElements(n_elements),
+        m_nCols((n_elements - 1) / WORD_BITS + 1),
+        m_costs(std::move(costs))
+    {}
 
     size_t get_num_sets() const noexcept
     {
@@ -34,29 +30,29 @@ struct SetCoverBit
         return m_nElements;
     }
 
-    SetCost get_set_cost(size_t set_index) const
+    SetCost get_set_cost(SetID set_index) const
     {
         return m_costs[set_index];
     }
 
-    auto set_elements(size_t set_index)
+    auto set_elements(SetID set_index)
     {
         return std::ranges::subrange(
             BitSetIterator(m_adjacencyMatrix.data() + set_index * m_nCols, 0, m_nCols),
             BitSetIterator(m_adjacencyMatrix.data() + set_index * m_nCols, 0, m_nCols, true));
     }
 
-    BitSetIterator set_begin(size_t set_index)
+    BitSetIterator set_begin(SetID set_index)
     {
         return set_elements(set_index).begin();
     }
 
-    BitSetIterator set_end(size_t set_index)
+    BitSetIterator set_end(SetID set_index)
     {
         return set_elements(set_index).end();
     }
 
-    void forEachElementBitMasked(size_t set_index, std::function<void(size_t)> func) const
+    void forEachElementBitMasked(SetID set_index, std::function<void(ElementID)> func) const
     {
         for (size_t col = 0; col < m_nCols; col++)
         {
@@ -64,7 +60,7 @@ struct SetCoverBit
         }
     }
 
-    void forEachElement(size_t set_index, std::function<void(size_t)> func) const
+    void forEachElement(SetID set_index, std::function<void(ElementID)> func) const
     {
         for (size_t col = 0; col < m_nCols; col++)
         {
@@ -79,7 +75,7 @@ struct SetCoverBit
         }
     }
 
-    ull get_col(size_t set_index, size_t col_index) const
+    ull get_col(SetID set_index, size_t col_index) const
     {
         return m_adjacencyMatrix[set_index * m_nCols + col_index];
     }
@@ -87,6 +83,14 @@ struct SetCoverBit
     size_t get_n_cols() const
     {
         return m_nCols;
+    }
+
+    template<typename NewSetCost>
+    SetCoverBit<NewSetCost> discretize_costs(size_t num_bins) const
+    {
+        auto dc = discretize_weights<NewSetCost>(m_costs, num_bins);
+        std::vector<NewSetCost> new_costs(dc.begin(), dc.end());
+        return SetCoverBit<NewSetCost>(m_adjacencyMatrix, m_nSets, m_nElements, new_costs);
     }
 
 private:

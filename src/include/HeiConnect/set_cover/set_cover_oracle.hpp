@@ -5,7 +5,7 @@
 #include <ranges>
 
 // TODO: set covers are assuming size_t indices everywhere, should improve with templates
-template <class link_node_T, class link_edge_T, class link_weight_T>
+template<class link_node_T, class link_edge_T, class link_weight_T>
     requires std::integral<link_node_T> && std::integral<link_edge_T>
 class SetCoverOracle
 {
@@ -14,7 +14,7 @@ public:
     using TOut = uint32_t;
     using ElementID = size_t;
     using SetID = size_t;
-    using SetCost = double;
+    using SetCost = link_weight_T;
     using ull = unsigned long long;
     struct Link
     {
@@ -28,10 +28,13 @@ public:
         std::vector<TIn> tin,
         std::vector<TOut> tout,
         CactusMinCuts<link_node_T> min_cuts,
-        std::vector<Link> m_links) : m_tIn(std::move(tin)), m_tOut(std::move(tout)), m_minCuts(std::move(min_cuts)),
-                                     m_links(std::move(m_links)) {
+        std::vector<Link> m_links) :
+        m_tIn(std::move(tin)),
+        m_tOut(std::move(tout)),
+        m_minCuts(std::move(min_cuts)),
+        m_links(std::move(m_links)) {
 
-                                     };
+        };
 
 private:
     std::vector<TIn> m_tIn;
@@ -82,7 +85,7 @@ public:
         bool v_belongs = isAncestor(cut.first, v) && !isAncestor(cut.second, v);
         return u_belongs != v_belongs;
     }
-    void forEachElement(SetID set_index, const std::function<void(ElementID)> &func) const
+    void forEachElement(SetID set_index, const std::function<void(ElementID)>& func) const
     {
         auto [u, v, w] = m_links[set_index];
         (void)w;
@@ -97,7 +100,7 @@ public:
                 func(m_minCuts.TREE_CUTS.size() + i);
         }
     }
-    void forEachSet(ElementID element_index, const std::function<void(SetID)> &func) const
+    void forEachSet(ElementID element_index, const std::function<void(SetID)>& func) const
     {
         if (element_index < m_minCuts.TREE_CUTS.size())
         {
@@ -116,6 +119,22 @@ public:
                     func(set_index);
             }
         }
+    }
+
+    template<typename NewSetCost>
+    SetCoverOracle<link_node_T, link_edge_T, NewSetCost> discretize_costs(size_t num_bins) const
+    {
+        using NewSetCoverOracle = SetCoverOracle<link_node_T, link_edge_T, NewSetCost>;
+        auto weights_range = m_links | std::views::transform([](const Link& link) { return link.weight; });
+        auto dc = discretize_weights<NewSetCost>(weights_range, num_bins);
+        std::vector<typename NewSetCoverOracle::Link> new_links;
+        new_links.reserve(m_links.size());
+        for (size_t i = 0; i < m_links.size(); ++i)
+        {
+            const auto& link = m_links[i];
+            new_links.emplace_back(Link{link.u, link.v, static_cast<NewSetCost>(dc[i])});
+        }
+        return NewSetCoverOracle(m_tIn, m_tOut, m_minCuts, new_links);
     }
 
 private:

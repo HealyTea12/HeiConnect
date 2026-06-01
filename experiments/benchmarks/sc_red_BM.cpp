@@ -10,7 +10,7 @@ static void BM_scred_csr(benchmark::State &state)
     volatile int dummy = 0;
     for (auto _ : state)
     {
-        SetCover sc = construct_set_cover(
+        SetCover<> sc = construct_set_cover(
             graph.graph.vertices,
             graph.graph.edges,
             graph.weights,
@@ -30,7 +30,7 @@ static void BM_scred_bit(benchmark::State &state)
     volatile int dummy = 0;
     for (auto _ : state)
     {
-        SetCoverBit sc = construct_set_cover_bit_matrix(
+        SetCoverBit<> sc = construct_set_cover_bit_matrix(
             graph.graph.vertices,
             graph.graph.edges,
             graph.weights,

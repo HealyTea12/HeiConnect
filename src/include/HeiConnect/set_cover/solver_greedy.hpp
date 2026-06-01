@@ -76,8 +76,7 @@ public:
         {
             m_metrics = StageMetrics{
                 {"cost", std::to_string(HeiConnect::sc::cost(set_cover, context.get_solution()))},
-                {"size", std::to_string(context.get_solution().size())}
-            };
+                {"size", std::to_string(context.get_solution().size())}};
         }
     }
 

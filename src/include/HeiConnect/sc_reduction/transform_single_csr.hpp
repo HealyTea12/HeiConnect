@@ -70,7 +70,7 @@ namespace HeiConnect_details
 
     template <class node_T, class edge_T>
         requires std::integral<node_T> && std::integral<edge_T>
-    SetCover construct_set_cover_csr_b_size_ull( // with ull min_cuts
+    SetCover<> construct_set_cover_csr_b_size_ull( // with ull min_cuts
         const std::vector<edge_T> &vertices,
         const std::vector<node_T> &edges,
         const std::vector<double> &weights,
@@ -123,12 +123,12 @@ namespace HeiConnect_details
         std::cout << "Total time constructing set cover: " << (end - start) << " seconds." << std::endl;
         std::cout << "Average time processing link: " << (end - start) / link_edges.size() << " seconds." << std::endl;
         std::cout << "Size of b set: " << b.size() << std::endl;
-        return SetCover{std::move(a), std::move(b), std::move(link_weights)};
+        return SetCover<>{std::move(a), std::move(b), std::move(link_weights)};
     }
 
     template <class node_T, class edge_T>
         requires std::integral<node_T> && std::integral<edge_T>
-    SetCover construct_set_cover_csr_char( // with char min_cuts
+    SetCover<> construct_set_cover_csr_char( // with char min_cuts
         const std::vector<edge_T> &vertices,
         const std::vector<node_T> &edges,
         const std::vector<double> &weights,
@@ -168,12 +168,12 @@ namespace HeiConnect_details
         std::cout << "Number of links: " << link_edges.size() << std::endl;
         std::cout << "Total time constructing set cover: " << (end - start) << " seconds." << std::endl;
         std::cout << "Average time processing link: " << (end - start) / link_edges.size() << " seconds." << std::endl;
-        return SetCover{std::move(a), std::move(b), std::move(link_weights)};
+        return SetCover<>{std::move(a), std::move(b), std::move(link_weights)};
     }
 
     template <class node_T, class edge_T>
         requires std::integral<node_T> && std::integral<edge_T>
-    SetCover construct_set_cover_csr_ull( // with ull min_cuts
+    SetCover<> construct_set_cover_csr_ull( // with ull min_cuts
         const std::vector<edge_T> &vertices,
         const std::vector<node_T> &edges,
         const std::vector<double> &weights,
@@ -221,6 +221,6 @@ namespace HeiConnect_details
         std::cout << "Total time constructing set cover: " << (end - start) << " seconds." << std::endl;
         std::cout << "Average time processing link: " << (end - start) / link_edges.size() << " seconds." << std::endl;
         std::cout << "Size of b set: " << b.size() << std::endl;
-        return SetCover{std::move(a), std::move(b), std::move(link_weights), n_min_cuts};
+        return SetCover<>{std::move(a), std::move(b), std::move(link_weights), n_min_cuts};
     }
 };

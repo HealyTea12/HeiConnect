@@ -1,10 +1,18 @@
 #pragma once
 
+#include <concepts>
 #include <functional>
 #include <ostream>
 
 #include "HeiConnect/set_cover/common.hpp"
 
+template<typename SetCoverType>
+concept SetCoverWritable = requires(const SetCoverType& sc, typename SetCoverType::SetID set_id) {
+    { sc.get_num_sets() } -> std::convertible_to<size_t>;
+    { sc.get_num_elements() } -> std::convertible_to<size_t>;
+    { sc.forEachElement(set_id, std::function<void(typename SetCoverType::ElementID)>{}) };
+    { sc.get_set_cost(set_id) };
+};
 class SetCoverWriter
 {
 public:
@@ -15,6 +23,7 @@ public:
     };
 
     template<typename SetCoverType>
+        requires SetCoverWritable<SetCoverType>
     static void write(const SetCoverType& set_cover, std::ostream& out, Format format = Format::DEFAULT)
     {
         switch (format)
@@ -26,18 +35,8 @@ public:
 
 private:
     template<typename SetCoverType>
-    {
-        requires(SetCoverType sc) {
-            using SetID = typename SetCoverType::SetID;
-            using ElementID = typename SetCoverType::ElementID;
-            using WeightType = typename SetCoverType::WeightType;
-            sc.get_num_sets()->std::convertible_to<size_t>;
-            sc.get_num_elements()->std::convertible_to<size_t>;
-            sc.forEachElement(SetID{}, std::function<void(ElementID)>{});
-            sc.get_set_weight(SetID{})->std::convertible_to<WeightType>;
-        }
-    }
     static void write_set_cover_default(const SetCoverType& set_cover, std::ostream& out)
+        requires SetCoverWritable<SetCoverType>
     {
         // Header: "p sc <num_sets> <num_elements>"
         out << "p sc " << set_cover.get_num_sets() << " " << set_cover.get_num_elements() << "\n";

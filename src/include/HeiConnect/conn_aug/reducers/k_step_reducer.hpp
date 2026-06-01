@@ -69,6 +69,8 @@ public:
         using Distance = typename GraphType::EdgeWeight;
         WeightedTableDistOracle<NodeID, typename GraphType::EdgeID, Distance> distance_oracle(link_graph);
         std::vector<bool> removable = std::vector<bool>(link_graph.num_edges(), false);
+
+        std::vector<NodeID> parent = rooted_tree(graph);
         for (NodeID u{0}; u < link_graph.num_vertices(); u++)
         {
             for (const auto& [v, w] : link_graph.get_neighbors(u))
@@ -81,5 +83,32 @@ public:
         }
         LinkGraphType new_link_graph = remove_links(link_graph, removable);
         return {graph, new_link_graph};
+    }
+
+private:
+    template<typename GraphType>
+    std::vector<typename GraphType::NodeID> rooted_tree(const GraphType& graph)
+    {
+        using NodeID = typename GraphType::NodeID;
+        std::vector<NodeID> parent(graph.num_vertices(), graph.num_vertices());
+        std::vector<bool> visited(graph.num_vertices(), false);
+        std::vector<NodeID> stack;
+        stack.push_back(0);
+        parent[0] = 0;
+        while (!stack.empty())
+        {
+            NodeID u = stack.back();
+            stack.pop_back();
+            visited[u] = true;
+            for (const auto& [v, w] : graph.get_neighbors(u))
+            {
+                if (!visited[v])
+                {
+                    parent[v] = u;
+                    stack.push_back(v);
+                }
+            }
+        }
+        return parent;
     }
 };
