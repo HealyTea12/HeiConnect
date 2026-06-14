@@ -20,6 +20,7 @@ public:
     {
         DEFAULT,
         HITTING_SET_PACE_CHALLENGE,
+        MINIZINC,
     };
 
     template<typename SetCoverType>
@@ -30,10 +31,50 @@ public:
         {
             case Format::DEFAULT: write_set_cover_default(set_cover, out); break;
             case Format::HITTING_SET_PACE_CHALLENGE: write_set_cover_pace_challenge(set_cover, out); break;
+            case Format::MINIZINC: write_set_cover_minizinc(set_cover, out); break;
         }
     }
 
 private:
+    template<typename SetCoverType>
+    static void write_set_cover_minizinc(const SetCoverType& set_cover, std::ostream& out)
+    {
+        /*
+        num_sets =  10;
+        num_elements = 8;
+        costs = [ 19, 16, 18, 13, 15, 19, 15, 17, 16, 15];
+
+        sets = [
+          {1,6},
+          {2,6,8},
+          {1,4,7},
+          {2,3,5},
+          {2,5},
+          {2,3},
+          {2,3,4},
+          {4,5,8},
+          {3,6,8},
+          {1,6,7}
+        ];
+        */
+        out << "num_sets = " << set_cover.get_num_sets() << ";\n";
+        out << "num_elements = " << set_cover.get_num_elements() << ";\n";
+        out << "costs = [";
+        for (size_t set_index{}; set_index < set_cover.get_num_sets(); set_index++)
+        {
+            out << set_cover.get_set_cost(set_index) << ", ";
+        }
+        out << "];\n";
+        // Print out the sets
+        out << "sets = [\n";
+        for (size_t set_index{}; set_index < set_cover.get_num_sets(); set_index++)
+        {
+            out << "  {";
+            set_cover.forEachElement(set_index, [&out](auto element) { out << element + 1 << ", "; });
+            out << "},\n";
+        }
+    }
+
     template<typename SetCoverType>
     static void write_set_cover_default(const SetCoverType& set_cover, std::ostream& out)
         requires SetCoverWritable<SetCoverType>
@@ -43,6 +84,7 @@ private:
         // Each line represents a set: "<element1> <element2> ... <elementN> <set_weight>"
         for (size_t set_index{}; set_index < set_cover.get_num_sets(); ++set_index)
         {
+            std::cout << "s" << set_index << " of " << set_cover.get_num_sets() << "\n";
             set_cover.forEachElement(set_index, [&out](auto element) { out << element << " "; });
             out << set_cover.get_set_cost(set_index) << "\n";
         }

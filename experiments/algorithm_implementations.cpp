@@ -18,6 +18,7 @@
 #include "HeiConnect/set_cover/util.hpp"
 #include "HeiConnect/conn_aug/reducers/reduction.hpp"
 #include "HeiConnect/conn_aug/reducers/star_reduction.hpp"
+#include "HeiConnect/conn_aug/reducers/full_reducer.hpp"
 #include "HeiConnect/pipeline/pipeline.hpp"
 // #include "HeiConnect/set_cover/local_search/kset_move_generator.hpp"
 
@@ -87,8 +88,9 @@ void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path& grap
     auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
     auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
 
-    StarReducer<1> star_reducer{4};
-    BasicLinkDomReducer<1> reducer{};
+    // StarReducer<1> star_reducer{4};
+    // BasicLinkDomReducer<1> reducer{};
+    FullReducer<1> full_reducer{true, true};
     auto build_stage = ConstructSetCoverStage{};
     auto build_context_stage = [&](auto set_cover) {
         BoundContext ctx{BasicContext(*set_cover), USSolution{}};
@@ -104,8 +106,7 @@ void SetCoverGreedySingleThreadedPQRunner::run(const std::filesystem::path& grap
             greedy_solver,
             5.0};
 
-    auto pipeline =
-        Pipeline{star_reducer, reducer, build_stage, build_context_stage, greedy_solver, trimmer, local_search};
+    auto pipeline = Pipeline{full_reducer, build_stage, build_context_stage, greedy_solver, trimmer, local_search};
 
     auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
     this->pipeline_metrics = std::move(pipeline_result.second);

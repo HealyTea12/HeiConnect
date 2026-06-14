@@ -555,7 +555,6 @@ public:
         return uidx;
     }
 
-    // TODO: under construction
     // Only works for cactus graphs
     using CycleID = int;
     std::tuple<WeightedCRFGraph<>, std::vector<std::vector<CycleID>>> cactus_generate_block_tree(size_t root) const

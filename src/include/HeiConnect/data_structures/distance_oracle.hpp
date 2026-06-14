@@ -9,6 +9,11 @@
 #include <type_traits>
 #include <vector>
 
+
+/*
+ * A simple distance oracle that stores all pairwise distances in a table.
+ * The constructor computes the distances using BFS from each vertex.
+ */
 class TableDistOracle
 {
 public:
@@ -133,6 +138,11 @@ public:
     Distance get_distance(NodeID u, NodeID v) const
     {
         return m_distances[u * n + v];
+    }
+
+    void set_distance(NodeID u, NodeID v, Distance d)
+    {
+        m_distances[u * n + v] = d;
     }
 
 private:
