@@ -71,7 +71,11 @@ private:
     static auto stage_name(const Stage& stage)
     {
         using StageType = std::remove_cvref_t<Stage>;
-        if constexpr (requires { StageType::name; })
+        if constexpr (requires { StageType::name(); })
+        {
+            return std::string{StageType::name()};
+        }
+        else if constexpr (requires { StageType::name; })
         {
             return std::string{StageType::name};
         }
