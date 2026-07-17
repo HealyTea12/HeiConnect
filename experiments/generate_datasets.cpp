@@ -1,5 +1,10 @@
 #include <boost/program_options.hpp>
 
+#include <cmath>
+#include <memory>
+#include <random>
+#include <string_view>
+
 #include "HeiConnect/data_structures/graph_utils.hpp"
 
 namespace po = boost::program_options;
@@ -116,7 +121,6 @@ static void create_links_undirected_write(
 static void write_cycle_graphs(std::filesystem::path graph_dir, size_t start, size_t stop, size_t step,
                                std::function<double(ull, ull, const WeightedCRFGraph<> &)> weight_function)
 {
-    auto a = 0;
     std::vector<size_t> cycle_sizes = {};
     for (size_t n = start; n <= stop; n += step)
         cycle_sizes.push_back(n);
@@ -156,39 +160,71 @@ static void write_star_graphs(std::filesystem::path graph_dir, size_t start, siz
     }
 }
 
-static std::array<std::string, 2> graph_types = {
+static double resolve_float_uniform_bound(const po::variables_map &vm,
+                                          const char *option_name,
+                                          const char *legacy_option_name)
+{
+    double value = vm[option_name].as<double>();
+    if (vm.count(legacy_option_name) != 0 && !vm[legacy_option_name].defaulted())
+    {
+        if (!vm[option_name].defaulted() && vm[legacy_option_name].as<double>() != value)
+        {
+            throw po::invalid_option_value(std::string("Specify either --") + option_name +
+                                           " or --" + legacy_option_name + ", not both");
+        }
+        value = vm[legacy_option_name].as<double>();
+    }
+    return value;
+}
+
+static std::array<std::string, 4> graph_types = {
     "cycle",
-    "star"};
-static std::array<std::string, 3> link_distributions = {
+    "star",
+    "fill",
+    "break"};
+static std::array<std::string, 5> link_distributions = {
     "none",
     "constant",
+    "float_uniform",
+    "integer_uniform",
     "uniform",
 };
 
 int main(int argc, char **argv)
 {
-    po::options_description desc("Options");
-    desc.add_options()("help", "help message")                                                          // This comments are for keeping the editor from putting everything in one line
-        ("output_dir,o", po::value<std::string>())                                                      //
-        ("start,s", po::value<size_t>(), "start")                                                       //
-        ("stop", po::value<size_t>(), "stop")                                                           //
-        ("step", po::value<size_t>(), "step")                                                           //
-        ("graph_type,g", po::value<std::string>()->default_value("cycle"), "graph type: cycle or star") //
-        ("link_distribution,l", po::value<std::string>()->default_value("none"));
+    po::options_description visible_desc("Options");
+    visible_desc.add_options()("help", "help message")                                                            // This comments are for keeping the editor from putting everything in one line
+        ("output_dir,o", po::value<std::string>())                                                                //
+        ("start,s", po::value<size_t>(), "start")                                                                 //
+        ("stop", po::value<size_t>(), "stop")                                                                     //
+        ("step", po::value<size_t>(), "step")                                                                     //
+        ("graph_type,g", po::value<std::string>()->default_value("cycle"), "graph type: cycle, star, fill, or break") //
+        ("link_distribution,l", po::value<std::string>()->default_value("none"),
+         "link weight distribution: none, constant, float_uniform, integer_uniform");
 
     // constant ld
-    desc.add_options()("constant_weight,c", po::value<double>()->default_value(1.0), "constant link weight (only for constant link distribution)");
-    // uniform ld
-    desc.add_options()("uniform_min_weight", po::value<double>()->default_value(0.0), "minimum uniform link weight (only for uniform link distribution)");
-    desc.add_options()("uniform_max_weight", po::value<double>()->default_value(1.0), "maximum uniform link weight (only for uniform link distribution)");
+    visible_desc.add_options()("constant_weight,c", po::value<double>()->default_value(1.0), "constant link weight (only for constant link distribution)");
+    // float_uniform ld
+    visible_desc.add_options()("float_uniform_lower", po::value<double>()->default_value(0.0), "lower bound for float_uniform link weights");
+    visible_desc.add_options()("float_uniform_upper", po::value<double>()->default_value(1.0), "upper bound for float_uniform link weights");
+    // integer_uniform ld
+    visible_desc.add_options()("integer_uniform_lower", po::value<long long>()->default_value(1), "lower bound for integer_uniform link weights");
+    visible_desc.add_options()("integer_uniform_upper", po::value<long long>()->default_value(9), "upper bound for integer_uniform link weights");
+
+    po::options_description hidden_desc("Hidden options");
+    hidden_desc.add_options()("uniform_min_weight", po::value<double>(), "deprecated alias for float_uniform_lower");
+    hidden_desc.add_options()("uniform_max_weight", po::value<double>(), "deprecated alias for float_uniform_upper");
+
+    po::options_description all_desc;
+    all_desc.add(visible_desc).add(hidden_desc);
 
     po::variables_map vm;
-    po::store(po::parse_command_line(argc, argv, desc), vm);
+    po::store(po::parse_command_line(argc, argv, all_desc), vm);
     po::notify(vm);
     if (vm.count("help") ||
         !vm.count("output_dir"))
     {
-        std::cout << desc << std::endl;
+        std::cout << visible_desc << std::endl;
         return 1;
     }
     std::string_view ld{vm["link_distribution"].as<std::string>()};
@@ -201,6 +237,10 @@ int main(int argc, char **argv)
         }
         std::cerr << std::endl;
         return 1;
+    }
+    if (ld == "uniform")
+    {
+        ld = "float_uniform";
     }
 
     auto graph_type = vm["graph_type"].as<std::string>();
@@ -237,29 +277,56 @@ int main(int argc, char **argv)
     else if (ld == "constant")
     {
         double constant_weight = vm["constant_weight"].as<double>();
+        if (constant_weight <= 0.0)
+        {
+            throw po::invalid_option_value("constant_weight must be positive");
+        }
         weight_function = [constant_weight](ull u, ull v, const WeightedCRFGraph<> &graph)
         {
             return constant_weight;
         };
     }
-    else if (ld == "uniform")
+    else if (ld == "float_uniform")
     {
-        double min_weight = vm["uniform_min_weight"].as<double>();
-        double max_weight = vm["uniform_max_weight"].as<double>();
-        if (min_weight >= max_weight)
+        double lower = resolve_float_uniform_bound(vm, "float_uniform_lower", "uniform_min_weight");
+        double upper = resolve_float_uniform_bound(vm, "float_uniform_upper", "uniform_max_weight");
+        if (lower > upper)
         {
-            throw po::invalid_option_value("uniform_min_weight must be less than uniform_max_weight");
+            throw po::invalid_option_value("float_uniform_lower must be less than or equal to float_uniform_upper");
         }
-        if (min_weight < 0.0 || max_weight <= 0.0)
+        if (lower < 0.0 || upper <= 0.0)
         {
-            throw po::invalid_option_value("uniform link weights must be positive");
+            throw po::invalid_option_value("float_uniform link weights must be positive");
         }
-        // Capture by value or use shared_ptr to avoid dangling references
+        double adjusted_lower = lower <= 0.0 ? std::nextafter(0.0, 1.0) : lower;
+        if (adjusted_lower > upper)
+        {
+            throw po::invalid_option_value("float_uniform bounds must contain a positive value");
+        }
         auto mt = std::make_shared<std::mt19937>(42);
-        auto dist = std::make_shared<std::uniform_real_distribution<double>>(min_weight + 1e-6, max_weight);
+        auto dist = std::make_shared<std::uniform_real_distribution<double>>(adjusted_lower, upper);
         weight_function = [mt, dist](ull u, ull v, const WeightedCRFGraph<> &graph) mutable
         {
             return (*dist)(*mt);
+        };
+    }
+    else if (ld == "integer_uniform")
+    {
+        long long lower = vm["integer_uniform_lower"].as<long long>();
+        long long upper = vm["integer_uniform_upper"].as<long long>();
+        if (lower > upper)
+        {
+            throw po::invalid_option_value("integer_uniform_lower must be less than or equal to integer_uniform_upper");
+        }
+        if (lower <= 0)
+        {
+            throw po::invalid_option_value("integer_uniform link weights must be positive integers");
+        }
+        auto mt = std::make_shared<std::mt19937>(42);
+        auto dist = std::make_shared<std::uniform_int_distribution<long long>>(lower, upper);
+        weight_function = [mt, dist](ull u, ull v, const WeightedCRFGraph<> &graph) mutable
+        {
+            return static_cast<double>((*dist)(*mt));
         };
     }
 

@@ -42,10 +42,12 @@ public:
             os << " Stage " << i << " (" << m.stage_name << "): " << m.duration_seconds << "s";
             if (m.metrics.has_value())
             {
+                os << "\n{\n";
                 for (const auto& metric : *m.metrics)
                 {
-                    os << ", " << metric.name << "=" << metric.printable_value;
+                    os << "  " << metric.name << "=" << metric.printable_value << "\n";
                 }
+                os << "}\n";
             }
             os << "\n";
         }

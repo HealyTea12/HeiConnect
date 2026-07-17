@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>

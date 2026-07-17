@@ -130,12 +130,12 @@ SetCoverPseudo<link_node_T, link_edge_T> construct_set_cover_pseudo(
 template<class node_T, class edge_T, class weight_T, class link_node_T, class link_edge_T, class link_weight_T>
     requires std::integral<node_T> && std::integral<edge_T> && std::integral<link_node_T> && std::integral<link_edge_T>
 SetCoverOracle<link_node_T, link_edge_T, link_weight_T> construct_set_cover_oracle(
-    std::vector<edge_T>& vertices,
-    std::vector<node_T>& edges,
-    std::vector<weight_T>& weights,
-    std::vector<link_node_T>& link_vertices,
-    std::vector<link_edge_T>& link_edges,
-    std::vector<link_weight_T>& link_weights)
+    const std::vector<edge_T>& vertices,
+    const std::vector<node_T>& edges,
+    const std::vector<weight_T>& weights,
+    const std::vector<link_node_T>& link_vertices,
+    const std::vector<link_edge_T>& link_edges,
+    const std::vector<link_weight_T>& link_weights)
 {
     auto [tin, tout, cycles, is_cycle_edge, parent] = HeiConnect_details::dfs_tin_tout_cycles(vertices, edges);
     weight_T min_cut = HeiConnect_details::calculate_cactus_min_cut(vertices, edges, weights, cycles, is_cycle_edge);
@@ -246,6 +246,61 @@ SetCoverPseudo<link_node_T, link_edge_T> construct_set_cover_pseudo_ancestry_vec
     }
     return {min_cuts, cactus_min_cuts.get_n_min_cuts(), static_cast<ull>(link_vertices.size()), std::move(links)};
 }
+
+
+class OracleSCCycEndpointsReducer
+{
+public:
+    static std::string_view name()
+    {
+        return "Oracle SC CycEndpoints Reducer";
+    }
+
+    template<
+        typename node_T,
+        typename edge_T,
+        typename weight_T,
+        typename link_node_T,
+        typename link_edge_T,
+        typename link_weight_T>
+        requires std::integral<node_T> && std::integral<edge_T> && std::integral<link_node_T> &&
+        std::integral<link_edge_T>
+    SetCoverOracle<link_node_T, link_edge_T, link_weight_T> operator()(
+        const WeightedCRFGraph<node_T, edge_T, weight_T>& graph,
+        const WeightedCRFGraph<link_node_T, link_edge_T, link_weight_T>& link_graph)
+    {
+        auto [block_tree, cycle_positions] = graph.cactus_generate_block_tree(0);
+        auto [tin, tout, cycles, is_cycle_edge, parent] =
+            HeiConnect_details::dfs_tin_tout_cycles(block_tree.graph.vertices, block_tree.graph.edges);
+        weight_T min_cut = HeiConnect_details::calculate_cactus_min_cut(
+            block_tree.graph.vertices,
+            block_tree.graph.edges,
+            block_tree.weights,
+            cycles,
+            is_cycle_edge);
+        auto tree_mcs = HeiConnect_details::calculate_tree_cactus_min_cuts(
+            block_tree.graph.vertices,
+            block_tree.graph.edges,
+            block_tree.weights,
+            is_cycle_edge,
+            graph.get_min_cut(),
+            parent,
+            static_cast<node_T>(0));
+        CactusMinCuts<node_T> cactus_min_cuts{tree_mcs, {}};
+        std::vector<typename SetCoverOracle<link_node_T, link_edge_T, link_weight_T>::Link> links;
+        links.reserve(link_graph.weights.size());
+        for (link_node_T u{0}; u < link_graph.graph.vertices.size() - 1; ++u)
+        {
+            for (link_edge_T e{link_graph.graph.vertices[u]}; e < link_graph.graph.vertices[u + 1]; ++e)
+            {
+                link_node_T v = link_graph.graph.edges[e];
+                links.emplace_back(u, v, link_graph.weights[e]);
+            }
+        }
+        return SetCoverOracle<link_node_T, link_edge_T, link_weight_T>{tin, tout, cactus_min_cuts, std::move(links)};
+    }
+};
+
 
 template<
     typename node_T,

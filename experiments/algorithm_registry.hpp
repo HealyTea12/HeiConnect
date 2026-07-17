@@ -4,62 +4,37 @@
 #include <array>
 #include <string_view>
 #include <stdexcept>
+#include <unordered_map>
+#include <functional>
+#include <memory>
+#include <vector>
 
-enum class Algorithms
+#include "algorithm_runner.hpp"
+
+using ParamMap = std::unordered_map<std::string, std::string>;
+
+using AlgorithmFactory = std::function<std::unique_ptr<AlgorithmRunner>(const ParamMap&)>;
+
+struct AlgorithmEntry
 {
-    GWC,
-    SetCoverGreedySingleThreadedPQ,
-    SetCoverGreedySingleThreadedPQBit,
-    SetCoverGreedySingleThreadedPQPseudo,
-    SCGWCPseudoAncestry,
-    MSTConnect,
-    SetCoverGreedyCheapest,
-    SetCoverGreedyCheapestBit,
-    SetCoverPseudoGreedyCheapest,
-    DirectILP,
-    SetCoverILP,
-    SetCoverPseudoILP,
-    DirectGreedy,
-    SetCoverSharpGreedy,
-    OracleGreedySingleThreadedPQ,
-    CycGreedySingleThreadedPQ,
-    CycGreedySingleThreadedPQV2,
-    SetCoverCsrWriter
+    std::string name;
+    std::string description;
+    AlgorithmFactory factory;
 };
 
-constexpr std::array<std::string_view, 18> ALGORITHM_NAMES = {
-    "GWC",
-    "SetCoverGreedySingleThreadedPQ",
-    "SetCoverGreedySingleThreadedPQBit",
-    "SetCoverGreedySingleThreadedPQPseudo",
-    "SCGWCPseudoAncestry",
-    "MSTConnect",
-    "SetCoverGreedyCheapest",
-    "SetCoverGreedyCheapestBit",
-    "SetCoverPseudoGreedyCheapest",
-    "DirectILP",
-    "SetCoverILP",
-    "SetCoverPseudoILP",
-    "DirectGreedy",
-    "SetCoverSharpGreedy",
-    "OracleGreedySingleThreadedPQ",
-    "CycGreedySingleThreadedPQ",
-    "CycGreedySingleThreadedPQV2",
-    "SetCoverCsrWriter"};
-
-inline Algorithms algorithm_from_string(const std::string &algo)
+class AlgorithmRegistry
 {
-    for (size_t i = 0; i < ALGORITHM_NAMES.size(); ++i)
-    {
-        if (ALGORITHM_NAMES[i] == algo)
-        {
-            return static_cast<Algorithms>(i);
-        }
-    }
-    throw std::invalid_argument("Unknown algorithm: " + algo);
-}
+public:
+    void add(AlgorithmEntry entry);
+    void add(std::string name, std::string description, AlgorithmFactory factory);
 
-inline std::string algorithm_to_string(Algorithms algo)
-{
-    return std::string(ALGORITHM_NAMES[static_cast<size_t>(algo)]);
-}
+    std::unique_ptr<AlgorithmRunner> create(const std::string_view name, const ParamMap& params) const;
+
+    std::vector<std::string> names() const;
+
+private:
+    std::unordered_map<std::string, AlgorithmEntry> m_entries;
+};
+
+AlgorithmRegistry& get_global_registry();
+inline AlgorithmRegistry& global_registry = get_global_registry();

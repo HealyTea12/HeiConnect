@@ -36,6 +36,40 @@ struct CRFGraph
         }
         return edge_list;
     }
+
+    size_t num_vertices() const
+    {
+        return vertices.size() - 1;
+    }
+
+    std::tuple<std::vector<NodeID>, std::vector<size_t>> rooted_parent_depth() const
+    {
+        std::vector<NodeID> parent(num_vertices(), num_vertices());
+        std::vector<size_t> depth(num_vertices(), 0);
+        std::vector<bool> visited(num_vertices(), false);
+        std::vector<NodeID> stack;
+        stack.push_back(0);
+        parent[0] = 0;
+        visited[0] = true;
+
+        while (!stack.empty())
+        {
+            NodeID u = stack.back();
+            stack.pop_back();
+            for (EdgeID e{vertices[u]}; e < vertices[u + 1]; e++)
+            {
+                const NodeID v = edges[e];
+                if (!visited[v])
+                {
+                    parent[v] = u;
+                    depth[v] = depth[u] + 1;
+                    visited[v] = true;
+                    stack.push_back(v);
+                }
+            }
+        }
+        return {parent, depth};
+    }
 };
 
 template<typename NodeID = size_t, typename EdgeID = size_t, typename WeightType = double>
@@ -53,6 +87,10 @@ public:
     WeightedCRFGraph(std::vector<NodeID> vertices, std::vector<EdgeID> edges, std::vector<WeightType> weights) :
         graph{std::move(vertices), std::move(edges)},
         weights{std::move(weights)}
+    {}
+
+    /* Generate a new graph which contracts nodes according to the provided mapping */
+    WeightedCRFGraph contract_nodes(const std::vector<NodeID>& node_remap) const
     {}
 
     bool is_edge(NodeID u, NodeID v) const
@@ -526,6 +564,30 @@ public:
         return links;
     }
 
+    static WeightedCRFGraph<NodeID, EdgeID, WeightType>
+    vec_links_to_csr(const std::vector<std::tuple<NodeID, NodeID, WeightType>>& links, size_t num_vertices)
+    {
+        std::vector<size_t> vertices(num_vertices + 1, 0);
+        std::vector<size_t> edges(links.size());
+        std::vector<WeightType> weights(links.size());
+        for (const auto& [u, v, w] : links)
+        {
+            vertices[u + 1]++;
+        }
+        for (size_t i = 1; i < vertices.size(); ++i)
+        {
+            vertices[i] += vertices[i - 1];
+        }
+        std::vector<size_t> current_index(vertices.begin(), vertices.end());
+        for (const auto& [u, v, w] : links)
+        {
+            size_t idx = current_index[u]++;
+            edges[idx] = v;
+            weights[idx] = w;
+        }
+        return {{vertices, edges}, weights};
+    }
+
     // TODO: Construction site
     std::vector<size_t> calculate_undirected_indices() const
     {
@@ -556,6 +618,8 @@ public:
     }
 
     // Only works for cactus graphs
+    /* Produces a block tree as output from a graph, where the newly added edges are weight 1.0
+     */
     using CycleID = int;
     std::tuple<WeightedCRFGraph<>, std::vector<std::vector<CycleID>>> cactus_generate_block_tree(size_t root) const
     {

@@ -4,9 +4,36 @@
 
 #include "HeiConnect/set_cover/solver_base.hpp"
 
+template<size_t RecordMetricsLevel = 0>
 class SetCoverSolverILP
 {
 public:
+    static constexpr std::string_view name = "ILP solve";
+
+    static std::string grb_get_status_string(int status)
+    {
+        // TODO: add all
+        switch (status)
+        {
+            case GRB_OPTIMAL: return "OPTIMAL";
+            case GRB_INFEASIBLE: return "INFEASIBLE";
+            case GRB_UNBOUNDED: return "UNBOUNDED";
+            case GRB_INF_OR_UNBD: return "INF_OR_UNBD";
+            case GRB_TIME_LIMIT: return "TIME_LIMIT";
+            case GRB_ITERATION_LIMIT: return "ITERATION_LIMIT";
+            case GRB_NODE_LIMIT: return "NODE_LIMIT";
+            case GRB_USER_OBJ_LIMIT: return "USER_OBJ_LIMIT";
+            default: return "UNKNOWN";
+        }
+    }
+
+    template<typename SetCoverT, typename Context>
+    auto operator()(std::shared_ptr<const SetCoverT> set_cover, Context context)
+    {
+        solve(*set_cover, context);
+        return std::tuple{std::move(set_cover), std::move(context)};
+    }
+
     template<typename SetCoverType, typename SolutionType>
     bool solve(const SetCoverType& set_cover, SolutionType& solution)
     {
@@ -55,7 +82,27 @@ public:
                 solution.add_set(set_index);
             }
         }
+        if constexpr (RecordMetricsLevel > 0)
+        {
+            m_metrics = StageMetrics{
+                {"cost", std::to_string(model.get(GRB_DoubleAttr_ObjVal))},
+                {"size", std::to_string(solution.get_solution_size())},
+                {"status", grb_get_status_string(status)},
+            };
+        }
         return true;
+    }
+
+    std::optional<StageMetrics> emit_metrics() const
+    {
+        if constexpr (RecordMetricsLevel > 0)
+        {
+            return m_metrics;
+        }
+        else
+        {
+            return std::nullopt;
+        }
     }
 
     bool is_feasible() const noexcept
@@ -65,4 +112,5 @@ public:
 
 private:
     bool m_feasible = false;
+    std::optional<StageMetrics> m_metrics;
 };

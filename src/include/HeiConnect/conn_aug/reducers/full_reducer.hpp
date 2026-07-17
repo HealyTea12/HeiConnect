@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "HeiConnect/conn_aug/reducers/common.hpp"
+#include "HeiConnect/conn_aug/reducers/cycle_reducer.hpp"
 #include "HeiConnect/data_structures/distance_oracle.hpp"
 #include "HeiConnect/data_structures/immutable_graph.hpp"
 #include "HeiConnect/pipeline/common.hpp"
@@ -92,14 +93,22 @@ public:
             return distance_oracle.get_distance(u, v);
         };
 
+        size_t num_removed_by_shortest_path = 0;
+        if constexpr (RecordStatsLevel > 0)
+        {
+            std::vector<bool> removable_after_shortest_path = std::vector<bool>(link_graph.num_edges(), false);
+            mark_removable_links(link_graph, distance_func, removable_after_shortest_path);
+            num_removed_by_shortest_path =
+                std::count(removable_after_shortest_path.begin(), removable_after_shortest_path.end(), true);
+        }
+
         auto block_tree_start = Clock::now();
         auto [block_tree, cycle_ids] = graph.cactus_generate_block_tree(0);
-        (void)cycle_ids;
         auto block_tree_end = Clock::now();
 
         // root tree on node 0
         auto root_tree_start = Clock::now();
-        auto [parent, depth] = rooted_tree(block_tree);
+        auto [parent, depth] = block_tree.graph.rooted_parent_depth();
         auto root_tree_end = Clock::now();
 
         auto node_pairwise_dist_start = Clock::now();
@@ -190,16 +199,74 @@ public:
                 std::count(removable_after_project_out.begin(), removable_after_project_out.end(), true);
         }
 
+        // Cycle reduction
+        auto cycle_reduction_start = Clock::now();
+        for (const auto& cycle_positions : cycle_ids)
+        {
+            int cycle_size = 0;
+            for (const auto position : cycle_positions)
+            {
+                if (position >= 0)
+                {
+                    cycle_size = std::max(cycle_size, static_cast<int>(position) + 1);
+                }
+            }
+
+            std::vector<std::tuple<int, int, LinkDistance>> cycle_links;
+            std::vector<LinkEdgeID> original_link_ids;
+
+            for (NodeID u{0}; u < link_graph.num_vertices(); ++u)
+            {
+                const int cycle_u = cycle_positions[u];
+                if (cycle_u < 0)
+                {
+                    continue;
+                }
+
+                for (LinkEdgeID e{link_graph.graph.vertices[u]}; e < link_graph.graph.vertices[u + 1]; ++e)
+                {
+                    const NodeID v = link_graph.graph.edges[e];
+                    const int cycle_v = cycle_positions[v];
+                    if (cycle_v < 0 || cycle_u == cycle_v)
+                    {
+                        continue;
+                    }
+
+                    cycle_links.emplace_back(
+                        std::min(cycle_u, cycle_v),
+                        std::max(cycle_u, cycle_v),
+                        distance_oracle.get_distance(u, v));
+                    original_link_ids.emplace_back(e);
+                }
+            }
+
+            const auto removable_cycle_links = cycle_domination_baseline(cycle_links, cycle_size);
+            for (const int id : removable_cycle_links)
+            {
+                removable[original_link_ids[id]] = true;
+            }
+        }
+        auto cycle_reduction_end = Clock::now();
+
         // Mark removable links
         mark_removable_links(link_graph, distance_func, removable);
+        const size_t num_removed_after_cycle_reduction = std::count(removable.begin(), removable.end(), true);
         auto new_link_graph = remove_links(link_graph, removable);
 
         if constexpr (RecordStatsLevel > 0)
         {
             m_metrics = StageMetrics{
-                {"num_removed_links", std::to_string(num_removed_by_project_out)},
-                {"num_removed_by_project_in", std::to_string(num_removed_by_project_in)},
+                {"num_removed_links", std::to_string(num_removed_after_cycle_reduction)},
+                {"num_removed_by_shortest_path", std::to_string(num_removed_by_shortest_path)},
+                {
+                    "num_removed_by_project_in",
+                    std::to_string(num_removed_by_project_in - num_removed_by_shortest_path),
+                },
                 {"num_removed_by_project_out", std::to_string(num_removed_by_project_out - num_removed_by_project_in)},
+                {
+                    "num_removed_by_cycle_reduction",
+                    std::to_string(num_removed_after_cycle_reduction - num_removed_by_project_out),
+                },
                 {
                     "block_tree_construction_time",
                     HeiConnect::tools::format_duration(
@@ -233,6 +300,13 @@ public:
                     HeiConnect::tools::format_duration(
                         project_out_start,
                         project_out_end,
+                        HeiConnect::tools::TimeUnit::Seconds),
+                },
+                {
+                    "cycle_reduction_time",
+                    HeiConnect::tools::format_duration(
+                        cycle_reduction_start,
+                        cycle_reduction_end,
                         HeiConnect::tools::TimeUnit::Seconds),
                 },
             };
@@ -383,36 +457,6 @@ private:
             path[l] = u;
     }
 
-    template<typename NodeID, typename EdgeID, typename WeightType>
-    std::tuple<std::vector<NodeID>, std::vector<size_t>>
-    rooted_tree(const WeightedCRFGraph<NodeID, EdgeID, WeightType>& graph) const
-    {
-        std::vector<NodeID> parent(graph.num_vertices(), graph.num_vertices());
-        std::vector<size_t> depth(graph.num_vertices(), 0);
-        std::vector<bool> visited(graph.num_vertices(), false);
-        std::vector<NodeID> stack;
-        stack.push_back(0);
-        parent[0] = 0;
-        visited[0] = true;
-
-        while (!stack.empty())
-        {
-            NodeID u = stack.back();
-            stack.pop_back();
-            for (EdgeID e{graph.graph.vertices[u]}; e < graph.graph.vertices[u + 1]; e++)
-            {
-                const NodeID v = graph.graph.edges[e];
-                if (!visited[v])
-                {
-                    parent[v] = u;
-                    depth[v] = depth[u] + 1;
-                    visited[v] = true;
-                    stack.push_back(v);
-                }
-            }
-        }
-        return {parent, depth};
-    }
 
     bool m_projectIn;
     bool m_projectOut;

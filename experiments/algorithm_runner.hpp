@@ -2,12 +2,17 @@
 
 #include <filesystem>
 #include <memory>
-#include "algorithm_registry.hpp"
+#include <optional>
+#include <ostream>
+#include <tuple>
+#include <vector>
+
 #include "HeiConnect/pipeline/pipeline.hpp"
 
 class AlgorithmRunner
 {
 public:
+    using Solution = std::tuple<std::vector<size_t>, double>;
     struct Result
     {
         std::optional<double> solution_cost;
@@ -29,12 +34,26 @@ public:
     virtual void run(const std::filesystem::path& graph_file) = 0;
     virtual void print_results(std::ostream& os)
     {
-        // If pipeline metrics exist, use the pipeline printer. Otherwise, do nothing.
+        // If pipeline metrics exist, use the pipeline printer. Otherwise, print the results in a simple format.
         if (!pipeline_metrics.stages.empty())
         {
             Pipeline<>::print_pipeline_metrics(pipeline_metrics, os);
         }
+        else
+        {
+            // Print results in a simple format
+            if (result.solution_cost.has_value())
+            {
+                os << "Solution cost: " << *result.solution_cost << "\n";
+            }
+            if (result.solution_size.has_value())
+            {
+                os << "Solution size: " << *result.solution_size << "\n";
+                if (result.time_total.has_value())
+                {
+                    os << "Total time: " << *result.time_total << "s\n";
+                }
+            }
+        }
     }
 };
-
-std::unique_ptr<AlgorithmRunner> create_algorithm_runner(Algorithms algorithm);

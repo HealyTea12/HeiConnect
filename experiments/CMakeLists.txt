@@ -15,8 +15,11 @@ add_executable(experiments)
 target_sources(experiments
 PRIVATE
     exp.cpp
-    algorithm_implementations.cpp
+    algorithm_registry.cpp
+    algos/sccsr.cpp
+    algos/gwc.cpp
 )
+target_include_directories(experiments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(experiments
 PRIVATE
     heiconnect

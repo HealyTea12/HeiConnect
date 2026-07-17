@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 
@@ -10,14 +11,14 @@
 
 void run_experiment_file(
     const std::filesystem::path& graph_file,
-    Algorithms algorithm,
+    const std::string_view algorithm,
     const std::filesystem::path& output_file,
     bool log_stdout);
 
 void run_experiment(
     const std::filesystem::path& graph_dir,
     const std::filesystem::path& output_file,
-    Algorithms algorithm,
+    const std::string_view algorithm,
     bool log_stdout)
 {
     for (const auto& file : std::filesystem::directory_iterator(graph_dir))
@@ -40,11 +41,11 @@ void run_experiment(
 
 void run_experiment_file(
     const std::filesystem::path& graph_file,
-    Algorithms algorithm,
+    const std::string_view algorithm,
     const std::filesystem::path& output_file,
     bool log_stdout)
 {
-    auto runner = create_algorithm_runner(algorithm);
+    auto runner = global_registry.create(algorithm, {});
     try
     {
         auto memory_usage = run_isolated_and_measure_memory_usage([&]() {
@@ -67,7 +68,7 @@ namespace po = boost::program_options;
 void print_available_algorithms(std::ostream& os)
 {
     os << "Available algorithms:\n";
-    for (const auto& name : ALGORITHM_NAMES)
+    for (const auto& name : global_registry.names())
     {
         os << "  " << name << "\n";
     }
@@ -118,12 +119,18 @@ int main(int argc, char** argv)
             graph_file = vm["input_file"].as<std::string>();
         auto output_file = std::filesystem::path(vm["output_file"].as<std::string>());
         auto algorithm_str = vm["algorithm"].as<std::string>();
+        const auto names = global_registry.names();
+        if (std::find(names.begin(), names.end(), algorithm_str) == names.end())
+        {
+            std::cerr << "Error: Algorithm '" << algorithm_str << "' not found in registry.\n";
+            print_available_algorithms(std::cerr);
+            return 1;
+        }
 
-        auto algorithm = algorithm_from_string(algorithm_str);
         if (!graph_dir.empty())
-            run_experiment(graph_dir, output_file, algorithm, vm["log_stdout"].as<bool>());
+            run_experiment(graph_dir, output_file, algorithm_str, vm["log_stdout"].as<bool>());
         if (!graph_file.empty())
-            run_experiment_file(graph_file, algorithm, output_file, vm["log_stdout"].as<bool>());
+            run_experiment_file(graph_file, algorithm_str, output_file, vm["log_stdout"].as<bool>());
     }
     catch (const po::error& e)
     {
