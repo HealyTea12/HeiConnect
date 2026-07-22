@@ -2,6 +2,7 @@
 
 #include <gurobi_c++.h>
 
+#include "HeiConnect/pipeline/common.hpp"
 #include "HeiConnect/set_cover/solver_base.hpp"
 
 template<size_t RecordMetricsLevel = 0>

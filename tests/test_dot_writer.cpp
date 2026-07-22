@@ -26,7 +26,7 @@ TEST(DotWriterTest, WritesOriginalAndLinkGraphsWithDifferentColors)
         "    2;\n"
         "    0 -- 1 [color=black];\n"
         "    1 -- 2 [color=black];\n"
-        "    0 -- 2 [color=purple];\n"
+        "    0 -- 2 [color=pink];\n"
         "}\n");
 
     std::filesystem::remove(output_path);

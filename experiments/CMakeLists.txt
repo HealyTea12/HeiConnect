@@ -60,3 +60,15 @@ PRIVATE
     benchmark::benchmark
     benchmark::benchmark_main
 ) 
+
+add_executable(bulk_link_contraction_BM)
+target_sources(bulk_link_contraction_BM
+PRIVATE
+    benchmarks/bulk_link_contraction_BM.cpp
+)
+target_link_libraries(bulk_link_contraction_BM
+PRIVATE
+    heiconnect
+    benchmark::benchmark
+    benchmark::benchmark_main
+)

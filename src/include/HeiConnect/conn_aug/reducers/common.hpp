@@ -373,6 +373,117 @@ size_t add_cycle_merges_to_union_find(
     return total_merged_nodes;
 }
 
+template<typename UnionFindType, typename CyclePositions>
+size_t add_cycle_merges_to_union_find_frozen_stack(
+    size_t original_num_vertices,
+    UnionFindType& uf,
+    const CyclePositions& cycle_positions)
+{
+    std::vector<size_t> base(original_num_vertices);
+    for (size_t node = 0; node < original_num_vertices; ++node)
+    {
+        base[node] = uf.find(node);
+    }
+
+    size_t total_merged_nodes = 0;
+    std::vector<size_t> label_to_local(original_num_vertices, original_num_vertices);
+    for (const auto& positions : cycle_positions)
+    {
+        size_t cycle_size = 0;
+        for (const auto position : positions)
+        {
+            if (position >= 0)
+            {
+                cycle_size = std::max(cycle_size, static_cast<size_t>(position) + 1);
+            }
+        }
+
+        std::vector<size_t> labels(cycle_size);
+        std::vector<size_t> original_labels;
+        original_labels.reserve(cycle_size);
+        for (size_t node = 0; node < positions.size(); ++node)
+        {
+            if (positions[node] < 0)
+            {
+                continue;
+            }
+
+            const size_t original_label = base[node];
+            if (label_to_local[original_label] == original_num_vertices)
+            {
+                label_to_local[original_label] = original_labels.size();
+                original_labels.emplace_back(original_label);
+            }
+            labels[static_cast<size_t>(positions[node])] = label_to_local[original_label];
+        }
+
+        std::vector<size_t> component_last(original_labels.size(), cycle_size);
+        for (size_t i = 0; i < labels.size(); ++i)
+        {
+            component_last[labels[i]] = i;
+        }
+
+        UnionFind cycle_uf(original_labels.size());
+        std::vector<size_t> active_index(original_labels.size(), cycle_size);
+        std::vector<size_t> stack;
+        stack.reserve(cycle_size);
+
+        // Crossing components alternate on the cycle. Merge an active component with all
+        // components above it to construct the smallest non-crossing partition.
+        for (size_t i = 0; i < labels.size(); ++i)
+        {
+            while (!stack.empty() && component_last[cycle_uf.find(stack.back())] < i)
+            {
+                active_index[cycle_uf.find(stack.back())] = cycle_size;
+                stack.pop_back();
+            }
+
+            size_t label = cycle_uf.find(labels[i]);
+            const size_t index = active_index[label];
+            if (index == cycle_size)
+            {
+                active_index[label] = stack.size();
+                stack.emplace_back(label);
+                continue;
+            }
+            if (index + 1 == stack.size())
+            {
+                continue;
+            }
+
+            size_t new_last = component_last[label];
+            for (size_t j = index + 1; j < stack.size(); ++j)
+            {
+                const size_t other = cycle_uf.find(stack[j]);
+                new_last = std::max(new_last, component_last[other]);
+                active_index[other] = cycle_size;
+
+                const size_t original_label = original_labels[label];
+                const size_t original_other = original_labels[other];
+                if (uf.find(original_label) != uf.find(original_other))
+                {
+                    uf.unite(original_label, original_other);
+                    ++total_merged_nodes;
+                }
+
+                cycle_uf.unite(label, other);
+                label = cycle_uf.find(label);
+            }
+            stack.resize(index);
+            component_last[label] = new_last;
+            active_index[label] = index;
+            stack.emplace_back(label);
+        }
+
+        for (const size_t original_label : original_labels)
+        {
+            label_to_local[original_label] = original_num_vertices;
+        }
+    }
+
+    return total_merged_nodes;
+}
+
 template<typename NodeID, typename LinkEdgeID, typename UnionFindType, typename LinkIDRange>
 AddedLinksMergeStats add_links_to_union_find(
     size_t original_num_vertices,
@@ -409,6 +520,42 @@ AddedLinksMergeStats add_links_to_union_find(
     return stats;
 }
 
+template<typename NodeID, typename LinkEdgeID, typename UnionFindType, typename LinkIDRange>
+AddedLinksMergeStats add_links_to_union_find_frozen_stack(
+    size_t original_num_vertices,
+    const CRFGraph<NodeID, LinkEdgeID>& link_graph,
+    UnionFindType& uf,
+    const LinkIDRange& link_ids,
+    const std::vector<NodeID>& parent,
+    const std::vector<size_t>& depth,
+    const std::vector<std::vector<int>>& cycle_positions)
+{
+    AddedLinksMergeStats stats{};
+    const auto sources = link_edge_sources(link_graph);
+
+    for (const auto& link_id : link_ids)
+    {
+        const auto edge_id = static_cast<LinkEdgeID>(link_id);
+        const NodeID u = sources[static_cast<size_t>(edge_id)];
+        const NodeID v = link_graph.edges[edge_id];
+        const size_t anchor = static_cast<size_t>(u);
+
+        for_node_in_tree_path(u, v, parent, depth, original_num_vertices, [&](NodeID node) {
+            const size_t node_id = static_cast<size_t>(node);
+            if (uf.find(anchor) != uf.find(node_id))
+            {
+                ++stats.total_merged_nodes;
+            }
+            uf.unite(anchor, node_id);
+        });
+    }
+
+    stats.total_merged_nodes +=
+        add_cycle_merges_to_union_find_frozen_stack(original_num_vertices, uf, cycle_positions);
+
+    return stats;
+}
+
 template<typename GraphType, typename LinkGraphType, typename UnionFindType, typename LinkIDRange>
 AddedLinksMergeStats add_links_to_union_find(
     const GraphType& graph,
@@ -419,6 +566,25 @@ AddedLinksMergeStats add_links_to_union_find(
     auto [block_tree, cycle_positions] = graph.cactus_generate_block_tree(0);
     auto [parent, depth] = block_tree.graph.rooted_parent_depth();
     return add_links_to_union_find(
+        graph.num_vertices(),
+        link_graph.graph,
+        uf,
+        link_ids,
+        parent,
+        depth,
+        cycle_positions);
+}
+
+template<typename GraphType, typename LinkGraphType, typename UnionFindType, typename LinkIDRange>
+AddedLinksMergeStats add_links_to_union_find_frozen_stack(
+    const GraphType& graph,
+    const LinkGraphType& link_graph,
+    UnionFindType& uf,
+    const LinkIDRange& link_ids)
+{
+    auto [block_tree, cycle_positions] = graph.cactus_generate_block_tree(0);
+    auto [parent, depth] = block_tree.graph.rooted_parent_depth();
+    return add_links_to_union_find_frozen_stack(
         graph.num_vertices(),
         link_graph.graph,
         uf,

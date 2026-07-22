@@ -577,7 +577,8 @@ public:
         const double contraction_start = omp_get_wtime();
         auto link_remap = make_identity_link_remap(link_graph);
         UnionFind contraction_uf(graph.num_vertices());
-        const auto merge_stats = add_links_to_union_find(graph, link_graph, contraction_uf, first_solution);
+        const auto merge_stats =
+            add_links_to_union_find_frozen_stack(graph, link_graph, contraction_uf, first_solution);
         auto [contracted_graph, contracted_link_graph, node_remap] =
             materialize_contractions(graph, link_graph, contraction_uf, link_remap);
         (void)node_remap;

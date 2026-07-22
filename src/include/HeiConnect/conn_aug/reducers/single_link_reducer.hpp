@@ -54,10 +54,12 @@ public:
         using Clock = std::chrono::high_resolution_clock;
 
         uint64_t n_selected_links{};
+        auto start_block_tree = Clock::now();
         auto [block_tree, cycle_positions] = graph.cactus_generate_block_tree(0);
         auto [parent, depth] = block_tree.graph.rooted_parent_depth();
+        auto end_block_tree = Clock::now();
 
-        auto start_select_links = Clock::now();
+        auto start_set_cover_oracle = Clock::now();
         auto sc = construct_set_cover_oracle(
             graph.graph.vertices,
             graph.graph.edges,
@@ -65,6 +67,9 @@ public:
             link_graph.graph.vertices,
             link_graph.graph.edges,
             link_graph.weights);
+        auto end_set_cover_oracle = Clock::now();
+
+        auto start_select_links = Clock::now();
         std::vector<size_t> covering_sets(sc.get_num_sets());
         std::vector<bool> is_selected_link(link_graph.num_edges(), false);
         std::vector<LinkEdgeID> selected_links{};
@@ -92,7 +97,7 @@ public:
         auto end_select_links = Clock::now();
 
         auto start_contract_graph = Clock::now();
-        const auto merge_stats = add_links_to_union_find(
+        const auto merge_stats = add_links_to_union_find_frozen_stack(
             graph.num_vertices(),
             link_graph.graph,
             uf,
@@ -112,6 +117,20 @@ public:
             m_metrics = StageMetrics{
                 {"num_selected_links", std::to_string(n_selected_links)},
                 {"num_removed_links", std::to_string(link_graph.num_edges() - new_link_graph.num_edges())},
+                {
+                    "time_block_tree",
+                    HeiConnect::tools::format_duration(
+                        start_block_tree,
+                        end_block_tree,
+                        HeiConnect::tools::TimeUnit::Seconds),
+                },
+                {
+                    "time_set_cover_oracle",
+                    HeiConnect::tools::format_duration(
+                        start_set_cover_oracle,
+                        end_set_cover_oracle,
+                        HeiConnect::tools::TimeUnit::Seconds),
+                },
                 {
                     "time_select_links",
                     HeiConnect::tools::format_duration(

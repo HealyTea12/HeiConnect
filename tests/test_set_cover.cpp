@@ -28,12 +28,12 @@ TEST(SetCoverTest, SetCoverBasic)
     std::vector<double> costs = {3.0, 2.0, 4.0};
     SetCover<> sc{a, b, costs, 4};
 
-    GreedySetCoverSolver<SetCover<>, 0> solver;
-    USSolution solution;
-    solver.solve(sc, solution);
+    GreedySetCoverSolver<0> solver;
+    BoundContext context{BasicContext(sc), USSolution{}};
+    solver.solve(sc, context);
 
     std::unordered_set<size_t> expected_solution = {1, 2};
-    EXPECT_EQ(solution.get_solution(), expected_solution);
+    EXPECT_EQ(context.get_solution(), expected_solution);
 }
 
 TEST(Transpose, Basic)

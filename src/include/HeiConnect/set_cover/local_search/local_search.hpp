@@ -11,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include "HeiConnect/pipeline/common.hpp"
 #include "HeiConnect/set_cover/solver_greedy_context.hpp"
 #include "HeiConnect/set_cover/util.hpp"
 #include "HeiConnect/pipeline/pipeline.hpp"

@@ -3,6 +3,7 @@
 #include "HeiConnect/set_cover/solver_base.hpp"
 #include "HeiConnect/set_cover/solver_greedy_context.hpp"
 #include "HeiConnect/set_cover/util.hpp"
+#include "HeiConnect/pipeline/common.hpp"
 
 #include <memory>
 #include <queue>

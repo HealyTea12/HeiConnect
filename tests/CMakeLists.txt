@@ -16,6 +16,7 @@ add_executable(
     heiconnect_tests
     test_set_cover.cpp
     test_graph_augmentation.cpp
+    ${PROJECT_SOURCE_DIR}/extern/VieCut/extlib/tlx/tlx/logger.cpp
     ${test_sources}
 )
 target_link_libraries(
@@ -23,6 +24,12 @@ target_link_libraries(
 PRIVATE
     GTest::gtest_main
     heiconnect
+)
+target_include_directories(
+    heiconnect_tests
+PRIVATE
+    ${PROJECT_SOURCE_DIR}/extern/VieCut/lib
+    ${PROJECT_SOURCE_DIR}/extern/VieCut/extlib/tlx
 )
 enable_testing()
 

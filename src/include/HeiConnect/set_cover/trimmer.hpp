@@ -1,5 +1,6 @@
 #pragma once
 
+#include "HeiConnect/pipeline/common.hpp"
 #include "HeiConnect/set_cover/common.hpp"
 #include "HeiConnect/set_cover/trimmer_context.hpp"
 #include "HeiConnect/set_cover/solver_greedy_context.hpp"
