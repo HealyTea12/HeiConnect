@@ -38,7 +38,13 @@ namespace
 class GraphMetricsCalculator
 {
 public:
-    static constexpr std::string_view name = "Graph Metrics";
+    explicit GraphMetricsCalculator(std::string name = "Graph Metrics") : m_name(std::move(name))
+    {}
+
+    const std::string& name() const
+    {
+        return m_name;
+    }
 
     auto run(const WeightedCRFGraph<>& graph, const WeightedCRFGraph<>& link_graph)
     {
@@ -70,6 +76,7 @@ public:
     }
 
 private:
+    std::string m_name;
     std::optional<StageMetrics> m_metrics;
 };
 

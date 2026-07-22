@@ -47,14 +47,14 @@ public:
             // Print results in a simple format
             if (result.solution_cost.has_value())
             {
-                os << "Solution cost: " << *result.solution_cost << "\n";
+                os << "solution.cost=" << *result.solution_cost << "\n";
             }
             if (result.solution_size.has_value())
             {
-                os << "Solution size: " << *result.solution_size << "\n";
+                os << "solution.size=" << *result.solution_size << "\n";
                 if (result.time_total.has_value())
                 {
-                    os << "Total time: " << *result.time_total << "s\n";
+                    os << "algorithm.total_time_seconds=" << *result.time_total << "\n";
                 }
             }
         }

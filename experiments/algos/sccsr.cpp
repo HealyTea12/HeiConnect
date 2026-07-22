@@ -97,6 +97,8 @@ struct ConstructSetCoverDoubleStage
 
 struct BuildBasicContextStage
 {
+    static constexpr std::string_view name = "Build basic context";
+
     template<typename SetCoverType>
     auto operator()(std::shared_ptr<const SetCoverType> set_cover) const
     {
@@ -107,6 +109,8 @@ struct BuildBasicContextStage
 
 struct BuildDoubleContextStage
 {
+    static constexpr std::string_view name = "Build double context";
+
     template<typename SetCoverType>
     auto operator()(std::shared_ptr<const SetCoverType> set_cover) const
     {
@@ -310,11 +314,11 @@ public:
         AlgorithmRunner::print_results(os);
         if (result.solution_cost.has_value())
         {
-            os << "Complete original solution cost: " << *result.solution_cost << "\n";
+            os << "solution.cost=" << *result.solution_cost << "\n";
         }
         if (result.solution_size.has_value())
         {
-            os << "Complete original solution size: " << *result.solution_size << "\n";
+            os << "solution.size=" << *result.solution_size << "\n";
         }
     }
 
@@ -403,7 +407,8 @@ private:
         const std::filesystem::path& output_dir)
     {
         const ReadFromFileCSRStage read_stage{};
-        const GraphMetricsCalculator graph_metrics_stage{};
+        const GraphMetricsCalculator input_graph_metrics_stage{"Input Graph"};
+        const GraphMetricsCalculator reduced_graph_metrics_stage{"Reduced Graph"};
         SetCoverTrimmer<1> trimmer{};
         GreedySetCoverSolver<1> repair_solver{};
         auto engine = std::mt19937_64{std::random_device{}()};
@@ -421,7 +426,7 @@ private:
         {
             auto pipeline = Pipeline{
                 read_stage,
-                graph_metrics_stage,
+                input_graph_metrics_stage,
                 build_stage,
                 build_context_stage,
                 solver,
@@ -448,9 +453,9 @@ private:
             output_dir / (graph_file.stem().string() + "_after_reductions.dot")};
         auto pipeline = Pipeline{
             read_stage,
-            graph_metrics_stage,
+            input_graph_metrics_stage,
             reduction_stage,
-            graph_metrics_stage,
+            reduced_graph_metrics_stage,
             build_stage,
             build_context_stage,
             solver,
@@ -491,11 +496,11 @@ public:
         AlgorithmRunner::print_results(os);
         if (result.solution_cost.has_value())
         {
-            os << "Complete original solution cost: " << *result.solution_cost << "\n";
+            os << "solution.cost=" << *result.solution_cost << "\n";
         }
         if (result.solution_size.has_value())
         {
-            os << "Complete original solution size: " << *result.solution_size << "\n";
+            os << "solution.size=" << *result.solution_size << "\n";
         }
     }
 
@@ -574,19 +579,27 @@ public:
         }
         original_solution.insert(first_solution.begin(), first_solution.end());
 
-        const double contraction_start = omp_get_wtime();
-        auto link_remap = make_identity_link_remap(link_graph);
+        ConnAugLinkRemap link_remap;
+
+        const double union_find_start = omp_get_wtime();
         UnionFind contraction_uf(graph.num_vertices());
         const auto merge_stats =
             add_links_to_union_find_frozen_stack(graph, link_graph, contraction_uf, first_solution);
+        const double union_find_end = omp_get_wtime();
+
+        const double realization_start = omp_get_wtime();
         auto [contracted_graph, contracted_link_graph, node_remap] =
-            materialize_contractions(graph, link_graph, contraction_uf, link_remap);
+            materialize_contractions(graph, link_graph, contraction_uf, link_remap, true);
+        const double realization_end = omp_get_wtime();
         (void)node_remap;
         record_stage(
             "Contract first solution",
-            contraction_start,
-            omp_get_wtime(),
+            union_find_start,
+            realization_end,
             StageMetrics{
+                {"union_find_construction_time_seconds", std::to_string(union_find_end - union_find_start)},
+                {"contraction_realization_time_seconds", std::to_string(realization_end - realization_start)},
+                {"total_contraction_time_seconds", std::to_string(realization_end - union_find_start)},
                 {"selected_links", std::to_string(first_solution.size())},
                 {"total_merged_nodes", std::to_string(merge_stats.total_merged_nodes)},
                 {"n", std::to_string(contracted_graph.num_vertices())},
@@ -725,7 +738,9 @@ private:
                 {"num_sets", std::to_string(set_cover->get_num_sets())},
                 {"num_elements", std::to_string(set_cover->get_num_elements())},
             });
+        const double context_start = omp_get_wtime();
         auto context_state = build_context_stage(std::move(set_cover));
+        record_stage(prefix + " " + std::string(BuildContextStage::name), context_start, omp_get_wtime());
 
         switch (m_config.solver)
         {

@@ -270,7 +270,11 @@ namespace runtime_pipeline_detail
     std::string stage_name(const Stage& stage)
     {
         using StageType = std::remove_cvref_t<Stage>;
-        if constexpr (requires { StageType::name; })
+        if constexpr (requires { stage.name(); })
+        {
+            return std::string{stage.name()};
+        }
+        else if constexpr (requires { StageType::name; })
         {
             return std::string{StageType::name};
         }
@@ -388,20 +392,7 @@ public:
 
     static void print_pipeline_metrics(const PipelineMetrics& metrics, std::ostream& os)
     {
-        os << "Pipeline metrics:\n";
-        for (size_t i = 0; i < metrics.stages.size(); ++i)
-        {
-            const auto& m = metrics.stages[i];
-            os << " Stage " << i << " (" << m.stage_name << "): " << m.duration_seconds << "s";
-            if (m.metrics.has_value())
-            {
-                for (const auto& metric : *m.metrics)
-                {
-                    os << ", " << metric.name << "=" << metric.printable_value;
-                }
-            }
-            os << "\n";
-        }
+        ::print_pipeline_metrics(metrics, os);
     }
 
 private:

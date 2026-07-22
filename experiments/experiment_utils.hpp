@@ -56,10 +56,3 @@ inline void log_to_file_and_stdout(const std::string &message, const std::filesy
     std::ofstream ofs{output_file.string(), std::ios::app};
     ofs << message << std::endl;
 }
-
-inline void log_separator(const std::filesystem::path &output_file)
-{
-    std::cout << "----------------------------------------" << std::endl;
-    std::ofstream ofs{output_file.string(), std::ios::app};
-    ofs << "----------------------------------------" << std::endl;
-}
