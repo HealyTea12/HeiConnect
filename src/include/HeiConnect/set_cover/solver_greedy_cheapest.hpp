@@ -5,6 +5,9 @@
 #include "HeiConnect/set_cover/trimmer.hpp"
 
 #include <memory>
+#include <string_view>
+#include <tuple>
+#include <utility>
 
 template<typename SetCoverType, typename Context>
 concept GreedyCheapestContextCon = requires(Context context, size_t set_index, const SetCoverType& set_cover) {
@@ -19,6 +22,16 @@ concept GreedyCheapestContextCon = requires(Context context, size_t set_index, c
 class SetCoverSolverGreedyCheapest
 {
 public:
+    static constexpr std::string_view name = "Greedy cheapest solve";
+
+    template<typename SetCoverType, typename Context>
+        requires GreedyCheapestContextCon<SetCoverType, Context>
+    auto operator()(std::shared_ptr<const SetCoverType> set_cover, Context context)
+    {
+        solve(*set_cover, context);
+        return std::tuple{std::move(set_cover), std::move(context)};
+    }
+
     template<typename SetCoverType, typename Context>
         requires GreedyCheapestContextCon<SetCoverType, Context>
     void solve(const SetCoverType& set_cover, Context& context)

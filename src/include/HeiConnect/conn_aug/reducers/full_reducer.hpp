@@ -62,7 +62,13 @@ public:
         return "Full Connectivity Augmentation Reducer";
     }
 
-    FullReducer(bool project_in, bool project_out) : m_projectIn(project_in), m_projectOut(project_out)
+    FullReducer() = default;
+
+    explicit FullReducer(ConnectivityAugmentationReductionConfig config) : m_config(config)
+    {}
+
+    FullReducer(bool project_in, bool project_out)
+        : m_config{true, project_in, project_out, true, 0}
     {}
 
     template<typename GraphType, typename LinkGraphType>
@@ -88,19 +94,34 @@ public:
         };
         std::vector<bool> removable = std::vector<bool>(link_graph.num_edges(), false);
         // calculate all shortest distances between all pairs of nodes in the link graph
-        WeightedTableDistOracle<NodeID, LinkEdgeID, LinkDistance> distance_oracle(link_graph);
+        auto distance_oracle_start = Clock::now();
+        WeightedTableDistOracle<NodeID, LinkEdgeID, LinkDistance> distance_oracle(
+            link_graph,
+            m_config.compute_shortest_paths);
+        auto distance_oracle_end = Clock::now();
         auto distance_func = [&](NodeID u, NodeID v) {
             return distance_oracle.get_distance(u, v);
         };
 
         size_t num_removed_by_shortest_path = 0;
+        auto shortest_path_stats_start = Clock::now();
         if constexpr (RecordStatsLevel > 0)
         {
-            std::vector<bool> removable_after_shortest_path = std::vector<bool>(link_graph.num_edges(), false);
-            mark_removable_links(link_graph, distance_func, removable_after_shortest_path);
-            num_removed_by_shortest_path =
-                std::count(removable_after_shortest_path.begin(), removable_after_shortest_path.end(), true);
+            if (m_config.run_shortest_path_reduction)
+            {
+                std::vector<bool> removable_after_shortest_path = std::vector<bool>(link_graph.num_edges(), false);
+                mark_removable_links(link_graph, distance_func, removable_after_shortest_path);
+                num_removed_by_shortest_path =
+                    std::count(removable_after_shortest_path.begin(), removable_after_shortest_path.end(), true);
+            }
         }
+        auto shortest_path_stats_end = Clock::now();
+        auto shortest_path_reduction_start = Clock::now();
+        if (m_config.run_shortest_path_reduction)
+        {
+            mark_removable_links(link_graph, distance_func, removable);
+        }
+        auto shortest_path_reduction_end = Clock::now();
 
         auto block_tree_start = Clock::now();
         auto [block_tree, cycle_ids] = graph.cactus_generate_block_tree(0);
@@ -128,7 +149,7 @@ public:
         std::vector<NodeID> path = std::vector<NodeID>(graph.num_vertices());
         auto project_in_start = Clock::now();
         // Depends on the number of paths
-        if (m_projectIn)
+        if (m_config.run_project_in)
         {
             for (size_t path_length{node_pairs_by_tree_distance.size() - 1}; path_length >= 2; path_length--)
             {
@@ -158,16 +179,31 @@ public:
         auto project_in_end = Clock::now();
 
         size_t num_removed_by_project_in = 0;
+        auto project_in_stats_start = Clock::now();
         if constexpr (RecordStatsLevel > 0)
         {
-            std::vector<bool> removable_after_project_in = std::vector<bool>(link_graph.num_edges(), false);
-            mark_removable_links(link_graph, distance_func, removable_after_project_in);
-            num_removed_by_project_in =
-                std::count(removable_after_project_in.begin(), removable_after_project_in.end(), true);
+            if (m_config.run_project_in)
+            {
+                std::vector<bool> removable_after_project_in = removable;
+                mark_removable_links(link_graph, distance_func, removable_after_project_in);
+                num_removed_by_project_in =
+                    std::count(removable_after_project_in.begin(), removable_after_project_in.end(), true);
+            }
+            else
+            {
+                num_removed_by_project_in = num_removed_by_shortest_path;
+            }
         }
+        auto project_in_stats_end = Clock::now();
+        auto project_in_link_marking_start = Clock::now();
+        if (m_config.run_project_in)
+        {
+            mark_removable_links(link_graph, distance_func, removable);
+        }
+        auto project_in_link_marking_end = Clock::now();
 
         auto project_out_start = Clock::now();
-        if (m_projectOut)
+        if (m_config.run_project_out)
         {
             for (size_t path_length{2}; path_length < node_pairs_by_tree_distance.size(); path_length++)
             {
@@ -191,72 +227,91 @@ public:
         auto project_out_end = Clock::now();
 
         size_t num_removed_by_project_out = 0;
+        auto project_out_stats_start = Clock::now();
         if constexpr (RecordStatsLevel > 0)
         {
-            std::vector<bool> removable_after_project_out = std::vector<bool>(link_graph.num_edges(), false);
-            mark_removable_links(link_graph, distance_func, removable_after_project_out);
-            num_removed_by_project_out =
-                std::count(removable_after_project_out.begin(), removable_after_project_out.end(), true);
+            if (m_config.run_project_out)
+            {
+                std::vector<bool> removable_after_project_out = removable;
+                mark_removable_links(link_graph, distance_func, removable_after_project_out);
+                num_removed_by_project_out =
+                    std::count(removable_after_project_out.begin(), removable_after_project_out.end(), true);
+            }
+            else
+            {
+                num_removed_by_project_out = num_removed_by_project_in;
+            }
         }
+        auto project_out_stats_end = Clock::now();
+        auto project_out_link_marking_start = Clock::now();
+        if (m_config.run_project_out)
+        {
+            mark_removable_links(link_graph, distance_func, removable);
+        }
+        auto project_out_link_marking_end = Clock::now();
 
         // Cycle reduction
         auto cycle_reduction_start = Clock::now();
-        for (const auto& cycle_positions : cycle_ids)
+        if (m_config.run_cycle_reduction)
         {
-            int cycle_size = 0;
-            for (const auto position : cycle_positions)
+            for (const auto& cycle_positions : cycle_ids)
             {
-                if (position >= 0)
+                int cycle_size = 0;
+                for (const auto position : cycle_positions)
                 {
-                    cycle_size = std::max(cycle_size, static_cast<int>(position) + 1);
-                }
-            }
-
-            std::vector<std::tuple<int, int, LinkDistance>> cycle_links;
-            std::vector<LinkEdgeID> original_link_ids;
-
-            for (NodeID u{0}; u < link_graph.num_vertices(); ++u)
-            {
-                const int cycle_u = cycle_positions[u];
-                if (cycle_u < 0)
-                {
-                    continue;
+                    if (position >= 0)
+                    {
+                        cycle_size = std::max(cycle_size, static_cast<int>(position) + 1);
+                    }
                 }
 
-                for (LinkEdgeID e{link_graph.graph.vertices[u]}; e < link_graph.graph.vertices[u + 1]; ++e)
+                std::vector<std::tuple<int, int, LinkDistance>> cycle_links;
+                std::vector<LinkEdgeID> original_link_ids;
+
+                for (NodeID u{0}; u < link_graph.num_vertices(); ++u)
                 {
-                    const NodeID v = link_graph.graph.edges[e];
-                    const int cycle_v = cycle_positions[v];
-                    if (cycle_v < 0 || cycle_u == cycle_v)
+                    const int cycle_u = cycle_positions[u];
+                    if (cycle_u < 0)
                     {
                         continue;
                     }
 
-                    cycle_links.emplace_back(
-                        std::min(cycle_u, cycle_v),
-                        std::max(cycle_u, cycle_v),
-                        distance_oracle.get_distance(u, v));
-                    original_link_ids.emplace_back(e);
-                }
-            }
+                    for (LinkEdgeID e{link_graph.graph.vertices[u]}; e < link_graph.graph.vertices[u + 1]; ++e)
+                    {
+                        const NodeID v = link_graph.graph.edges[e];
+                        const int cycle_v = cycle_positions[v];
+                        if (cycle_v < 0 || cycle_u == cycle_v)
+                        {
+                            continue;
+                        }
 
-            const auto removable_cycle_links = cycle_domination_baseline(cycle_links, cycle_size);
-            for (const int id : removable_cycle_links)
-            {
-                removable[original_link_ids[id]] = true;
+                        cycle_links.emplace_back(
+                            std::min(cycle_u, cycle_v),
+                            std::max(cycle_u, cycle_v),
+                            distance_oracle.get_distance(u, v));
+                        original_link_ids.emplace_back(e);
+                    }
+                }
+
+                const auto removable_cycle_links = cycle_domination_baseline(cycle_links, cycle_size);
+                for (const int id : removable_cycle_links)
+                {
+                    removable[original_link_ids[id]] = true;
+                }
             }
         }
         auto cycle_reduction_end = Clock::now();
 
-        // Mark removable links
-        mark_removable_links(link_graph, distance_func, removable);
         const size_t num_removed_after_cycle_reduction = std::count(removable.begin(), removable.end(), true);
+        auto remove_links_start = Clock::now();
         auto new_link_graph = remove_links(link_graph, removable);
+        auto remove_links_end = Clock::now();
 
         if constexpr (RecordStatsLevel > 0)
         {
             m_metrics = StageMetrics{
                 {"num_removed_links", std::to_string(num_removed_after_cycle_reduction)},
+                {"shortest_paths_computed", m_config.compute_shortest_paths ? "true" : "false"},
                 {"num_removed_by_shortest_path", std::to_string(num_removed_by_shortest_path)},
                 {
                     "num_removed_by_project_in",
@@ -266,6 +321,27 @@ public:
                 {
                     "num_removed_by_cycle_reduction",
                     std::to_string(num_removed_after_cycle_reduction - num_removed_by_project_out),
+                },
+                {
+                    "distance_oracle_construction_time",
+                    HeiConnect::tools::format_duration(
+                        distance_oracle_start,
+                        distance_oracle_end,
+                        HeiConnect::tools::TimeUnit::Seconds),
+                },
+                {
+                    "shortest_path_stats_time",
+                    HeiConnect::tools::format_duration(
+                        shortest_path_stats_start,
+                        shortest_path_stats_end,
+                        HeiConnect::tools::TimeUnit::Seconds),
+                },
+                {
+                    "shortest_path_reduction_time",
+                    HeiConnect::tools::format_duration(
+                        shortest_path_reduction_start,
+                        shortest_path_reduction_end,
+                        HeiConnect::tools::TimeUnit::Seconds),
                 },
                 {
                     "block_tree_construction_time",
@@ -296,6 +372,20 @@ public:
                         HeiConnect::tools::TimeUnit::Seconds),
                 },
                 {
+                    "project_in_stats_time",
+                    HeiConnect::tools::format_duration(
+                        project_in_stats_start,
+                        project_in_stats_end,
+                        HeiConnect::tools::TimeUnit::Seconds),
+                },
+                {
+                    "project_in_link_marking_time",
+                    HeiConnect::tools::format_duration(
+                        project_in_link_marking_start,
+                        project_in_link_marking_end,
+                        HeiConnect::tools::TimeUnit::Seconds),
+                },
+                {
                     "project_out_time",
                     HeiConnect::tools::format_duration(
                         project_out_start,
@@ -303,10 +393,31 @@ public:
                         HeiConnect::tools::TimeUnit::Seconds),
                 },
                 {
+                    "project_out_stats_time",
+                    HeiConnect::tools::format_duration(
+                        project_out_stats_start,
+                        project_out_stats_end,
+                        HeiConnect::tools::TimeUnit::Seconds),
+                },
+                {
+                    "project_out_link_marking_time",
+                    HeiConnect::tools::format_duration(
+                        project_out_link_marking_start,
+                        project_out_link_marking_end,
+                        HeiConnect::tools::TimeUnit::Seconds),
+                },
+                {
                     "cycle_reduction_time",
                     HeiConnect::tools::format_duration(
                         cycle_reduction_start,
                         cycle_reduction_end,
+                        HeiConnect::tools::TimeUnit::Seconds),
+                },
+                {
+                    "remove_links_time",
+                    HeiConnect::tools::format_duration(
+                        remove_links_start,
+                        remove_links_end,
                         HeiConnect::tools::TimeUnit::Seconds),
                 },
             };
@@ -458,7 +569,6 @@ private:
     }
 
 
-    bool m_projectIn;
-    bool m_projectOut;
+    ConnectivityAugmentationReductionConfig m_config{};
     std::optional<StageMetrics> m_metrics;
 };

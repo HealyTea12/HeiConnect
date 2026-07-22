@@ -2,6 +2,7 @@
 
 #include "HeiConnect/data_structures/immutable_graph.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <queue>
 #include <stdexcept>
@@ -80,11 +81,33 @@ class WeightedTableDistOracle
 public:
     using Distance = WeightType;
 
-    WeightedTableDistOracle(const WeightedCRFGraph<NodeID, EdgeID, WeightType>& graph)
+    WeightedTableDistOracle(
+        const WeightedCRFGraph<NodeID, EdgeID, WeightType>& graph,
+        bool compute_shortest_paths = true)
     {
         n = graph.num_vertices();
         const Distance inf = std::numeric_limits<Distance>::max();
         m_distances.assign(n * n, inf);
+
+        for (NodeID u{0}; u < n; ++u)
+        {
+            m_distances[u * n + u] = static_cast<Distance>(0);
+            for (EdgeID e = graph.graph.vertices[u]; e < graph.graph.vertices[u + 1]; ++e)
+            {
+                const NodeID v = graph.graph.edges[e];
+                const Distance w = static_cast<Distance>(graph.weights[e]);
+                if (w < static_cast<Distance>(0))
+                {
+                    throw std::runtime_error("WeightedTableDistOracle requires non-negative edge weights");
+                }
+                m_distances[u * n + v] = std::min(m_distances[u * n + v], w);
+            }
+        }
+
+        if (!compute_shortest_paths)
+        {
+            return;
+        }
 
         std::vector<Distance> dist(n, inf);
         using QueueEntry = std::pair<Distance, NodeID>;
@@ -114,11 +137,6 @@ public:
                 {
                     const NodeID v = graph.graph.edges[e];
                     const Distance w = static_cast<Distance>(graph.weights[e]);
-                    if (w < static_cast<Distance>(0))
-                    {
-                        throw std::runtime_error("WeightedTableDistOracle requires non-negative edge weights");
-                    }
-
                     const Distance candidate = du + w;
                     if (candidate < dist[v])
                     {

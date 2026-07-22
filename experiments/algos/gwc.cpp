@@ -22,11 +22,14 @@ namespace
 class ClassicalGWCRunner : public AlgorithmRunner
 {
 public:
-    void run(const std::filesystem::path& graph_file) override
+    void run(
+        const std::filesystem::path& graph_file,
+        const std::filesystem::path& link_file,
+        const std::filesystem::path&) override
     {
         graph::GraphPair graph_pair;
         graph_pair.read_graph(graph_file.parent_path() / (graph_file.stem().string() + ".graph"), graph_file);
-        graph_pair.add_links(graph_file.parent_path() / (graph_file.stem().string() + ".links"), 1.0, 0);
+        graph_pair.add_links(link_file, 1.0, 0);
 
         graph::DynamicCactus dynamic_cactus;
 

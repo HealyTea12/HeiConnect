@@ -260,7 +260,9 @@ public:
             m_arcEquivClasses[c].emplace_back(ArcEquivClass{0, 0, static_cast<CycPos>(cycleSizes[c])});
             m_classSizes.emplace_back(std::vector<CycPos>{static_cast<CycPos>(cycleSizes[c])});
         }
-        m_classIntersects = std::vector<size_t>(*std::max_element(cycleSizes.begin(), cycleSizes.end()), 0);
+        const size_t max_cycle_size =
+            cycleSizes.empty() ? 0 : *std::max_element(cycleSizes.begin(), cycleSizes.end());
+        m_classIntersects = std::vector<size_t>(max_cycle_size, 0);
     }
 
     size_t cover_count(size_t set_index) const

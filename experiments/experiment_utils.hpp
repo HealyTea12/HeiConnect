@@ -27,6 +27,7 @@ long run_isolated_and_measure_memory_usage(ChildFn child_function)
         }
         catch (const std::exception &e)
         {
+            std::cerr << "Child process error: " << e.what() << std::endl;
             std::exit(1);
         }
     }

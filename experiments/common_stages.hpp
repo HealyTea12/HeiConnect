@@ -78,9 +78,10 @@ class ReadFromFileCSRStage
 public:
     static constexpr std::string_view name = "Read from file (CSR)";
 
-    std::tuple<WeightedCRFGraph<>, WeightedCRFGraph<>> operator()(const std::filesystem::path& graph_file)
+    std::tuple<WeightedCRFGraph<>, WeightedCRFGraph<>> operator()(
+        const std::filesystem::path& graph_file,
+        const std::filesystem::path& link_file)
     {
-        const std::string link_file = graph_file.parent_path() / (graph_file.filename().stem().string() + ".links");
         auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
         auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
         return std::make_tuple(std::move(graph), std::move(link_graph));

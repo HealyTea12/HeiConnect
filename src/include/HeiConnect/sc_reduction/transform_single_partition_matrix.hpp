@@ -291,6 +291,8 @@ namespace HeiConnect_details
                 {
                     if (distances[neighbor] < depth)
                         continue; // skip back edges to ancestors
+                    if (distances[neighbor] == depth && neighbor < current_node)
+                        continue; // count same-depth undirected edges only once
                     cycle_edge_vec.emplace_back(current_node, neighbor);
                 }
             }

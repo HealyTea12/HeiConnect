@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -11,7 +12,13 @@
 #include "HeiConnect/data_structures/union_find.hpp"
 #include "HeiConnect/pipeline/common.hpp"
 #include "HeiConnect/set_cover/common.hpp"
+#include "HeiConnect/tools/timer.hpp"
 
+/**
+ * TODO: FOrced links are contracted one at a time. There is definitely a more efficient way of doing it i.e:
+ * not reconstructing the whole graph each time, just building the union find for all of them and then
+ * materializing the contractions all at once.
+ */
 template<int RecordStatsLevel = 0>
 class FullSingleDomReducer
 {
@@ -23,7 +30,16 @@ public:
 
     using LinkRemap = ConnAugLinkRemap;
 
-    FullSingleDomReducer(bool project_in, bool project_out) : m_fullReducer(project_in, project_out)
+    FullSingleDomReducer() = default;
+
+    explicit FullSingleDomReducer(ConnectivityAugmentationReductionConfig config) :
+        m_config(config),
+        m_fullReducer(config)
+    {}
+
+    FullSingleDomReducer(bool project_in, bool project_out) :
+        m_config{true, project_in, project_out, true, 0},
+        m_fullReducer(project_in, project_out)
     {}
 
     template<typename GraphType, typename LinkGraphType>
@@ -62,6 +78,8 @@ public:
         UnionFind& uf,
         USSolution& solution)
     {
+        using Clock = std::chrono::high_resolution_clock;
+        auto setup_start = Clock::now();
         if (link_remap.empty())
         {
             link_remap = make_identity_link_remap(link_graph);
@@ -75,17 +93,34 @@ public:
             m_metrics = StageMetrics{};
         }
 
+        auto current_graph = graph;
         auto current_link_graph = link_graph;
+        uf = UnionFind(current_graph.num_vertices());
+        auto setup_end = Clock::now();
         size_t iterations = 0;
         size_t num_changes = 0;
 
+        if constexpr (RecordStatsLevel > 0)
+        {
+            m_metrics->push_back(
+                {"setup_time",
+                 HeiConnect::tools::format_duration(setup_start, setup_end, HeiConnect::tools::TimeUnit::Seconds)});
+        }
+
         while (true)
         {
+            if (m_config.max_rounds > 0 && iterations >= m_config.max_rounds)
+            {
+                break;
+            }
+
             ++iterations;
             bool changed = false;
 
             const size_t before_full_edges = current_link_graph.num_edges();
-            auto [full_graph, full_link_graph] = m_fullReducer.run(graph, current_link_graph);
+            auto full_start = Clock::now();
+            auto [full_graph, full_link_graph] = m_fullReducer.run(current_graph, current_link_graph);
+            auto full_end = Clock::now();
             (void)full_graph;
             const size_t after_full_edges = full_link_graph.num_edges();
             if (!same_link_graph(current_link_graph, full_link_graph))
@@ -95,40 +130,70 @@ public:
             if constexpr (RecordStatsLevel > 0)
             {
                 append_submetrics("full", iterations, m_fullReducer.emit_metrics());
+                append_time_metric("full", iterations, full_start, full_end);
             }
             current_link_graph = std::move(full_link_graph);
 
             const size_t before_single_edges = current_link_graph.num_edges();
-            auto [single_graph, single_link_graph, single_link_remap, single_uf] =
-                m_singleLinkReducer.run(graph, current_link_graph, link_remap, uf, solution);
-            (void)single_graph;
+            auto single_start = Clock::now();
+            UnionFind selection_uf(current_graph.num_vertices());
+            auto single_reducer_start = Clock::now();
+            auto single_link_graph =
+                m_singleLinkReducer.run(current_graph, current_link_graph, link_remap, selection_uf, solution);
+            auto single_reducer_end = Clock::now();
             const size_t after_single_edges = single_link_graph.num_edges();
-            link_remap = std::move(single_link_remap);
-            uf = std::move(single_uf);
+            auto single_materialize_start = Clock::now();
+            auto [single_contracted_graph, single_contracted_link_graph, single_node_remap] =
+                materialize_contractions(current_graph, single_link_graph, selection_uf, link_remap);
+            auto single_materialize_end = Clock::now();
+            (void)single_node_remap;
+            current_graph = std::move(single_contracted_graph);
+            current_link_graph = std::move(single_contracted_link_graph);
+            uf = UnionFind(current_graph.num_vertices());
             if (!same_link_graph(current_link_graph, single_link_graph))
             {
                 changed = true;
             }
+            auto single_end = Clock::now();
             if constexpr (RecordStatsLevel > 0)
             {
                 append_submetrics("single_link", iterations, m_singleLinkReducer.emit_metrics());
+                append_time_metric(
+                    "single_link_reducer",
+                    iterations,
+                    single_reducer_start,
+                    single_reducer_end);
+                append_time_metric(
+                    "single_link_materialize",
+                    iterations,
+                    single_materialize_start,
+                    single_materialize_end);
+                append_time_metric("single_link", iterations, single_start, single_end);
             }
-            current_link_graph = std::move(single_link_graph);
 
             const size_t before_dom_edges = current_link_graph.num_edges();
+            auto element_domination_start = Clock::now();
             auto [dom_graph, dom_link_graph, dom_link_remap, dom_uf] =
-                m_domReducer.run(graph, current_link_graph, link_remap, uf);
+                m_domReducer.run(current_graph, current_link_graph, link_remap, uf);
             (void)dom_graph;
             const size_t after_dom_edges = dom_link_graph.num_edges();
             link_remap = std::move(dom_link_remap);
             uf = std::move(dom_uf);
+            auto [contracted_graph, contracted_link_graph, node_remap] =
+                materialize_contractions(current_graph, dom_link_graph, uf, link_remap);
+            (void)node_remap;
+            current_graph = std::move(contracted_graph);
+            dom_link_graph = std::move(contracted_link_graph);
+            uf = UnionFind(current_graph.num_vertices());
             if (!same_link_graph(current_link_graph, dom_link_graph))
             {
                 changed = true;
             }
+            auto element_domination_end = Clock::now();
             if constexpr (RecordStatsLevel > 0)
             {
                 append_submetrics("element_domination", iterations, m_domReducer.emit_metrics());
+                append_time_metric("element_domination", iterations, element_domination_start, element_domination_end);
             }
             current_link_graph = std::move(dom_link_graph);
 
@@ -161,7 +226,7 @@ public:
             m_metrics->push_back({"num_removed_by_element_domination", std::to_string(m_totalRemovedByDom)});
         }
 
-        return {graph, current_link_graph, link_remap, uf};
+        return {current_graph, current_link_graph, link_remap, uf};
     }
 
     std::optional<StageMetrics> emit_metrics() const
@@ -177,6 +242,14 @@ public:
     }
 
 private:
+    template<typename TimePoint>
+    void append_time_metric(const std::string& prefix, size_t iteration, TimePoint start, TimePoint end)
+    {
+        m_metrics->push_back(
+            {prefix + "_iter_" + std::to_string(iteration) + "_total_time",
+             HeiConnect::tools::format_duration(start, end, HeiConnect::tools::TimeUnit::Seconds)});
+    }
+
     void append_submetrics(const std::string& prefix, size_t iteration, const std::optional<StageMetrics>& metrics)
     {
         if (!metrics.has_value())
@@ -195,9 +268,11 @@ private:
         const WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>& lhs,
         const WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>& rhs) const
     {
-        return lhs.graph.vertices == rhs.graph.vertices && lhs.graph.edges == rhs.graph.edges && lhs.weights == rhs.weights;
+        return lhs.graph.vertices == rhs.graph.vertices && lhs.graph.edges == rhs.graph.edges &&
+            lhs.weights == rhs.weights;
     }
 
+    ConnectivityAugmentationReductionConfig m_config{};
     FullReducer<RecordStatsLevel> m_fullReducer;
     SingleLinkReducer<RecordStatsLevel> m_singleLinkReducer;
     FullMinCutDomReducer m_domReducer;

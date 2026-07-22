@@ -53,7 +53,7 @@ SetCover<> construct_set_cover(
 
 struct ConstructSetCoverStage
 {
-    static constexpr std::string_view name = "Construct set cover";
+    static constexpr std::string_view name = "Construct set cover (CSR)";
 
     template<typename GraphType, typename LinkGraphType>
     auto operator()(const GraphType& graph, const LinkGraphType& link_graph) const

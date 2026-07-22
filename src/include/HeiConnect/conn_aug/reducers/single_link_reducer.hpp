@@ -44,11 +44,7 @@ public:
     using LinkRemap = ConnAugLinkRemap;
 
     template<typename NodeID, typename EdgeID, typename EdgeWeight, typename LinkEdgeID, typename LinkEdgeWeight>
-    std::tuple<
-        WeightedCRFGraph<NodeID, EdgeID, EdgeWeight>,
-        WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>,
-        LinkRemap,
-        UnionFind>
+    WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>
     run(const WeightedCRFGraph<NodeID, EdgeID, EdgeWeight>& graph,
         const WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>& link_graph,
         LinkRemap& link_remap,
@@ -58,8 +54,7 @@ public:
         using Clock = std::chrono::high_resolution_clock;
 
         uint64_t n_selected_links{};
-        auto [block_tree, cycle_ids] = graph.cactus_generate_block_tree(0);
-        (void)cycle_ids;
+        auto [block_tree, cycle_positions] = graph.cactus_generate_block_tree(0);
         auto [parent, depth] = block_tree.graph.rooted_parent_depth();
 
         auto start_select_links = Clock::now();
@@ -73,6 +68,7 @@ public:
         std::vector<size_t> covering_sets(sc.get_num_sets());
         std::vector<bool> is_selected_link(link_graph.num_edges(), false);
         std::vector<LinkEdgeID> selected_links{};
+        const auto links = link_graph.csr_to_vec_links();
         for (size_t element_id{}; element_id < sc.get_num_elements(); element_id++)
         {
             covering_sets.clear();
@@ -88,14 +84,22 @@ public:
             {
                 ++n_selected_links;
                 selected_links.emplace_back(static_cast<LinkEdgeID>(link_id));
-                solution.add_set(link_id);
+                const auto& [u, v, weight] = links[link_id];
+                (void)weight;
+                solution.add_set(link_remap.at(normalize_link(u, v)).original_id);
             }
         }
         auto end_select_links = Clock::now();
 
         auto start_contract_graph = Clock::now();
-        const auto merge_stats =
-            add_links_to_union_find(graph.num_vertices(), link_graph.graph, uf, selected_links, parent, depth);
+        const auto merge_stats = add_links_to_union_find(
+            graph.num_vertices(),
+            link_graph.graph,
+            uf,
+            selected_links,
+            parent,
+            depth,
+            cycle_positions);
         auto end_contract_graph = Clock::now();
 
         auto start_remap_eliminate_links = Clock::now();
@@ -132,7 +136,7 @@ public:
             }
         }
 
-        return {graph, new_link_graph, link_remap, uf};
+        return new_link_graph;
     }
 
     std::optional<StageMetrics> emit_metrics() const

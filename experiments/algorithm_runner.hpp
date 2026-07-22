@@ -31,7 +31,10 @@ public:
     Pipeline<>::PipelineMetrics pipeline_metrics;
 
     virtual ~AlgorithmRunner() = default;
-    virtual void run(const std::filesystem::path& graph_file) = 0;
+    virtual void run(
+        const std::filesystem::path& graph_file,
+        const std::filesystem::path& link_file,
+        const std::filesystem::path& output_dir) = 0;
     virtual void print_results(std::ostream& os)
     {
         // If pipeline metrics exist, use the pipeline printer. Otherwise, print the results in a simple format.

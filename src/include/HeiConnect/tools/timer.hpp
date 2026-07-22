@@ -82,7 +82,7 @@ namespace HeiConnect::tools
         switch (unit)
         {
             case TimeUnit::Seconds:
-                return std::to_string(std::chrono::duration_cast<std::chrono::seconds>(end - start).count()) + "s";
+                return std::to_string(std::chrono::duration<double>(end - start).count()) + "s";
             case TimeUnit::Milliseconds:
                 return std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()) +
                     "ms";
