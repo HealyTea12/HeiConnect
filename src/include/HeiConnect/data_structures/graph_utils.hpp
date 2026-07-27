@@ -53,24 +53,17 @@ inline WeightedCRFGraph<node_T, edge_T, weight_T> create_star_graph(node_T n_lea
 
 inline WeightedCRFGraph<> create_random_tree(size_t n_nodes, unsigned int seed = 42)
 {
-    std::vector<bool> connected = std::vector<bool>(n_nodes, false);
     // tree has n - 1 edges
     auto vertices = std::vector<size_t>(n_nodes + 1, 0);
     auto edges = std::vector<size_t>(2 * (n_nodes - 1), 0);
     auto weights = std::vector<double>(2 * (n_nodes - 1), 1.0);
     auto random_engine = std::mt19937(seed);
     auto temp_edges = std::vector<std::vector<size_t>>(n_nodes, std::vector<size_t>{});
-    std::uniform_int_distribution<size_t>
-        dist{0, n_nodes - 1};
-    for (size_t i = 0; i < n_nodes; i++)
+    for (size_t u = 1; u < n_nodes; u++)
     {
-        // choose two nodes
-        size_t u, v;
-        do
-        {
-            u = dist(random_engine);
-            v = dist(random_engine);
-        } while (u == v || (connected[u] && connected[v]));
+        // choose one of the already connected nodes
+        std::uniform_int_distribution<size_t> dist{0, u - 1};
+        auto v = dist(random_engine);
         temp_edges[u].emplace_back(v);
         temp_edges[v].emplace_back(u);
     }

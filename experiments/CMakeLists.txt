@@ -4,7 +4,9 @@ find_package(benchmark REQUIRED)
 add_executable(generate_datasets)
 target_sources(generate_datasets
 PRIVATE
-    generate_datasets.cpp)
+    generate_datasets.cpp
+    dataset_generator/cli.cpp
+    dataset_generator/generators.cpp)
 target_link_libraries(
     generate_datasets
 PRIVATE

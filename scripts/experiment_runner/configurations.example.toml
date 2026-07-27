@@ -1,0 +1,36 @@
+[dataset_selection]
+include = ["cycles", "stars", "trees"]
+default_max_nodes = 500
+
+[dataset_selection.datasets.cycles]
+max_nodes = 1000
+
+[dataset_selection.datasets.stars]
+max_nodes = 500
+
+[dataset_selection.datasets.trees]
+max_nodes = 300
+
+[link_configurations.unit]
+distribution = "constant"
+constant_weight = 1.0
+seed = 42
+
+[link_configurations.float_uniform_0_1]
+distribution = "float_uniform"
+float_uniform_lower = 0.0
+float_uniform_upper = 1.0
+seed = 42
+
+[configurations.baseline]
+algorithm = "Set Cover CSR"
+timeout = 300
+max_memory_mb = 16384
+
+[configurations.baseline.params]
+max_rounds = 1
+
+[configurations.without_round_limit]
+algorithm = "Set Cover CSR"
+timeout = 600
+max_memory_mb = 16384

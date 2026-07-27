@@ -16,11 +16,12 @@ void run_experiment_file(
     const std::filesystem::path& link_file,
     const std::string_view algorithm,
     const std::filesystem::path& output_dir,
+    const std::filesystem::path& result_file_name,
     bool log_stdout,
     const ParamMap& params)
 {
     auto runner = global_registry.create(algorithm, params);
-    const auto result_file = output_dir / "res.txt";
+    const auto result_file = output_dir / result_file_name;
     try
     {
         auto memory_usage = run_isolated_and_measure_memory_usage([&]() {
@@ -65,6 +66,9 @@ int main(int argc, char** argv)
         desc.add_options() //
             ("help,h", "show this help message") //
             ("output_dir,o", po::value<std::string>()->required(), "output directory path") //
+            ("result_file_name",
+             po::value<std::string>()->default_value("res.txt"),
+             "name of the result file inside the output directory") //
             ("algorithm,a", po::value<std::string>()->required(), "algorithm to run") //
             ("input_file,f",
              po::value<std::vector<std::string>>()->multitoken()->required(),
@@ -107,6 +111,11 @@ int main(int argc, char** argv)
             }
         }
         const auto output_dir = std::filesystem::path(vm["output_dir"].as<std::string>());
+        const auto result_file_name = std::filesystem::path(vm["result_file_name"].as<std::string>());
+        if (result_file_name.empty() || result_file_name.has_parent_path())
+        {
+            throw std::invalid_argument("result_file_name must be a file name without a directory");
+        }
         std::filesystem::create_directories(output_dir);
         auto algorithm_str = vm["algorithm"].as<std::string>();
         const auto names = global_registry.names();
@@ -118,7 +127,13 @@ int main(int argc, char** argv)
         }
 
         run_experiment_file(
-            input_files[0], input_files[1], algorithm_str, output_dir, vm["log_stdout"].as<bool>(), params);
+            input_files[0],
+            input_files[1],
+            algorithm_str,
+            output_dir,
+            result_file_name,
+            vm["log_stdout"].as<bool>(),
+            params);
     }
     catch (const po::error& e)
     {
