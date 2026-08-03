@@ -35,8 +35,49 @@
  * After each run of Dijkstra, we check if any of the links incident to the source node have a shorter distance to their
  * other endpoint. if so, we mark that link as removable.
  */
-template<typename NodeID, typename Weight, typename IntersectionIdx = BaselineIntersectionIdx>
-auto cycle_domination_baseline(const std::vector<std::tuple<NodeID, NodeID, Weight>>& links, uint64_t n_nodes)
+struct CycleReductionMetrics
+{
+    size_t sources{};
+    size_t priority_queue_pops{};
+    size_t links_enqueued{};
+    size_t intersection_candidates_enqueued{};
+    size_t intersection_candidates_already_explored{};
+    size_t intersection_candidates_rejected_by_cutoff{};
+    size_t termination_by_cutoff{};
+    size_t termination_by_completion{};
+    size_t termination_by_empty_queue{};
+    size_t maximum_queue_size{};
+    size_t maximum_pops_per_link{};
+    size_t completed_vertices_at_stop{};
+    size_t possible_priority_queue_pops{};
+    IntersectionIndexMetrics intersection_index;
+
+    void add(const CycleReductionMetrics& other)
+    {
+        sources += other.sources;
+        priority_queue_pops += other.priority_queue_pops;
+        links_enqueued += other.links_enqueued;
+        intersection_candidates_enqueued += other.intersection_candidates_enqueued;
+        intersection_candidates_already_explored += other.intersection_candidates_already_explored;
+        intersection_candidates_rejected_by_cutoff += other.intersection_candidates_rejected_by_cutoff;
+        termination_by_cutoff += other.termination_by_cutoff;
+        termination_by_completion += other.termination_by_completion;
+        termination_by_empty_queue += other.termination_by_empty_queue;
+        maximum_queue_size = std::max(maximum_queue_size, other.maximum_queue_size);
+        maximum_pops_per_link = std::max(maximum_pops_per_link, other.maximum_pops_per_link);
+        completed_vertices_at_stop += other.completed_vertices_at_stop;
+        possible_priority_queue_pops += other.possible_priority_queue_pops;
+        intersection_index.add(other.intersection_index);
+    }
+};
+
+template<int RecordStatsLevel = 0, typename NodeID, typename Weight>
+auto cycle_domination_baseline(
+    const std::vector<std::tuple<NodeID, NodeID, Weight>>& links,
+    uint64_t n_nodes,
+    const BaseIntersectionIdx<RecordStatsLevel>& intersection_index_type,
+    CycleReductionMetrics* output_metrics = nullptr,
+    bool reuse_intersection_index = true)
 {
     using LinkID = size_t;
     using QueueEntry = std::pair<Weight, LinkID>;
@@ -61,12 +102,33 @@ auto cycle_domination_baseline(const std::vector<std::tuple<NodeID, NodeID, Weig
     std::vector<Weight> vertex_distance(n_nodes);
     std::vector<Weight> value_to_beat(n_nodes);
     std::vector<LinkID> candidate_link(n_nodes);
+    auto intersection_index = intersection_index_type.make(intervals);
+    CycleReductionMetrics metrics;
+    std::vector<size_t> pops_per_link;
+    if constexpr (RecordStatsLevel > 1)
+    {
+        pops_per_link.resize(links.size());
+    }
 
     for (size_t source = 0; source < n_nodes; ++source)
     {
         if (incident[source].empty())
         {
             continue;
+        }
+
+        if constexpr (RecordStatsLevel > 0)
+        {
+            metrics.sources++;
+            metrics.possible_priority_queue_pops += links.size();
+        }
+        if (reuse_intersection_index)
+        {
+            intersection_index->reset();
+        }
+        else
+        {
+            intersection_index = intersection_index_type.make(intervals);
         }
 
         std::fill(explored.begin(), explored.end(), false);
@@ -84,7 +146,6 @@ auto cycle_domination_baseline(const std::vector<std::tuple<NodeID, NodeID, Weig
             cutoff = std::max(cutoff, weight);
         }
 
-        IntersectionIdx intersection_index(intervals);
         std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> queue;
 
         auto complete_endpoint = [&](NodeID endpoint, Weight value) {
@@ -107,14 +168,32 @@ auto cycle_domination_baseline(const std::vector<std::tuple<NodeID, NodeID, Weig
         for (LinkID id : incident[source])
         {
             explored[id] = true;
-            intersection_index.popInterval(id);
+            intersection_index->popInterval(id);
             queue.emplace(std::get<2>(links[id]), id);
+            if constexpr (RecordStatsLevel > 0)
+            {
+                metrics.links_enqueued++;
+            }
         }
 
+        if constexpr (RecordStatsLevel > 1)
+        {
+            metrics.maximum_queue_size = std::max(metrics.maximum_queue_size, queue.size());
+        }
+
+        bool stopped_early = false;
         while (!queue.empty())
         {
             const auto [current_distance, current] = queue.top();
             queue.pop();
+            if constexpr (RecordStatsLevel > 0)
+            {
+                metrics.priority_queue_pops++;
+            }
+            if constexpr (RecordStatsLevel > 1)
+            {
+                pops_per_link[current]++;
+            }
 
             const auto& [u, v, weight] = links[current];
             complete_endpoint(u, current_distance);
@@ -122,27 +201,95 @@ auto cycle_domination_baseline(const std::vector<std::tuple<NodeID, NodeID, Weig
 
             if (current_distance >= cutoff || n_complete_vertices == n_nodes)
             {
+                if constexpr (RecordStatsLevel > 0)
+                {
+                    stopped_early = true;
+                    if (n_complete_vertices == n_nodes)
+                    {
+                        metrics.termination_by_completion++;
+                    }
+                    else
+                    {
+                        metrics.termination_by_cutoff++;
+                    }
+                }
                 break;
             }
 
             std::vector<LinkID> neighbours;
-            intersection_index.forEachIntersection(
-                [&](LinkID next, typename IntersectionIdx::Interval) {
+            std::vector<LinkID> rejected_by_cutoff;
+            intersection_index->forEachIntersection(
+                [&](LinkID next, typename BaseIntersectionIdx<RecordStatsLevel>::Interval) {
                     const Weight next_weight = std::get<2>(links[next]);
-                    if (!explored[next] && next_weight < cutoff - current_distance)
+                    if (explored[next])
+                    {
+                        if constexpr (RecordStatsLevel > 0)
+                        {
+                            metrics.intersection_candidates_already_explored++;
+                        }
+                    }
+                    else if (next_weight >= cutoff - current_distance)
+                    {
+                        if constexpr (RecordStatsLevel > 0)
+                        {
+                            metrics.intersection_candidates_rejected_by_cutoff++;
+                        }
+                        rejected_by_cutoff.push_back(next);
+                    }
+                    else
                     {
                         explored[next] = true;
                         neighbours.push_back(next);
+                        if constexpr (RecordStatsLevel > 0)
+                        {
+                            metrics.intersection_candidates_enqueued++;
+                        }
                     }
                 },
                 intervals[current]);
 
+            for (LinkID rejected : rejected_by_cutoff)
+            {
+                intersection_index->popInterval(rejected);
+            }
+
             for (LinkID next : neighbours)
             {
-                intersection_index.popInterval(next);
+                intersection_index->popInterval(next);
                 queue.emplace(current_distance + std::get<2>(links[next]), next);
+                if constexpr (RecordStatsLevel > 0)
+                {
+                    metrics.links_enqueued++;
+                }
+            }
+            if constexpr (RecordStatsLevel > 1)
+            {
+                metrics.maximum_queue_size = std::max(metrics.maximum_queue_size, queue.size());
             }
         }
+        if constexpr (RecordStatsLevel > 0)
+        {
+            if (!stopped_early)
+            {
+                metrics.termination_by_empty_queue++;
+            }
+        }
+        if constexpr (RecordStatsLevel > 1)
+        {
+            metrics.completed_vertices_at_stop += n_complete_vertices;
+        }
+    }
+
+    if constexpr (RecordStatsLevel > 1)
+    {
+        if (!pops_per_link.empty())
+        {
+            metrics.maximum_pops_per_link = *std::max_element(pops_per_link.begin(), pops_per_link.end());
+        }
+    }
+    if constexpr (RecordStatsLevel > 0)
+    {
+        metrics.intersection_index = intersection_index->emit_metrics();
     }
 
     std::vector<int> result;
@@ -154,7 +301,24 @@ auto cycle_domination_baseline(const std::vector<std::tuple<NodeID, NodeID, Weig
         }
     }
 
+    if constexpr (RecordStatsLevel > 0)
+    {
+        if (output_metrics != nullptr)
+        {
+            *output_metrics = metrics;
+        }
+    }
     return result;
+}
+
+template<int RecordStatsLevel = 0, typename NodeID, typename Weight>
+auto cycle_domination_baseline(
+    const std::vector<std::tuple<NodeID, NodeID, Weight>>& links,
+    uint64_t n_nodes,
+    CycleReductionMetrics* output_metrics = nullptr)
+{
+    const BaselineIntersectionIdx<RecordStatsLevel> intersection_index_type;
+    return cycle_domination_baseline<RecordStatsLevel>(links, n_nodes, intersection_index_type, output_metrics);
 }
 
 // /*

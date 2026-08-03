@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <optional>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -70,6 +71,11 @@ public:
     FullReducer(bool project_in, bool project_out)
         : m_config{true, project_in, project_out, true, 0}
     {}
+
+    void setIntersectionIndex(std::shared_ptr<const BaseIntersectionIdx<RecordStatsLevel>> intersection_index)
+    {
+        m_intersection_index = std::move(intersection_index);
+    }
 
     template<typename GraphType, typename LinkGraphType>
     auto operator()(const GraphType& graph, const LinkGraphType& link_graph)
@@ -252,6 +258,7 @@ public:
 
         // Cycle reduction
         auto cycle_reduction_start = Clock::now();
+        CycleReductionMetrics cycle_reduction_metrics;
         if (m_config.run_cycle_reduction)
         {
             for (const auto& cycle_positions : cycle_ids)
@@ -293,7 +300,16 @@ public:
                     }
                 }
 
-                const auto removable_cycle_links = cycle_domination_baseline(cycle_links, cycle_size);
+                CycleReductionMetrics current_cycle_metrics;
+                const auto removable_cycle_links = cycle_domination_baseline<RecordStatsLevel>(
+                    cycle_links,
+                    cycle_size,
+                    *m_intersection_index,
+                    &current_cycle_metrics);
+                if constexpr (RecordStatsLevel > 0)
+                {
+                    cycle_reduction_metrics.add(current_cycle_metrics);
+                }
                 for (const int id : removable_cycle_links)
                 {
                     removable[original_link_ids[id]] = true;
@@ -420,7 +436,68 @@ public:
                         remove_links_end,
                         HeiConnect::tools::TimeUnit::Seconds),
                 },
+                {"cycle_sources", std::to_string(cycle_reduction_metrics.sources)},
+                {"cycle_priority_queue_pops", std::to_string(cycle_reduction_metrics.priority_queue_pops)},
+                {
+                    "cycle_possible_priority_queue_pops",
+                    std::to_string(cycle_reduction_metrics.possible_priority_queue_pops),
+                },
+                {"cycle_links_enqueued", std::to_string(cycle_reduction_metrics.links_enqueued)},
+                {
+                    "cycle_intersection_candidates_enqueued",
+                    std::to_string(cycle_reduction_metrics.intersection_candidates_enqueued),
+                },
+                {
+                    "cycle_intersection_candidates_already_explored",
+                    std::to_string(cycle_reduction_metrics.intersection_candidates_already_explored),
+                },
+                {
+                    "cycle_intersection_candidates_rejected_by_cutoff",
+                    std::to_string(cycle_reduction_metrics.intersection_candidates_rejected_by_cutoff),
+                },
+                {
+                    "cycle_priority_queue_pop_ratio",
+                    std::to_string(
+                        cycle_reduction_metrics.possible_priority_queue_pops == 0
+                            ? 0.0
+                            : static_cast<double>(cycle_reduction_metrics.priority_queue_pops) /
+                                  static_cast<double>(cycle_reduction_metrics.possible_priority_queue_pops)),
+                },
+                {"cycle_termination_by_cutoff", std::to_string(cycle_reduction_metrics.termination_by_cutoff)},
+                {
+                    "cycle_termination_by_completion",
+                    std::to_string(cycle_reduction_metrics.termination_by_completion),
+                },
+                {
+                    "cycle_termination_by_empty_queue",
+                    std::to_string(cycle_reduction_metrics.termination_by_empty_queue),
+                },
+                {
+                    "cycle_intersection_queries",
+                    std::to_string(cycle_reduction_metrics.intersection_index.queries),
+                },
+                {
+                    "cycle_intersection_callbacks",
+                    std::to_string(cycle_reduction_metrics.intersection_index.callbacks),
+                },
+                {
+                    "cycle_intervals_popped",
+                    std::to_string(cycle_reduction_metrics.intersection_index.intervals_popped),
+                },
             };
+            if constexpr (RecordStatsLevel > 1)
+            {
+                m_metrics->push_back(
+                    {"cycle_maximum_queue_size", std::to_string(cycle_reduction_metrics.maximum_queue_size)});
+                m_metrics->push_back(
+                    {"cycle_maximum_pops_per_link", std::to_string(cycle_reduction_metrics.maximum_pops_per_link)});
+                m_metrics->push_back(
+                    {"cycle_completed_vertices_at_stop", std::to_string(cycle_reduction_metrics.completed_vertices_at_stop)});
+                m_metrics->push_back({
+                    "cycle_intersection_candidates_inspected",
+                    std::to_string(cycle_reduction_metrics.intersection_index.candidates_inspected),
+                });
+            }
         }
 
         return {graph, new_link_graph};
@@ -570,5 +647,7 @@ private:
 
 
     ConnectivityAugmentationReductionConfig m_config{};
+    std::shared_ptr<const BaseIntersectionIdx<RecordStatsLevel>> m_intersection_index =
+        std::make_shared<BaselineIntersectionIdx<RecordStatsLevel>>();
     std::optional<StageMetrics> m_metrics;
 };

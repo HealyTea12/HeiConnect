@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include "HeiConnect/conn_aug/reducers/common.hpp"
+#include "HeiConnect/conn_aug/reducers/cycle_reducer.hpp"
+#include "HeiConnect/data_structures/intersection_index/intersection_tree.hpp"
 #include "HeiConnect/data_structures/graph_utils.hpp"
 
 TEST(ConnAugReducers, MergesCrossingContractionsOnCycle)
@@ -91,4 +93,44 @@ TEST(ConnAugReducers, FrozenStackKeepsNestedContractionsSeparateOnCycle)
     EXPECT_EQ(uf.find(1), uf.find(2));
     EXPECT_NE(uf.find(0), uf.find(1));
     EXPECT_EQ(stats.total_merged_nodes, 2);
+}
+
+TEST(ConnAugReducers, IntersectionTreeMatchesBaselineCycleReduction)
+{
+    std::vector<std::tuple<int, int, int>> links;
+    constexpr int cycle_size = 12;
+    for (int u = 0; u < cycle_size; ++u)
+    {
+        for (int v = u + 1; v < cycle_size; ++v)
+        {
+            links.emplace_back(u, v, (u + v) % cycle_size + 1);
+        }
+    }
+
+    const BaselineIntersectionIdx<0> baseline;
+    const IntersectionTreeIdx<0> intersection_tree;
+    EXPECT_EQ(
+        cycle_domination_baseline(links, cycle_size, baseline),
+        cycle_domination_baseline(links, cycle_size, intersection_tree));
+}
+
+TEST(ConnAugReducers, RecordsDetailedCycleReductionMetrics)
+{
+    const std::vector<std::tuple<int, int, int>> links{{0, 2, 1}, {1, 3, 2}, {0, 3, 3}};
+    const IntersectionTreeIdx<2> intersection_tree;
+    CycleReductionMetrics metrics;
+
+    cycle_domination_baseline<2>(links, 4, intersection_tree, &metrics);
+
+    EXPECT_EQ(metrics.sources, 4);
+    EXPECT_GT(metrics.priority_queue_pops, 0);
+    EXPECT_LE(metrics.priority_queue_pops, metrics.possible_priority_queue_pops);
+    EXPECT_GT(metrics.intersection_index.queries, 0);
+    EXPECT_GT(metrics.intersection_index.candidates_inspected, 0);
+    EXPECT_GT(metrics.maximum_pops_per_link, 0);
+    EXPECT_EQ(
+        metrics.intersection_index.callbacks,
+        metrics.intersection_candidates_enqueued + metrics.intersection_candidates_already_explored +
+            metrics.intersection_candidates_rejected_by_cutoff);
+    EXPECT_EQ(metrics.intersection_candidates_already_explored, 0);
 }

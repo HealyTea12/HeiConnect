@@ -74,3 +74,15 @@ PRIVATE
     benchmark::benchmark
     benchmark::benchmark_main
 )
+
+add_executable(cycle_intersection_index_BM)
+target_sources(cycle_intersection_index_BM
+PRIVATE
+    benchmarks/cycle_intersection_index_BM.cpp
+)
+target_link_libraries(cycle_intersection_index_BM
+PRIVATE
+    heiconnect
+    benchmark::benchmark
+    benchmark::benchmark_main
+)
