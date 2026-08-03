@@ -497,6 +497,10 @@ public:
                     "cycle_intersection_candidates_inspected",
                     std::to_string(cycle_reduction_metrics.intersection_index.candidates_inspected),
                 });
+                m_metrics->push_back({
+                    "cycle_intersection_subtrees_pruned_by_level",
+                    std::to_string(cycle_reduction_metrics.intersection_index.subtrees_pruned_by_level),
+                });
             }
         }
 

@@ -109,15 +109,20 @@ TEST(ConnAugReducers, IntersectionTreeMatchesBaselineCycleReduction)
 
     const BaselineIntersectionIdx<0> baseline;
     const IntersectionTreeIdx<0> intersection_tree;
+    const WeightedIntersectionTreeIdx<0> weighted_intersection_tree;
+    const auto baseline_result = cycle_domination_baseline(links, cycle_size, baseline);
     EXPECT_EQ(
-        cycle_domination_baseline(links, cycle_size, baseline),
+        baseline_result,
         cycle_domination_baseline(links, cycle_size, intersection_tree));
+    EXPECT_EQ(
+        baseline_result,
+        cycle_domination_baseline(links, cycle_size, weighted_intersection_tree));
 }
 
 TEST(ConnAugReducers, RecordsDetailedCycleReductionMetrics)
 {
     const std::vector<std::tuple<int, int, int>> links{{0, 2, 1}, {1, 3, 2}, {0, 3, 3}};
-    const IntersectionTreeIdx<2> intersection_tree;
+    const WeightedIntersectionTreeIdx<2> intersection_tree;
     CycleReductionMetrics metrics;
 
     cycle_domination_baseline<2>(links, 4, intersection_tree, &metrics);
@@ -126,11 +131,14 @@ TEST(ConnAugReducers, RecordsDetailedCycleReductionMetrics)
     EXPECT_GT(metrics.priority_queue_pops, 0);
     EXPECT_LE(metrics.priority_queue_pops, metrics.possible_priority_queue_pops);
     EXPECT_GT(metrics.intersection_index.queries, 0);
-    EXPECT_GT(metrics.intersection_index.candidates_inspected, 0);
+    EXPECT_GT(
+        metrics.intersection_index.candidates_inspected + metrics.intersection_index.subtrees_pruned_by_level,
+        0);
     EXPECT_GT(metrics.maximum_pops_per_link, 0);
     EXPECT_EQ(
         metrics.intersection_index.callbacks,
         metrics.intersection_candidates_enqueued + metrics.intersection_candidates_already_explored +
             metrics.intersection_candidates_rejected_by_cutoff);
     EXPECT_EQ(metrics.intersection_candidates_already_explored, 0);
+    EXPECT_EQ(metrics.intersection_candidates_rejected_by_cutoff, 0);
 }

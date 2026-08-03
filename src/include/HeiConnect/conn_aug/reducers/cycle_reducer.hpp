@@ -86,7 +86,9 @@ auto cycle_domination_baseline(
 
     std::vector<std::vector<LinkID>> incident(n_nodes);
     std::vector<std::tuple<size_t, size_t>> intervals;
+    std::vector<Weight> sorted_weights;
     intervals.reserve(links.size());
+    sorted_weights.reserve(links.size());
 
     for (LinkID id = 0; id < links.size(); ++id)
     {
@@ -94,6 +96,18 @@ auto cycle_domination_baseline(
         incident[static_cast<size_t>(u)].push_back(id);
         incident[static_cast<size_t>(v)].push_back(id);
         intervals.emplace_back(static_cast<size_t>(u), static_cast<size_t>(v));
+        sorted_weights.push_back(weight);
+    }
+    std::sort(sorted_weights.begin(), sorted_weights.end());
+
+    std::vector<IntersectionRecord> intersection_records;
+    intersection_records.reserve(links.size());
+    for (LinkID id = 0; id < links.size(); ++id)
+    {
+        const Weight weight = std::get<2>(links[id]);
+        const size_t level = static_cast<size_t>(
+            std::lower_bound(sorted_weights.begin(), sorted_weights.end(), weight) - sorted_weights.begin());
+        intersection_records.push_back({intervals[id], level});
     }
 
     std::vector<char> removable(links.size(), false);
@@ -102,7 +116,7 @@ auto cycle_domination_baseline(
     std::vector<Weight> vertex_distance(n_nodes);
     std::vector<Weight> value_to_beat(n_nodes);
     std::vector<LinkID> candidate_link(n_nodes);
-    auto intersection_index = intersection_index_type.make(intervals);
+    auto intersection_index = intersection_index_type.make(intersection_records);
     CycleReductionMetrics metrics;
     std::vector<size_t> pops_per_link;
     if constexpr (RecordStatsLevel > 1)
@@ -128,7 +142,7 @@ auto cycle_domination_baseline(
         }
         else
         {
-            intersection_index = intersection_index_type.make(intervals);
+            intersection_index = intersection_index_type.make(intersection_records);
         }
 
         std::fill(explored.begin(), explored.end(), false);
@@ -218,6 +232,9 @@ auto cycle_domination_baseline(
 
             std::vector<LinkID> neighbours;
             std::vector<LinkID> rejected_by_cutoff;
+            const Weight weight_limit = cutoff - current_distance;
+            const size_t exclusive_level = static_cast<size_t>(
+                std::lower_bound(sorted_weights.begin(), sorted_weights.end(), weight_limit) - sorted_weights.begin());
             intersection_index->forEachIntersection(
                 [&](LinkID next, typename BaseIntersectionIdx<RecordStatsLevel>::Interval) {
                     const Weight next_weight = std::get<2>(links[next]);
@@ -246,7 +263,8 @@ auto cycle_domination_baseline(
                         }
                     }
                 },
-                intervals[current]);
+                intervals[current],
+                exclusive_level);
 
             for (LinkID rejected : rejected_by_cutoff)
             {

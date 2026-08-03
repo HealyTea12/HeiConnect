@@ -12,6 +12,7 @@ struct IntersectionIndexMetrics
     size_t callbacks{};
     size_t intervals_popped{};
     size_t candidates_inspected{};
+    size_t subtrees_pruned_by_level{};
 
     void add(const IntersectionIndexMetrics& other)
     {
@@ -19,7 +20,14 @@ struct IntersectionIndexMetrics
         callbacks += other.callbacks;
         intervals_popped += other.intervals_popped;
         candidates_inspected += other.candidates_inspected;
+        subtrees_pruned_by_level += other.subtrees_pruned_by_level;
     }
+};
+
+struct IntersectionRecord
+{
+    std::tuple<size_t, size_t> interval;
+    size_t level;
 };
 
 template<int RecordStatsLevel = 0>
@@ -30,9 +38,13 @@ public:
     using Interval = std::tuple<size_t, size_t>;
     using Index = size_t;
 
-    virtual std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> make(const std::vector<Interval>& intervals) const = 0;
+    virtual std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> make(
+        const std::vector<IntersectionRecord>& records) const = 0;
 
-    virtual void forEachIntersection(std::function<void(Index, Interval)> callback, Interval query) const = 0;
+    virtual void forEachIntersection(
+        std::function<void(Index, Interval)> callback,
+        Interval query,
+        size_t exclusive_level) const = 0;
 
     virtual void popInterval(Interval interval) = 0;
     virtual void popInterval(Index idx) = 0;
@@ -49,25 +61,28 @@ public:
 
     BaselineIntersectionIdx() = default;
 
-    BaselineIntersectionIdx(const std::vector<std::tuple<size_t, size_t>>& intervals)
+    explicit BaselineIntersectionIdx(const std::vector<IntersectionRecord>& records) : m_records(records)
     {
-        m_intervals = std::make_shared<std::vector<std::tuple<size_t, size_t>>>(intervals);
-        m_active.resize(intervals.size(), true);
+        m_active.resize(records.size(), true);
     }
 
-    std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> make(const std::vector<Interval>& intervals) const override
+    std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> make(
+        const std::vector<IntersectionRecord>& records) const override
     {
-        return std::make_unique<BaselineIntersectionIdx<RecordStatsLevel>>(intervals);
+        return std::make_unique<BaselineIntersectionIdx<RecordStatsLevel>>(records);
     }
 
-    void forEachIntersection(std::function<void(Index, Interval)> callback, Interval query) const override
+    void forEachIntersection(
+        std::function<void(Index, Interval)> callback,
+        Interval query,
+        size_t exclusive_level) const override
     {
         if constexpr (RecordStatsLevel > 0)
         {
             m_metrics.queries++;
         }
         auto [q_start, q_end] = query;
-        for (size_t i{0}; i < m_intervals->size(); ++i)
+        for (size_t i{0}; i < m_records.size(); ++i)
         {
             if constexpr (RecordStatsLevel > 1)
             {
@@ -77,7 +92,7 @@ public:
             {
                 continue;
             }
-            const auto& [start, end] = (*m_intervals)[i];
+            const auto& [start, end] = m_records[i].interval;
             // check if they intersect
             auto intersection_size = std::min(q_end, end) - std::max(q_start, start);
             auto query_size = q_end - q_start;
@@ -96,9 +111,9 @@ public:
 
     void popInterval(Interval interval) override
     {
-        for (Index index = 0; index < m_intervals->size(); ++index)
+        for (Index index = 0; index < m_records.size(); ++index)
         {
-            if (m_active[index] && (*m_intervals)[index] == interval)
+            if (m_active[index] && m_records[index].interval == interval)
             {
                 popInterval(index);
                 return;
@@ -128,7 +143,7 @@ public:
     }
 
 private:
-    std::shared_ptr<std::vector<std::tuple<size_t, size_t>>> m_intervals;
+    std::vector<IntersectionRecord> m_records;
     std::vector<char> m_active;
     mutable IntersectionIndexMetrics m_metrics;
 };

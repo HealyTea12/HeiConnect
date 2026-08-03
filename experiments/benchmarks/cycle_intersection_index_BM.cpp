@@ -51,3 +51,11 @@ BENCHMARK_TEMPLATE(BM_CycleReductionFullLinkGraph, IntersectionTreeIdx<0>, false
     ->RangeMultiplier(2)
     ->Range(8, 256)
     ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleReductionFullLinkGraph, WeightedIntersectionTreeIdx<0>, true)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleReductionFullLinkGraph, WeightedIntersectionTreeIdx<0>, false)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
