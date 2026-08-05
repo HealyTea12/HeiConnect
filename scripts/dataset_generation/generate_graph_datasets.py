@@ -3,6 +3,8 @@
 from pathlib import Path
 import subprocess
 
+from tqdm import tqdm
+
 
 CONFIG = {
     "stars": {
@@ -40,26 +42,34 @@ def main():
             f"{executable} does not exist. Build the generate_datasets target first."
         )
 
-    for folder, settings in CONFIG.items():
-        output_dir = datasets_dir / folder
-        for size in sizes_from_ranges(settings["ranges"]):
-            for seed in settings["seeds"]:
-                subprocess.run(
-                    [
-                        executable,
-                        "--type",
-                        "graph",
-                        "--generator",
-                        settings["generator"],
-                        "--nodes",
-                        str(size),
-                        "--seed",
-                        str(seed),
-                        "--output",
-                        output_dir,
-                    ],
-                    check=True,
-                )
+    total = sum(
+        len(sizes_from_ranges(settings["ranges"])) * len(settings["seeds"])
+        for settings in CONFIG.values()
+    )
+
+    with tqdm(total=total, desc="Generating graph datasets", unit="graph") as progress:
+        for folder, settings in CONFIG.items():
+            output_dir = datasets_dir / folder
+            for size in sizes_from_ranges(settings["ranges"]):
+                for seed in settings["seeds"]:
+                    progress.set_postfix(type=folder, nodes=size, seed=seed)
+                    subprocess.run(
+                        [
+                            executable,
+                            "--type",
+                            "graph",
+                            "--generator",
+                            settings["generator"],
+                            "--nodes",
+                            str(size),
+                            "--seed",
+                            str(seed),
+                            "--output",
+                            output_dir,
+                        ],
+                        check=True,
+                    )
+                    progress.update()
 
 
 if __name__ == "__main__":
