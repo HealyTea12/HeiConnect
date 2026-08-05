@@ -226,12 +226,12 @@ public:
 
 private:
     const size_t m_nCycleMinCuts;
-    const std::vector<std::vector<CycleCross<cycle_pos_T, cycle_id_T>>> m_cycleCrosses;
-    const std::vector<std::vector<cycle_pos_T>> m_cyclePositions;
-    const std::vector<size_t> m_cycleSizes;
-    const std::vector<size_t> m_cycleElementOffsets;
+    std::vector<std::vector<CycleCross<cycle_pos_T, cycle_id_T>>> m_cycleCrosses;
+    std::vector<std::vector<cycle_pos_T>> m_cyclePositions;
+    std::vector<size_t> m_cycleSizes;
+    std::vector<size_t> m_cycleElementOffsets;
     const size_t m_cycleElementSpaceSize;
-    const std::vector<SetCost> m_setWeights;
+    std::vector<SetCost> m_setWeights;
 
 public:
     SetCoverCyc(
@@ -243,10 +243,10 @@ public:
         m_nCycleMinCuts(n_cycle_min_cuts),
         m_cycleCrosses(std::move(cycle_crosses)),
         m_cyclePositions(std::move(cycle_positions)),
-        m_cycleSizes(cycle_sizes),
+        m_cycleSizes(std::move(cycle_sizes)),
         m_setWeights(std::move(set_weights)),
-        m_cycleElementOffsets(build_cycle_element_offsets(cycle_sizes)),
-        m_cycleElementSpaceSize(compute_cycle_element_space_size(cycle_sizes))
+        m_cycleElementOffsets(build_cycle_element_offsets(m_cycleSizes)),
+        m_cycleElementSpaceSize(compute_cycle_element_space_size(m_cycleSizes))
     {}
 
     const std::vector<size_t>& get_cycle_sizes() const

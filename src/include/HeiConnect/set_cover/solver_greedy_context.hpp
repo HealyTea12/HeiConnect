@@ -13,8 +13,8 @@ class BasicContext
 
 public:
     explicit BasicContext(const SetCoverType& set_cover) :
-        m_setCover(std::make_shared<const SetCoverType>(set_cover)),
-        m_coveredCount(m_setCover->get_num_elements(), 0)
+        m_setCover(&set_cover),
+        m_coveredCount(set_cover.get_num_elements(), 0)
     {}
 
     void add_set(size_t set_index)
@@ -71,7 +71,7 @@ public:
     }
 
 private:
-    std::shared_ptr<const SetCoverType> m_setCover;
+    const SetCoverType* m_setCover;
     std::vector<CoverCount> m_coveredCount;
 };
 
@@ -85,8 +85,8 @@ class BitPackedContext
 
 public:
     explicit BitPackedContext(const SetCoverType& set_cover) :
-        m_setCover(std::make_shared<const SetCoverType>(set_cover)),
-        m_coverageMask(m_setCover->get_n_cols(), 0)
+        m_setCover(&set_cover),
+        m_coverageMask(set_cover.get_n_cols(), 0)
     {}
 
     void add_set(typename SetCoverType::SetID set_index)
@@ -167,7 +167,7 @@ public:
     }
 
 private:
-    std::shared_ptr<const SetCoverType> m_setCover;
+    const SetCoverType* m_setCover;
     std::vector<ull> m_coverageMask;
 };
 
@@ -181,7 +181,7 @@ public:
         SecondContext context2) :
         m_context1(std::move(context1)),
         m_context2(std::move(context2)),
-        m_setCover(std::make_shared<const SetCoverDouble<SetCoverType1, SetCoverType2>>(set_cover))
+        m_firstElements(set_cover.first().get_num_elements())
     {}
 
     void add_set(size_t set_index)
@@ -215,14 +215,13 @@ public:
     // this might be incorrect
     bool is_element_covered(size_t element_index) const
     {
-        size_t firstElements = m_setCover->first().get_num_elements();
-        if (element_index < firstElements)
+        if (element_index < m_firstElements)
         {
             return m_context1.is_element_covered(element_index);
         }
         else
         {
-            return m_context2.is_element_covered(element_index - firstElements);
+            return m_context2.is_element_covered(element_index - m_firstElements);
         }
     }
 
@@ -235,7 +234,7 @@ public:
 private:
     FirstContext m_context1;
     SecondContext m_context2;
-    std::shared_ptr<const SetCoverDouble<SetCoverType1, SetCoverType2>> m_setCover;
+    size_t m_firstElements;
 };
 
 // specialization for set cover cyc
@@ -251,7 +250,7 @@ class CycContext
     };
 
 public:
-    CycContext(const SetCoverCyc<link_node_T, link_edge_T, link_weight_T>& sc) : m_setCover(std::make_shared<const SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>(sc))
+    CycContext(const SetCoverCyc<link_node_T, link_edge_T, link_weight_T>& sc) : m_setCover(&sc)
     {
         const auto& cycleSizes = m_setCover->get_cycle_sizes();
         m_arcEquivClasses = std::vector<std::vector<ArcEquivClass>>(cycleSizes.size());
@@ -263,6 +262,7 @@ public:
         const size_t max_cycle_size =
             cycleSizes.empty() ? 0 : *std::max_element(cycleSizes.begin(), cycleSizes.end());
         m_classIntersects = std::vector<size_t>(max_cycle_size, 0);
+        m_touchedClasses.reserve(max_cycle_size);
     }
 
     size_t cover_count(size_t set_index) const
@@ -273,28 +273,35 @@ public:
         {
             auto [cycle, a, b] = cc;
             const std::vector<ArcEquivClass>& arcs = m_arcEquivClasses[cycle];
-            m_classIntersects.assign(m_classSizes[cycle].size(), 0);
-            for (size_t arc_i{0}; arc_i < arcs.size(); arc_i++)
+            for (const CycPos cls : m_touchedClasses)
             {
-                auto [cls, start, end] = arcs[arc_i];
+                m_classIntersects[cls] = 0;
+            }
+            m_touchedClasses.clear();
+
+            auto arc = std::lower_bound(
+                arcs.begin(),
+                arcs.end(),
+                static_cast<CycPos>(a),
+                [](const ArcEquivClass& candidate, CycPos position) { return candidate.end <= position; });
+            for (; arc != arcs.end() && arc->start < static_cast<CycPos>(b); ++arc)
+            {
+                auto [cls, start, end] = *arc;
                 auto intersect_start = std::max(start, static_cast<CycPos>(a));
                 auto intersect_end = std::min(end, static_cast<CycPos>(b));
-                if constexpr (std::signed_integral<CycPos>)
+                if (intersect_start < intersect_end)
                 {
-                    m_classIntersects[cls] += std::max(CycPos{0}, intersect_end - intersect_start);
-                }
-                else
-                {
-                    if (intersect_start < intersect_end)
+                    if (m_classIntersects[cls] == 0)
                     {
-                        m_classIntersects[cls] += intersect_end - intersect_start;
+                        m_touchedClasses.push_back(cls);
                     }
+                    m_classIntersects[cls] += intersect_end - intersect_start;
                 }
             }
 
-            for (size_t i{0}; i < m_classSizes[cycle].size(); i++)
+            for (const CycPos cls : m_touchedClasses)
             {
-                covered += m_classIntersects[i] * (m_classSizes[cycle][i] - m_classIntersects[i]);
+                covered += m_classIntersects[cls] * (m_classSizes[cycle][cls] - m_classIntersects[cls]);
             }
         }
 
@@ -454,10 +461,11 @@ private:
     }
 
 private:
-    std::shared_ptr<const SetCoverCyc<link_node_T, link_edge_T, link_weight_T>> m_setCover;
+    const SetCoverCyc<link_node_T, link_edge_T, link_weight_T>* m_setCover;
 
     // this vector is used to store intersections during cover count cacluatlions to avoid multiple allocs
     mutable std::vector<size_t> m_classIntersects;
+    mutable std::vector<CycPos> m_touchedClasses;
     std::vector<std::vector<ArcEquivClass>> m_arcEquivClasses;
     std::vector<std::vector<CycPos>> m_classSizes;
     size_t m_totalCoveredElements = 0;

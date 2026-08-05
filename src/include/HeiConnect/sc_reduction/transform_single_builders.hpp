@@ -477,18 +477,19 @@ construct_set_cover_cyc_pseudo_ancestry_vec(
     }
 
     auto sc_pseudo = SetCoverPseudo<link_node_T, link_edge_T>{
-        partition_matrix,
+        std::move(partition_matrix),
         cactus_min_cuts.get_n_min_cuts(),
         static_cast<ull>(link_vertices.size()),
         std::move(pseudo_links)};
+    std::vector<link_weight_T> cycle_set_weights = link_weights;
     auto sc_cyc = SetCoverCyc<link_node_T, link_edge_T, link_weight_T>{
         n_cycle_min_cuts,
         // cycle_coverages,
-        cycle_crosses,
-        cycle_positions,
-        cycle_sizes,
-        link_weights};
+        std::move(cycle_crosses),
+        std::move(cycle_positions),
+        std::move(cycle_sizes),
+        std::move(cycle_set_weights)};
     return SetCoverDouble<
         SetCoverPseudo<link_node_T, link_edge_T>,
-        SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>{sc_pseudo, sc_cyc};
+        SetCoverCyc<link_node_T, link_edge_T, link_weight_T>>{std::move(sc_pseudo), std::move(sc_cyc)};
 }

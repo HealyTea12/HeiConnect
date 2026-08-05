@@ -131,10 +131,10 @@ public:
 
     static constexpr size_t WORD_BITS = 8 * sizeof(Word);
     SetCoverPseudo(
-        const std::vector<Word> partiton_matrix,
+        std::vector<Word> partiton_matrix,
         ull n_min_cuts,
         ull n_vertices,
-        const std::vector<Link> links) :
+        std::vector<Link> links) :
         m_partitionMatrix(std::move(partiton_matrix)),
         m_nMinCuts(n_min_cuts),
         m_nVertices(n_vertices),
@@ -233,11 +233,11 @@ public:
     }
 
 private:
-    const std::vector<Word> m_partitionMatrix;
+    std::vector<Word> m_partitionMatrix;
     const ull m_nMinCuts;
     const size_t m_nCols;
     const size_t m_nVertices;
-    const std::vector<Link> m_links;
+    std::vector<Link> m_links;
 };
 
 static_assert(ForEachElementCon<SetCoverPseudo<uint64_t, uint64_t>>);

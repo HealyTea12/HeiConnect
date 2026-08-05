@@ -48,13 +48,16 @@ public:
         requires GreedyContextCon<GreedyContext, SetCoverT>
     void solve(const SetCoverT& set_cover, GreedyContext& context)
     {
-        std::priority_queue<std::pair<double, size_t>> pq;
+        using QueueEntry = std::pair<double, size_t>;
+        std::vector<QueueEntry> initial_queue;
+        initial_queue.reserve(set_cover.get_num_sets());
         for (size_t s{0}; s < set_cover.get_num_sets(); s++)
         {
             size_t covered = context.cover_count(s);
             const double cost_benefit_ratio = static_cast<double>(covered) / set_cover.get_set_cost(s);
-            pq.push({cost_benefit_ratio, s});
+            initial_queue.emplace_back(cost_benefit_ratio, s);
         }
+        std::priority_queue<QueueEntry> pq{std::less<QueueEntry>{}, std::move(initial_queue)};
 
         while (context.get_total_covered_elements() < set_cover.get_num_elements() &&
                context.get_solution_size() != set_cover.get_num_sets())
