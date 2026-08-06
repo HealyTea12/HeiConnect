@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "tqdm",
+# ]
+# ///
 
 import argparse
 import os
@@ -11,28 +17,11 @@ import sys
 import tempfile
 import tomllib
 
+from tqdm import tqdm
+
 
 VALID_NAME = re.compile(r"[A-Za-z0-9_.-]+")
 VALID_DISTRIBUTIONS = {"constant", "float_uniform", "integer_uniform"}
-
-
-class Progress:
-    def __init__(self, total):
-        self.current = 0
-        self.total = total
-        self.show("Starting")
-
-    def show(self, message):
-        percentage = 100 * self.current / self.total
-        print(
-            f"Progress: {self.current}/{self.total} "
-            f"({percentage:5.1f}%) {message}",
-            flush=True,
-        )
-
-    def update(self, message):
-        self.current += 1
-        self.show(message)
 
 
 def positive_integer(value):
@@ -386,7 +375,7 @@ def main():
     succeeded = 0
     failed = 0
     skipped = 0
-    progress = Progress(total_runs)
+    progress = tqdm(total=total_runs, desc="Running experiments", unit="run")
     for graph_file, metis_file in instances:
         relative_path = graph_file.relative_to(input_dir).with_suffix("")
         for link_name, link_configuration in link_configurations.items():
@@ -405,9 +394,10 @@ def main():
                         f"Skipping completed {relative_path}"
                     )
                     skipped += 1
-                    progress.update(
+                    progress.set_postfix_str(
                         f"skipped {configuration_name}/{link_name}/{relative_path}"
                     )
+                    progress.update()
                 else:
                     pending.append(
                         (configuration_name, configuration, instance_output)
@@ -434,9 +424,10 @@ def main():
                     )
                     failed += len(pending)
                     for configuration_name, _, _ in pending:
-                        progress.update(
+                        progress.set_postfix_str(
                             f"failed {configuration_name}/{link_name}/{relative_path}"
                         )
+                        progress.update()
                     continue
 
                 for configuration_name, configuration, instance_output in pending:
@@ -459,10 +450,12 @@ def main():
                     else:
                         failed += 1
                         status = "failed"
-                    progress.update(
+                    progress.set_postfix_str(
                         f"{status} {configuration_name}/{link_name}/{relative_path}"
                     )
+                    progress.update()
 
+    progress.close()
     print(f"Completed: {succeeded}")
     print(f"Skipped: {skipped}")
     print(f"Failed: {failed}")
