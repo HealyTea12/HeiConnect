@@ -39,6 +39,9 @@ private:
     template<typename SetCoverType>
     static void write_set_cover_minizinc(const SetCoverType& set_cover, std::ostream& out)
     {
+        using SetCost = std::remove_cvref_t<decltype(set_cover.get_set_cost(typename SetCoverType::SetID{}))>;
+        constexpr bool has_float_costs = std::floating_point<SetCost>;
+
         /*
         num_sets =  10;
         num_elements = 8;
@@ -57,22 +60,46 @@ private:
           {1,6,7}
         ];
         */
-        out << "num_sets = " << set_cover.get_num_sets() << ";\n";
-        out << "num_elements = " << set_cover.get_num_elements() << ";\n";
-        out << "costs = [";
+        out << "int: num_sets = " << set_cover.get_num_sets() << ";\n";
+        out << "int: num_elements = " << set_cover.get_num_elements() << ";\n\n";
+        out << "array[1..num_sets] of " << (has_float_costs ? "float" : "int") << ": costs = [";
         for (size_t set_index{}; set_index < set_cover.get_num_sets(); set_index++)
         {
-            out << set_cover.get_set_cost(set_index) << ", ";
+            if (set_index > 0)
+                out << ", ";
+            out << set_cover.get_set_cost(set_index);
         }
-        out << "];\n";
+        out << "];\n\n";
         // Print out the sets
-        out << "sets = [\n";
+        out << "array[1..num_sets] of set of 1..num_elements: sets = [\n";
         for (size_t set_index{}; set_index < set_cover.get_num_sets(); set_index++)
         {
+            if (set_index > 0)
+                out << ",\n";
             out << "  {";
-            set_cover.forEachElement(set_index, [&out](auto element) { out << element + 1 << ", "; });
-            out << "},\n";
+            bool first_element = true;
+            set_cover.forEachElement(set_index, [&out, &first_element](auto element) {
+                if (!first_element)
+                    out << ", ";
+                out << element + 1;
+                first_element = false;
+            });
+            out << "}";
         }
+        out << "\n];\n\n";
+        out << "array[1..num_sets] of var 0..1: x;\n\n";
+        out << "var " << (has_float_costs ? "float" : "int")
+            << ": z = sum(i in 1..num_sets) (x[i] * costs[i]);\n\n";
+        out << "solve minimize z;\n\n";
+        out << "constraint\n";
+        out << "  forall(j in 1..num_elements) (\n";
+        out << "    sum(i in 1..num_sets) (x[i] * bool2int(j in sets[i])) >= 1\n";
+        out << "  );\n\n";
+        out << "output\n";
+        out << "[\n";
+        out << "  \"cost: \" ++ show(z) ++ \"\\n\" ++\n";
+        out << "  \"x: \" ++ show(x) ++ \"\\n\" ++\n";
+        out << "  \"sets: \" ++ show(sets) ++ \"\\n\"\n";
         out << "];\n";
     }
 

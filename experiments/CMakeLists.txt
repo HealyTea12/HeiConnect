@@ -13,6 +13,15 @@ PRIVATE
     heiconnect
     Boost::program_options
 )
+
+add_executable(reduce_instance reduce_instance.cpp)
+target_link_libraries(
+    reduce_instance
+PRIVATE
+    heiconnect
+    Boost::program_options
+)
+
 add_executable(experiments)
 target_sources(experiments
 PRIVATE
