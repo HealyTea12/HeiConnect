@@ -16,6 +16,7 @@ namespace po = boost::program_options;
 enum class ProblemType
 {
     SET_COVER,
+    HITTING_SET,
     MINIZINC,
     ILP,
 };
@@ -24,11 +25,13 @@ ProblemType parse_type(const std::string& type)
 {
     if (type == "set-cover")
         return ProblemType::SET_COVER;
+    if (type == "hitting-set")
+        return ProblemType::HITTING_SET;
     if (type == "minizinc")
         return ProblemType::MINIZINC;
     if (type == "ilp")
         return ProblemType::ILP;
-    throw std::invalid_argument("type must be 'set-cover', 'minizinc', or 'ilp'");
+    throw std::invalid_argument("type must be 'set-cover', 'hitting-set', 'minizinc', or 'ilp'");
 }
 
 void validate_input_file(const std::filesystem::path& path, const std::string& extension)
@@ -49,7 +52,9 @@ int main(int argc, char** argv)
             ("graph", po::value<std::string>()->required(), "input graph in GraphML .xml format")
             ("links", po::value<std::string>()->required(), "input candidate links in .links format")
             ("output,o", po::value<std::string>()->required(), "output file path")
-            ("type,t", po::value<std::string>()->required(), "target problem: set-cover, minizinc, or ilp");
+            ("type,t",
+             po::value<std::string>()->required(),
+             "target problem: set-cover, hitting-set, minizinc, or ilp");
 
         po::variables_map values;
         po::store(po::parse_command_line(argc, argv, options), values);
@@ -100,9 +105,11 @@ int main(int argc, char** argv)
             if (!output)
                 throw std::runtime_error("could not open output file: " + output_file.string());
 
-            const auto format = type == ProblemType::SET_COVER
-                ? SetCoverWriter::Format::DEFAULT
-                : SetCoverWriter::Format::MINIZINC;
+            auto format = SetCoverWriter::Format::MINIZINC;
+            if (type == ProblemType::SET_COVER)
+                format = SetCoverWriter::Format::DEFAULT;
+            else if (type == ProblemType::HITTING_SET)
+                format = SetCoverWriter::Format::HITTING_SET_PACE_CHALLENGE;
             SetCoverWriter::write(set_cover, output, format);
         }
         return 0;
