@@ -73,6 +73,7 @@ private:
             set_cover.forEachElement(set_index, [&out](auto element) { out << element + 1 << ", "; });
             out << "},\n";
         }
+        out << "];\n";
     }
 
     template<typename SetCoverType>
