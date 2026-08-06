@@ -20,6 +20,13 @@ struct ConnAugWeightedLink
 };
 using ConnAugLinkRemap = std::map<ConnAugLink, ConnAugWeightedLink>;
 
+enum class IntersectionIndexType
+{
+    BASELINE,
+    INTERSECTION_TREE,
+    WEIGHTED_INTERSECTION_TREE,
+};
+
 struct ConnectivityAugmentationReductionConfig
 {
     bool run_shortest_path_reduction{true};
@@ -28,6 +35,7 @@ struct ConnectivityAugmentationReductionConfig
     bool run_cycle_reduction{true};
     size_t max_rounds{0};
     bool compute_shortest_paths{true};
+    IntersectionIndexType intersection_index{IntersectionIndexType::BASELINE};
 };
 
 

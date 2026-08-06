@@ -932,6 +932,30 @@ namespace
         return std::stoull(it->second);
     }
 
+    IntersectionIndexType
+    parse_intersection_index_param(const ParamMap& params, IntersectionIndexType default_value)
+    {
+        const auto it = params.find("intersection_index");
+        if (it == params.end())
+        {
+            return default_value;
+        }
+        if (it->second == "baseline")
+        {
+            return IntersectionIndexType::BASELINE;
+        }
+        if (it->second == "intersection_tree")
+        {
+            return IntersectionIndexType::INTERSECTION_TREE;
+        }
+        if (it->second == "weighted_intersection_tree")
+        {
+            return IntersectionIndexType::WEIGHTED_INTERSECTION_TREE;
+        }
+        throw std::invalid_argument(
+            "Parameter 'intersection_index' must be baseline, intersection_tree, or weighted_intersection_tree");
+    }
+
     SetCoverGreedyCSRConfig parse_set_cover_greedy_csr_config(
         const ParamMap& params,
         SetCoverGreedyCSRConfig config = SetCoverGreedyCSRConfig{})
@@ -949,6 +973,8 @@ namespace
         config.reduction_config.max_rounds = parse_size_param(params, "max_rounds", config.reduction_config.max_rounds);
         config.reduction_config.compute_shortest_paths =
             parse_bool_param(params, "compute_shortest_paths", config.reduction_config.compute_shortest_paths);
+        config.reduction_config.intersection_index =
+            parse_intersection_index_param(params, config.reduction_config.intersection_index);
         config.run_local_search = parse_bool_param(params, "local_search", config.run_local_search);
         config.run_local_search = !parse_bool_param(params, "skip_local_search", !config.run_local_search);
         config.local_search_time_seconds =

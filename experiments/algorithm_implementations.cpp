@@ -354,8 +354,9 @@ void SetCoverILPRunner::run(const std::filesystem::path& graph_file)
 
     auto build_stage = ConstructSetCoverStage{};
     auto build_context_stage = make_bound_context_stage<SetCover<>, BasicContext<SetCover<>>>();
+    BuildSetCoverILPStage build_ilp_stage{};
     SetCoverSolverILP<1> solver{};
-    auto pipeline = Pipeline{build_stage, build_context_stage, solver};
+    auto pipeline = Pipeline{build_stage, build_context_stage, build_ilp_stage, solver};
 
     auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
 }
@@ -388,9 +389,9 @@ void SetCoverPseudoILPRunner::run(const std::filesystem::path& graph_file)
         return std::make_shared<const SetCoverType>(std::move(constructed_set_cover));
     };
     auto build_context_stage = make_bound_context_stage<SetCoverType, BasicContext<SetCoverType>>();
+    BuildSetCoverILPStage build_ilp_stage{};
     SetCoverSolverILP solver{};
-    auto solve_stage = make_solver_stage(solver);
-    auto pipeline = Pipeline{build_stage, build_context_stage, solve_stage};
+    auto pipeline = Pipeline{build_stage, build_context_stage, build_ilp_stage, solver};
 
     auto pipeline_result = pipeline.run(std::move(graph), std::move(link_graph));
     this->pipeline_metrics = std::move(pipeline_result.second);
@@ -403,9 +404,9 @@ void SetCoverPseudoILPRunner::run(const std::filesystem::path& graph_file)
     result.solution_cost_trimmed = result.solution_cost;
     result.solution_size_trimmed = result.solution_size;
     result.time_reduction = this->pipeline_metrics.stages[0].duration_seconds;
-    result.time_solving = this->pipeline_metrics.stages[2].duration_seconds;
+    result.time_solving = this->pipeline_metrics.stages[3].duration_seconds;
     result.time_total = result.time_reduction.value_or(0.0) + this->pipeline_metrics.stages[1].duration_seconds +
-        result.time_solving.value_or(0.0);
+        this->pipeline_metrics.stages[2].duration_seconds + result.time_solving.value_or(0.0);
 }
 
 // ==================== Oracle Greedy Single Threaded PQ ====================

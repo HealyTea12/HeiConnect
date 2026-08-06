@@ -12,6 +12,7 @@
 #include "HeiConnect/conn_aug/reducers/cycle_reducer.hpp"
 #include "HeiConnect/data_structures/distance_oracle.hpp"
 #include "HeiConnect/data_structures/immutable_graph.hpp"
+#include "HeiConnect/data_structures/intersection_index/intersection_tree.hpp"
 #include "HeiConnect/pipeline/common.hpp"
 #include "HeiConnect/tools/timer.hpp"
 
@@ -66,7 +67,20 @@ public:
     FullReducer() = default;
 
     explicit FullReducer(ConnectivityAugmentationReductionConfig config) : m_config(config)
-    {}
+    {
+        switch (m_config.intersection_index)
+        {
+            case IntersectionIndexType::BASELINE:
+                m_intersection_index = std::make_shared<BaselineIntersectionIdx<RecordStatsLevel>>();
+                break;
+            case IntersectionIndexType::INTERSECTION_TREE:
+                m_intersection_index = std::make_shared<IntersectionTreeIdx<RecordStatsLevel>>();
+                break;
+            case IntersectionIndexType::WEIGHTED_INTERSECTION_TREE:
+                m_intersection_index = std::make_shared<WeightedIntersectionTreeIdx<RecordStatsLevel>>();
+                break;
+        }
+    }
 
     FullReducer(bool project_in, bool project_out)
         : m_config{true, project_in, project_out, true, 0}
