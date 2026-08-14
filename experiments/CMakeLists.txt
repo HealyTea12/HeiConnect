@@ -29,6 +29,7 @@ PRIVATE
     algorithm_registry.cpp
     algos/sccsr.cpp
     algos/gwc.cpp
+    algos/eilp.cpp
 )
 target_include_directories(experiments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(experiments
