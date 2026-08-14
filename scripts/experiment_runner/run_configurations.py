@@ -7,6 +7,7 @@
 # ///
 
 import argparse
+from collections import defaultdict
 import os
 from pathlib import Path
 import re
@@ -43,6 +44,19 @@ def parse_arguments():
         "--no-repeat",
         action="store_true",
         help="skip runs that already have a non-empty named result file",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("exhaustive", "adaptive"),
+        default="exhaustive",
+        help="run every instance or discover each algorithm's solvability frontier",
+    )
+    parser.add_argument(
+        "--adaptive-probes",
+        type=int,
+        default=8,
+        metavar="COUNT",
+        help="number of widely spaced size levels to consider in adaptive mode",
     )
     return parser.parse_args()
 
@@ -159,8 +173,65 @@ def find_instances(input_dir, dataset_selection):
             skipped += 1
             continue
 
-        instances.append((graph_file, metis_file))
+        instances.append((graph_file, metis_file, dataset_name, node_count))
     return instances, skipped
+
+
+def evenly_spaced_indices(size_levels, count):
+    if count == 1:
+        return [0]
+    if len(size_levels) <= count:
+        return list(range(len(size_levels)))
+
+    smallest = size_levels[0]
+    size_range = size_levels[-1] - smallest
+    targets = [smallest + index * size_range / (count - 1) for index in range(count)]
+    return sorted(
+        {
+            min(
+                range(len(size_levels)),
+                key=lambda index: abs(size_levels[index] - target),
+            )
+            for target in targets
+        }
+    )
+
+
+def group_instances_by_dataset_and_size(instances):
+    grouped = defaultdict(lambda: defaultdict(list))
+    for graph_file, metis_file, dataset_name, node_count in instances:
+        grouped[dataset_name][node_count].append((graph_file, metis_file))
+    return grouped
+
+
+def run_adaptive_series(size_levels, probe_count, run_level):
+    outcomes = {}
+    consecutive_timeout_levels = 0
+
+    for index in evenly_spaced_indices(size_levels, probe_count):
+        outcome = run_level(size_levels[index])
+        outcomes[index] = outcome
+        if outcome == "timeout":
+            consecutive_timeout_levels += 1
+            if consecutive_timeout_levels == 3:
+                break
+        else:
+            consecutive_timeout_levels = 0
+
+    solved_indices = [index for index, outcome in outcomes.items() if outcome == "solved"]
+    last_solved = max(solved_indices, default=-1)
+    timeout_indices = [
+        index
+        for index, outcome in outcomes.items()
+        if index > last_solved and outcome == "timeout"
+    ]
+    boundary = min(timeout_indices, default=max(outcomes))
+
+    for index in range(boundary + 1):
+        if index not in outcomes:
+            outcomes[index] = run_level(size_levels[index])
+
+    return {size_levels[index]: outcome for index, outcome in outcomes.items()}
 
 
 def serialize_parameter(value):
@@ -309,22 +380,23 @@ def run_experiment(
             f"{configuration['timeout']}s: {graph_file}",
             file=sys.stderr,
         )
-        return False
+        return "timeout"
 
     result_size = result_file.stat().st_size if result_file.exists() else 0
     if return_code == 0 and result_size > previous_size:
-        return True
+        return "completed"
 
     reason = f"exit code {return_code}" if return_code else "no result was written"
     print(
         f"[{configuration_name}] Failed ({reason}): {graph_file}",
         file=sys.stderr,
     )
-    return False
+    return "failed"
 
 
 def main():
     arguments = parse_arguments()
+    positive_integer(arguments.adaptive_probes)
     input_dir = arguments.input_dir.resolve()
     output_dir = arguments.output_dir.resolve()
     project_dir = Path(__file__).resolve().parents[2]
@@ -372,16 +444,23 @@ def main():
             dataset_selection,
         )
 
-    succeeded = 0
+    completed = 0
     failed = 0
+    timed_out = 0
     skipped = 0
+    processed = 0
     progress = tqdm(total=total_runs, desc="Running experiments", unit="run")
-    for graph_file, metis_file in instances:
+    adaptive_reports = defaultdict(list)
+
+    def run_graph(graph_file, metis_file, selected_configurations):
+        nonlocal completed, failed, timed_out, skipped, processed
         relative_path = graph_file.relative_to(input_dir).with_suffix("")
+        outcomes = {name: [] for name in selected_configurations}
         for link_name, link_configuration in link_configurations.items():
             result_file_name = f"res-{link_name}.txt"
             pending = []
-            for configuration_name, configuration in configurations.items():
+            for configuration_name in selected_configurations:
+                configuration = configurations[configuration_name]
                 instance_output = output_dir / configuration_name / relative_path
                 result_file = instance_output / result_file_name
                 if (
@@ -394,6 +473,8 @@ def main():
                         f"Skipping completed {relative_path}"
                     )
                     skipped += 1
+                    processed += 1
+                    outcomes[configuration_name].append("completed")
                     progress.set_postfix_str(
                         f"skipped {configuration_name}/{link_name}/{relative_path}"
                     )
@@ -423,7 +504,9 @@ def main():
                         file=sys.stderr,
                     )
                     failed += len(pending)
+                    processed += len(pending)
                     for configuration_name, _, _ in pending:
+                        outcomes[configuration_name].append("failed")
                         progress.set_postfix_str(
                             f"failed {configuration_name}/{link_name}/{relative_path}"
                         )
@@ -436,7 +519,7 @@ def main():
                         f"[{configuration_name}/{link_name}] "
                         f"Running {relative_path}"
                     )
-                    if run_experiment(
+                    outcome = run_experiment(
                         experiments_executable,
                         configuration_name,
                         configuration,
@@ -444,9 +527,15 @@ def main():
                         links_file,
                         instance_output,
                         result_file_name,
-                    ):
-                        succeeded += 1
+                    )
+                    outcomes[configuration_name].append(outcome)
+                    processed += 1
+                    if outcome == "completed":
+                        completed += 1
                         status = "completed"
+                    elif outcome == "timeout":
+                        timed_out += 1
+                        status = "timed out"
                     else:
                         failed += 1
                         status = "failed"
@@ -454,12 +543,67 @@ def main():
                         f"{status} {configuration_name}/{link_name}/{relative_path}"
                     )
                     progress.update()
+        return outcomes
 
+    if arguments.mode == "exhaustive":
+        for graph_file, metis_file, _, _ in instances:
+            run_graph(graph_file, metis_file, configurations)
+    else:
+        grouped_instances = group_instances_by_dataset_and_size(instances)
+        for dataset_name, instances_by_size in sorted(grouped_instances.items()):
+            size_levels = sorted(instances_by_size)
+            for configuration_name in configurations:
+                print(f"[{configuration_name}] Discovering frontier for {dataset_name}")
+
+                def run_level(node_count):
+                    level_outcomes = []
+                    print(
+                        f"[{configuration_name}] Testing {dataset_name} "
+                        f"at {node_count} nodes"
+                    )
+                    for graph_file, metis_file in instances_by_size[node_count]:
+                        outcomes = run_graph(
+                            graph_file, metis_file, [configuration_name]
+                        )
+                        level_outcomes.extend(outcomes[configuration_name])
+                    if level_outcomes and all(
+                        outcome == "timeout" for outcome in level_outcomes
+                    ):
+                        return "timeout"
+                    if "completed" in level_outcomes:
+                        return "solved"
+                    return "failed"
+
+                outcomes = run_adaptive_series(
+                    size_levels, arguments.adaptive_probes, run_level
+                )
+                tested_sizes = ", ".join(
+                    f"{size}={outcome}" for size, outcome in sorted(outcomes.items())
+                )
+                print(f"[{configuration_name}/{dataset_name}] {tested_sizes}")
+                adaptive_reports[configuration_name].append(
+                    f"dataset={dataset_name}"
+                )
+                for size in size_levels:
+                    outcome = outcomes.get(size, "censored")
+                    adaptive_reports[configuration_name].append(
+                        f"size={size} status={outcome}"
+                    )
+
+        for configuration_name, report in adaptive_reports.items():
+            report_path = output_dir / configuration_name / "adaptive-frontier.txt"
+            report_path.write_text("\n".join(report) + "\n")
+
+    censored = total_runs - processed
+    if censored:
+        progress.update(censored)
     progress.close()
-    print(f"Completed: {succeeded}")
+    print(f"Completed: {completed}")
     print(f"Skipped: {skipped}")
+    print(f"Timed out: {timed_out}")
     print(f"Failed: {failed}")
-    return 1 if failed else 0
+    print(f"Censored: {censored}")
+    return 1 if failed or (arguments.mode == "exhaustive" and timed_out) else 0
 
 
 if __name__ == "__main__":
