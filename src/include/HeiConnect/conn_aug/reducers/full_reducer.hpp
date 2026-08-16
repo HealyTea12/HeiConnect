@@ -83,8 +83,10 @@ public:
     }
 
     FullReducer(bool project_in, bool project_out)
-        : m_config{true, project_in, project_out, true, 0}
-    {}
+    {
+        m_config.run_project_in = project_in;
+        m_config.run_project_out = project_out;
+    }
 
     void setIntersectionIndex(std::shared_ptr<const BaseIntersectionIdx<RecordStatsLevel>> intersection_index)
     {
@@ -122,26 +124,6 @@ public:
         auto distance_func = [&](NodeID u, NodeID v) {
             return distance_oracle.get_distance(u, v);
         };
-
-        size_t num_removed_by_shortest_path = 0;
-        auto shortest_path_stats_start = Clock::now();
-        if constexpr (RecordStatsLevel > 0)
-        {
-            if (m_config.run_shortest_path_reduction)
-            {
-                std::vector<bool> removable_after_shortest_path = std::vector<bool>(link_graph.num_edges(), false);
-                mark_removable_links(link_graph, distance_func, removable_after_shortest_path);
-                num_removed_by_shortest_path =
-                    std::count(removable_after_shortest_path.begin(), removable_after_shortest_path.end(), true);
-            }
-        }
-        auto shortest_path_stats_end = Clock::now();
-        auto shortest_path_reduction_start = Clock::now();
-        if (m_config.run_shortest_path_reduction)
-        {
-            mark_removable_links(link_graph, distance_func, removable);
-        }
-        auto shortest_path_reduction_end = Clock::now();
 
         auto block_tree_start = Clock::now();
         auto [block_tree, cycle_ids] = graph.cactus_generate_block_tree(0);
@@ -211,7 +193,7 @@ public:
             }
             else
             {
-                num_removed_by_project_in = num_removed_by_shortest_path;
+                num_removed_by_project_in = 0;
             }
         }
         auto project_in_stats_end = Clock::now();
@@ -342,10 +324,9 @@ public:
             m_metrics = StageMetrics{
                 {"num_removed_links", std::to_string(num_removed_after_cycle_reduction)},
                 {"shortest_paths_computed", m_config.compute_shortest_paths ? "true" : "false"},
-                {"num_removed_by_shortest_path", std::to_string(num_removed_by_shortest_path)},
                 {
                     "num_removed_by_project_in",
-                    std::to_string(num_removed_by_project_in - num_removed_by_shortest_path),
+                    std::to_string(num_removed_by_project_in),
                 },
                 {"num_removed_by_project_out", std::to_string(num_removed_by_project_out - num_removed_by_project_in)},
                 {
@@ -357,20 +338,6 @@ public:
                     HeiConnect::tools::format_duration(
                         distance_oracle_start,
                         distance_oracle_end,
-                        HeiConnect::tools::TimeUnit::Seconds),
-                },
-                {
-                    "shortest_path_stats_time",
-                    HeiConnect::tools::format_duration(
-                        shortest_path_stats_start,
-                        shortest_path_stats_end,
-                        HeiConnect::tools::TimeUnit::Seconds),
-                },
-                {
-                    "shortest_path_reduction_time",
-                    HeiConnect::tools::format_duration(
-                        shortest_path_reduction_start,
-                        shortest_path_reduction_end,
                         HeiConnect::tools::TimeUnit::Seconds),
                 },
                 {

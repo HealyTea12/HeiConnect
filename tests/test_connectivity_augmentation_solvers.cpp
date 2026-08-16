@@ -1,5 +1,6 @@
 #include <cmath>
 #include <concepts>
+#include <filesystem>
 #include <memory>
 #include <unordered_set>
 
@@ -11,10 +12,12 @@
 #undef DEBUG
 
 #include "HeiConnect/data_structures/graph_utils.hpp"
+#include "HeiConnect/conn_aug/reducers/full_single_dom_reducer.hpp"
 #include "HeiConnect/sc_reduction/transform_single_builders.hpp"
 #include "HeiConnect/set_cover/solver_greedy.hpp"
 #include "HeiConnect/set_cover/solver_greedy_cheapest.hpp"
 #include "HeiConnect/set_cover/solver_ilp.hpp"
+#include "HeiConnect/set_cover/solver_lazy_block_tree_ilp.hpp"
 
 namespace
 {
@@ -96,6 +99,46 @@ namespace
         ASSERT_FALSE(solution.empty());
         EXPECT_GT(viecut_min_cut(graph, link_graph, solution), viecut_min_cut(graph, link_graph));
     }
+
+    void expect_reconstructed_reduced_solution_increases_connectivity(
+        const std::filesystem::path& graph_file,
+        const std::filesystem::path& link_file,
+        ConnectivityAugmentationReductionConfig config = {})
+    {
+        const auto graph = WeightedCRFGraph<>::read_from_file_graphML(graph_file);
+        const auto link_graph = WeightedCRFGraph<>::read_from_file_links(link_file);
+
+        auto link_remap = make_identity_link_remap(link_graph);
+        UnionFind uf(graph.num_vertices());
+        USSolution forced_solution;
+        FullSingleDomReducer<> reducer{config};
+        auto [reduced_graph, reduced_link_graph, final_link_remap, final_uf] =
+            reducer.run(graph, link_graph, link_remap, uf, forced_solution);
+        (void)final_uf;
+
+        const auto reduced_set_cover = construct_set_cover(
+            reduced_graph.graph.vertices,
+            reduced_graph.graph.edges,
+            reduced_graph.weights,
+            reduced_link_graph.graph.vertices,
+            reduced_link_graph.graph.edges,
+            reduced_link_graph.weights);
+        const auto reduced_solution = solve_with_basic_context(reduced_set_cover, GreedySetCoverSolver<>{});
+
+        SelectedLinks original_solution = forced_solution.get_solution();
+        const auto reduced_links = reduced_link_graph.csr_to_vec_links();
+        for (const size_t reduced_link_id : reduced_solution)
+        {
+            const auto& [u, v, weight] = reduced_links[reduced_link_id];
+            (void)weight;
+            original_solution.insert(final_link_remap.at(normalize_link(u, v)).original_id);
+        }
+
+        ASSERT_FALSE(original_solution.empty());
+        EXPECT_GT(
+            viecut_min_cut(graph, link_graph, original_solution),
+            viecut_min_cut(graph, link_graph));
+    }
 }
 
 TEST(ConnectivityAugmentationSolvers, CSRGreedyIncreasesConnectivity)
@@ -122,6 +165,77 @@ TEST(ConnectivityAugmentationSolvers, CSRILPIncreasesConnectivity)
         }
         throw;
     }
+}
+
+TEST(ConnectivityAugmentationSolvers, LazyBlockTreeILPIncreasesConnectivity)
+{
+    try
+    {
+        const auto graph = create_cycle_graph_undirected(4);
+        const auto link_graph = graph.generate_links([](size_t, size_t) { return 1.0; });
+        USSolution solution;
+        HeiConnect::LazyBlockTreeSolverILP<> solver;
+
+        ASSERT_TRUE(solver.solve(graph, link_graph, solution));
+        ASSERT_FALSE(solution.get_solution().empty());
+        EXPECT_GT(
+            viecut_min_cut(graph, link_graph, solution.get_solution()),
+            viecut_min_cut(graph, link_graph));
+    }
+    catch (const GRBException& error)
+    {
+        if (error.getErrorCode() == GRB_ERROR_NO_LICENSE)
+        {
+            GTEST_SKIP() << "Gurobi license unavailable: " << error.getMessage();
+        }
+        throw;
+    }
+}
+
+TEST(ConnectivityAugmentationSolvers, ReconstructedReducedCycleSolutionIncreasesOriginalConnectivity)
+{
+    const auto project_dir = std::filesystem::path(__FILE__).parent_path().parent_path();
+    expect_reconstructed_reduced_solution_increases_connectivity(
+        project_dir / "datasets/cycles/cycle_50.xml",
+        project_dir / "datasets/cycles/cycle_50-float_uniform_0_1.links");
+}
+
+TEST(ConnectivityAugmentationSolvers, ReconstructedReducedCycleSolutionWithoutElementDomination)
+{
+    const auto project_dir = std::filesystem::path(__FILE__).parent_path().parent_path();
+    ConnectivityAugmentationReductionConfig config;
+    config.run_element_domination = false;
+    expect_reconstructed_reduced_solution_increases_connectivity(
+        project_dir / "datasets/cycles/cycle_50.xml",
+        project_dir / "datasets/cycles/cycle_50-float_uniform_0_1.links",
+        config);
+}
+
+TEST(ConnectivityAugmentationSolvers, ReconstructedReducedCycleSolutionWithoutSingleLink)
+{
+    const auto project_dir = std::filesystem::path(__FILE__).parent_path().parent_path();
+    ConnectivityAugmentationReductionConfig config;
+    config.run_single_link = false;
+    expect_reconstructed_reduced_solution_increases_connectivity(
+        project_dir / "datasets/cycles/cycle_50.xml",
+        project_dir / "datasets/cycles/cycle_50-float_uniform_0_1.links",
+        config);
+}
+
+TEST(ConnectivityAugmentationSolvers, ReconstructedReducedStarSolutionIncreasesOriginalConnectivity)
+{
+    const auto project_dir = std::filesystem::path(__FILE__).parent_path().parent_path();
+    expect_reconstructed_reduced_solution_increases_connectivity(
+        project_dir / "datasets/stars/star_50.xml",
+        project_dir / "datasets/stars/star_50-float_uniform_0_1.links");
+}
+
+TEST(ConnectivityAugmentationSolvers, ReconstructedReducedTreeSolutionIncreasesOriginalConnectivity)
+{
+    const auto project_dir = std::filesystem::path(__FILE__).parent_path().parent_path();
+    expect_reconstructed_reduced_solution_increases_connectivity(
+        project_dir / "datasets/trees/tree_50.xml",
+        project_dir / "datasets/trees/tree_50.links");
 }
 
 TEST(ConnectivityAugmentationSolvers, OracleGreedyIncreasesConnectivity)

@@ -29,12 +29,13 @@ enum class IntersectionIndexType
 
 struct ConnectivityAugmentationReductionConfig
 {
-    bool run_shortest_path_reduction{true};
     bool run_project_in{true};
     bool run_project_out{true};
     bool run_cycle_reduction{true};
+    bool run_single_link{true};
+    bool run_element_domination{true};
     size_t max_rounds{0};
-    bool compute_shortest_paths{true};
+    bool compute_shortest_paths{false};
     IntersectionIndexType intersection_index{IntersectionIndexType::BASELINE};
 };
 
@@ -797,4 +798,116 @@ auto materialize_contractions(
         std::move(contracted_graph),
         std::move(contracted_link_graph),
         std::move(node_remap)};
+}
+
+
+template<typename NodeID, typename EdgeID, typename EdgeWeight, typename LinkEdgeID, typename LinkEdgeWeight>
+auto materialize_contractions_preserving_links(
+    const WeightedCRFGraph<NodeID, EdgeID, EdgeWeight>& graph,
+    const WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>& link_graph,
+    UnionFind& uf)
+{
+    const size_t num_vertices = graph.num_vertices();
+    std::vector<size_t> contracted_ids(num_vertices, num_vertices);
+    std::vector<size_t> node_remap(num_vertices);
+    size_t num_contracted_vertices = 0;
+    for (size_t u = 0; u < num_vertices; ++u)
+    {
+        const size_t representative = uf.find(u);
+        if (contracted_ids[representative] == num_vertices)
+        {
+            contracted_ids[representative] = num_contracted_vertices++;
+        }
+        node_remap[u] = contracted_ids[representative];
+    }
+
+    std::vector<std::pair<ConnAugLink, EdgeWeight>> contracted_edges;
+    contracted_edges.reserve(graph.num_edges() / 2);
+    for (NodeID u{}; u < graph.num_vertices(); ++u)
+    {
+        for (EdgeID e = graph.graph.vertices[u]; e < graph.graph.vertices[u + 1]; ++e)
+        {
+            const NodeID v = graph.graph.edges[e];
+            if (u > v)
+            {
+                continue;
+            }
+            const ConnAugLink edge = normalize_link(node_remap[u], node_remap[v]);
+            if (edge.first != edge.second)
+            {
+                contracted_edges.emplace_back(edge, graph.weights[e]);
+            }
+        }
+    }
+    std::sort(contracted_edges.begin(), contracted_edges.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.first < rhs.first;
+    });
+
+    std::vector<std::tuple<NodeID, NodeID, EdgeWeight>> graph_edges;
+    graph_edges.reserve(contracted_edges.size() * 2);
+    for (size_t i = 0; i < contracted_edges.size();)
+    {
+        const ConnAugLink edge = contracted_edges[i].first;
+        EdgeWeight weight{};
+        while (i < contracted_edges.size() && contracted_edges[i].first == edge)
+        {
+            weight += contracted_edges[i].second;
+            ++i;
+        }
+        graph_edges.emplace_back(edge.first, edge.second, weight);
+        graph_edges.emplace_back(edge.second, edge.first, weight);
+    }
+    auto contracted_graph = WeightedCRFGraph<NodeID, EdgeID, EdgeWeight>::vec_links_to_csr(
+        graph_edges,
+        num_contracted_vertices);
+
+    std::vector<NodeID> link_vertices(num_contracted_vertices + 1, 0);
+    for (NodeID u{}; u < link_graph.num_vertices(); ++u)
+    {
+        for (LinkEdgeID e = link_graph.graph.vertices[u]; e < link_graph.graph.vertices[u + 1]; ++e)
+        {
+            const size_t new_u = node_remap[u];
+            const size_t new_v = node_remap[link_graph.graph.edges[e]];
+            if (new_u != new_v)
+            {
+                ++link_vertices[new_u + 1];
+            }
+        }
+    }
+    for (size_t i = 1; i < link_vertices.size(); ++i)
+    {
+        link_vertices[i] += link_vertices[i - 1];
+    }
+
+    const size_t num_links = link_vertices.back();
+    std::vector<LinkEdgeID> link_edges(num_links);
+    std::vector<LinkEdgeWeight> link_weights(num_links);
+    std::vector<size_t> original_link_ids(num_links);
+    std::vector<NodeID> offsets = link_vertices;
+    for (NodeID u{}; u < link_graph.num_vertices(); ++u)
+    {
+        for (LinkEdgeID e = link_graph.graph.vertices[u]; e < link_graph.graph.vertices[u + 1]; ++e)
+        {
+            const size_t new_u = node_remap[u];
+            const size_t new_v = node_remap[link_graph.graph.edges[e]];
+            if (new_u == new_v)
+            {
+                continue;
+            }
+
+            const size_t new_edge_id = offsets[new_u]++;
+            link_edges[new_edge_id] = static_cast<LinkEdgeID>(new_v);
+            link_weights[new_edge_id] = link_graph.weights[e];
+            original_link_ids[new_edge_id] = static_cast<size_t>(e);
+        }
+    }
+    auto contracted_link_graph = WeightedCRFGraph<NodeID, LinkEdgeID, LinkEdgeWeight>{
+        std::move(link_vertices),
+        std::move(link_edges),
+        std::move(link_weights)};
+
+    return std::tuple{
+        std::move(contracted_graph),
+        std::move(contracted_link_graph),
+        std::move(original_link_ids)};
 }

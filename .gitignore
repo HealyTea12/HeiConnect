@@ -25,6 +25,7 @@ scripts/dataset_generation/*
 scripts/experiment_runner/*
 !scripts/experiment_runner/run_configurations.py
 !scripts/experiment_runner/configurations.example.toml
+!scripts/experiment_runner/test_run_configurations.py
 !scripts/visualization/
 scripts/visualization/*
 !scripts/visualization/visualize_experiments.py

@@ -119,11 +119,22 @@ private:
     {
         std::vector<std::tuple<NodeID, NodeID, LinkWeight>> links = link_graph.csr_to_vec_links();
         auto [block_tree, cycle_positions] = graph.cactus_generate_block_tree(0);
-        (void)cycle_positions;
         auto [parent, depth] = block_tree.graph.rooted_parent_depth();
 
         std::unordered_map<size_t, std::pair<NodeID, NodeID>> edge_endpoints{};
-        auto link_to_edges = construct_links_to_edges(graph, links, parent, depth, edge_endpoints);
+        std::vector<size_t> cycle_size(cycle_positions.size());
+        for (size_t cid = 0; cid < cycle_positions.size(); ++cid)
+        {
+            for (const auto pos : cycle_positions[cid])
+            {
+                if (pos >= 0)
+                {
+                    cycle_size[cid] = static_cast<size_t>(pos) + 1;
+                }
+            }
+        }
+        auto link_to_edges =
+            construct_links_to_edges(graph, links, parent, depth, cycle_positions, cycle_size, edge_endpoints);
         auto edge_to_links = construct_edges_to_links(link_to_edges);
         return {find_dominated_edges(link_to_edges, edge_to_links), std::move(edge_endpoints)};
     }
@@ -144,6 +155,8 @@ private:
         const std::vector<std::tuple<NodeID, NodeID, LinkWeight>>& links,
         const std::vector<NodeID>& parent,
         const std::vector<size_t>& depth,
+        const std::vector<std::vector<int>>& cycle_positions,
+        const std::vector<size_t>& cycle_size,
         std::unordered_map<size_t, std::pair<NodeID, NodeID>>& edge_endpoints) const
     {
         std::vector<std::vector<size_t>> link_to_edges(links.size());
@@ -151,23 +164,99 @@ private:
         {
             const auto [u, v, w] = links[lid];
             (void)w;
-            const size_t dist = tree_distance(u, v, parent, depth, graph.num_vertices());
-            std::vector<NodeID> path(dist + 1);
-            tree_path(u, v, parent, depth, dist, path, graph.num_vertices());
+            const auto original_num_vertices = graph.num_vertices();
+            auto is_cycle_node = [&](NodeID node) {
+                return static_cast<size_t>(node) >= original_num_vertices;
+            };
+
+            std::vector<NodeID> path_u_to_lca;
+            std::vector<NodeID> path_lca_to_v;
+            NodeID uu = u;
+            NodeID vv = v;
+            while (depth[uu] > depth[vv])
+            {
+                path_u_to_lca.emplace_back(uu);
+                uu = parent[uu];
+            }
+            while (depth[vv] > depth[uu])
+            {
+                path_lca_to_v.emplace_back(vv);
+                vv = parent[vv];
+            }
+            while (uu != vv)
+            {
+                path_u_to_lca.emplace_back(uu);
+                path_lca_to_v.emplace_back(vv);
+                uu = parent[uu];
+                vv = parent[vv];
+            }
+            path_u_to_lca.emplace_back(uu);
+            std::reverse(path_lca_to_v.begin(), path_lca_to_v.end());
+            path_u_to_lca.insert(path_u_to_lca.end(), path_lca_to_v.begin(), path_lca_to_v.end());
+
+            auto& path = path_u_to_lca;
 
             auto& covered_edges = link_to_edges[lid];
-            covered_edges.reserve(dist);
+            covered_edges.reserve(path.size() == 0 ? 0 : path.size() - 1);
             for (size_t i = 0; i + 1 < path.size(); ++i)
             {
                 NodeID a = path[i];
                 NodeID b = path[i + 1];
-                const size_t id = edge_id(a, b, graph.num_vertices());
-                covered_edges.emplace_back(id);
+                if (is_cycle_node(a) || is_cycle_node(b))
+                {
+                    continue;
+                }
                 if (a > b)
                 {
                     std::swap(a, b);
                 }
+                const size_t id = edge_id(a, b, original_num_vertices);
+                covered_edges.emplace_back(id);
                 edge_endpoints.emplace(id, std::make_pair(a, b));
+            }
+
+            for (size_t i = 0; i + 2 < path.size(); ++i)
+            {
+                if (!is_cycle_node(path[i]) && is_cycle_node(path[i + 1]) && !is_cycle_node(path[i + 2]))
+                {
+                    NodeID a = path[i];
+                    NodeID b = path[i + 2];
+                    const auto cycle_id = static_cast<size_t>(path[i + 1]) - original_num_vertices;
+                    if (cycle_id >= cycle_positions.size())
+                    {
+                        continue;
+                    }
+                    if (cycle_size[cycle_id] < 4 || cycle_size[cycle_id] % 2 != 0)
+                    {
+                        continue;
+                    }
+                    const int cycle_pos_a = cycle_positions[cycle_id][static_cast<size_t>(a)];
+                    const int cycle_pos_b = cycle_positions[cycle_id][static_cast<size_t>(b)];
+                    if (cycle_pos_a < 0 || cycle_pos_b < 0)
+                    {
+                        continue;
+                    }
+                    const auto pos_a = static_cast<size_t>(cycle_pos_a);
+                    const auto pos_b = static_cast<size_t>(cycle_pos_b);
+                    const auto gap = (pos_a > pos_b) ? (pos_a - pos_b) : (pos_b - pos_a);
+                    const auto cycle_gap = std::min(gap, cycle_size[cycle_id] - gap);
+                    if (cycle_gap != cycle_size[cycle_id] / 2)
+                    {
+                        continue;
+                    }
+                    if (a < b)
+                    {
+                        const size_t id = edge_id(a, b, original_num_vertices);
+                        covered_edges.emplace_back(id);
+                        edge_endpoints.emplace(id, std::make_pair(a, b));
+                    }
+                    else
+                    {
+                        const size_t id = edge_id(b, a, original_num_vertices);
+                        covered_edges.emplace_back(id);
+                        edge_endpoints.emplace(id, std::make_pair(b, a));
+                    }
+                }
             }
 
             std::sort(covered_edges.begin(), covered_edges.end());

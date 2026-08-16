@@ -18,6 +18,7 @@
  * TODO: FOrced links are contracted one at a time. There is definitely a more efficient way of doing it i.e:
  * not reconstructing the whole graph each time, just building the union find for all of them and then
  * materializing the contractions all at once.
+ * The single-link phase now builds one union find and materializes all selected links in bulk.
  */
 template<int RecordStatsLevel = 0>
 class FullSingleDomReducer
@@ -37,10 +38,11 @@ public:
         m_fullReducer(config)
     {}
 
-    FullSingleDomReducer(bool project_in, bool project_out) :
-        m_config{true, project_in, project_out, true, 0},
-        m_fullReducer(project_in, project_out)
-    {}
+    FullSingleDomReducer(bool project_in, bool project_out) : m_fullReducer(project_in, project_out)
+    {
+        m_config.run_project_in = project_in;
+        m_config.run_project_out = project_out;
+    }
 
     template<typename GraphType, typename LinkGraphType>
     auto operator()(const GraphType& graph, const LinkGraphType& link_graph)
@@ -136,28 +138,47 @@ public:
 
             const size_t before_single_edges = current_link_graph.num_edges();
             auto single_start = Clock::now();
-            UnionFind selection_uf(current_graph.num_vertices());
             auto single_reducer_start = Clock::now();
-            auto single_link_graph =
-                m_singleLinkReducer.run(current_graph, current_link_graph, link_remap, selection_uf, solution);
-            auto single_reducer_end = Clock::now();
-            const size_t after_single_edges = single_link_graph.num_edges();
-            auto single_materialize_start = Clock::now();
-            auto [single_contracted_graph, single_contracted_link_graph, single_node_remap] =
-                materialize_contractions(current_graph, single_link_graph, selection_uf, link_remap);
-            auto single_materialize_end = Clock::now();
-            (void)single_node_remap;
-            current_graph = std::move(single_contracted_graph);
-            current_link_graph = std::move(single_contracted_link_graph);
-            uf = UnionFind(current_graph.num_vertices());
-            if (!same_link_graph(current_link_graph, single_link_graph))
+            std::vector<LinkEdgeID> selected_links;
+            if (m_config.run_single_link)
             {
-                changed = true;
+                selected_links = m_singleLinkReducer.run(current_graph, current_link_graph);
             }
+            auto single_reducer_end = Clock::now();
+            auto single_materialize_start = Clock::now();
+            if (!selected_links.empty())
+            {
+                const auto links = current_link_graph.csr_to_vec_links();
+                for (const LinkEdgeID link_id : selected_links)
+                {
+                    const auto& [u, v, weight] = links[link_id];
+                    (void)weight;
+                    solution.add_set(link_remap.at(normalize_link(u, v)).original_id);
+                }
+
+                UnionFind selection_uf(current_graph.num_vertices());
+                add_links_to_union_find_frozen_stack(
+                    current_graph,
+                    current_link_graph,
+                    selection_uf,
+                    selected_links);
+                auto [single_contracted_graph, single_contracted_link_graph, single_node_remap] =
+                    materialize_contractions(current_graph, current_link_graph, selection_uf, link_remap);
+                (void)single_node_remap;
+                changed = true;
+                current_graph = std::move(single_contracted_graph);
+                current_link_graph = std::move(single_contracted_link_graph);
+                uf = UnionFind(current_graph.num_vertices());
+            }
+            auto single_materialize_end = Clock::now();
+            const size_t after_single_edges = current_link_graph.num_edges();
             auto single_end = Clock::now();
             if constexpr (RecordStatsLevel > 0)
             {
-                append_submetrics("single_link", iterations, m_singleLinkReducer.emit_metrics());
+                if (m_config.run_single_link)
+                {
+                    append_submetrics("single_link", iterations, m_singleLinkReducer.emit_metrics());
+                }
                 append_time_metric(
                     "single_link_reducer",
                     iterations,
@@ -173,29 +194,34 @@ public:
 
             const size_t before_dom_edges = current_link_graph.num_edges();
             auto element_domination_start = Clock::now();
-            auto [dom_graph, dom_link_graph, dom_link_remap, dom_uf] =
-                m_domReducer.run(current_graph, current_link_graph, link_remap, uf);
-            (void)dom_graph;
-            const size_t after_dom_edges = dom_link_graph.num_edges();
-            link_remap = std::move(dom_link_remap);
-            uf = std::move(dom_uf);
-            auto [contracted_graph, contracted_link_graph, node_remap] =
-                materialize_contractions(current_graph, dom_link_graph, uf, link_remap);
-            (void)node_remap;
-            current_graph = std::move(contracted_graph);
-            dom_link_graph = std::move(contracted_link_graph);
-            uf = UnionFind(current_graph.num_vertices());
-            if (!same_link_graph(current_link_graph, dom_link_graph))
+            if (m_config.run_element_domination)
             {
-                changed = true;
+                auto [dom_graph, dom_link_graph, dom_link_remap, dom_uf] =
+                    m_domReducer.run(current_graph, current_link_graph, link_remap, uf);
+                (void)dom_graph;
+                link_remap = std::move(dom_link_remap);
+                uf = std::move(dom_uf);
+                auto [contracted_graph, contracted_link_graph, node_remap] =
+                    materialize_contractions(current_graph, dom_link_graph, uf, link_remap);
+                (void)node_remap;
+                if (!same_link_graph(current_link_graph, contracted_link_graph))
+                {
+                    changed = true;
+                }
+                current_graph = std::move(contracted_graph);
+                current_link_graph = std::move(contracted_link_graph);
+                uf = UnionFind(current_graph.num_vertices());
             }
             auto element_domination_end = Clock::now();
+            const size_t after_dom_edges = current_link_graph.num_edges();
             if constexpr (RecordStatsLevel > 0)
             {
-                append_submetrics("element_domination", iterations, m_domReducer.emit_metrics());
+                if (m_config.run_element_domination)
+                {
+                    append_submetrics("element_domination", iterations, m_domReducer.emit_metrics());
+                }
                 append_time_metric("element_domination", iterations, element_domination_start, element_domination_end);
             }
-            current_link_graph = std::move(dom_link_graph);
 
             if (changed)
             {

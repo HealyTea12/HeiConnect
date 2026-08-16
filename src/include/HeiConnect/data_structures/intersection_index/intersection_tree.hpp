@@ -41,16 +41,14 @@ public:
         }
     }
 
-    std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> make(
-        const std::vector<IntersectionRecord>& records) const override
+    std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>>
+    make(const std::vector<IntersectionRecord>& records) const override
     {
         return std::make_unique<IntersectionTreeIdx<RecordStatsLevel, PruneByLevel>>(records);
     }
 
-    void forEachIntersection(
-        std::function<void(Index, Interval)> callback,
-        Interval query,
-        size_t exclusive_level) const override
+    void forEachIntersection(std::function<void(Index, Interval)> callback, Interval query, size_t exclusive_level)
+        const override
     {
         if constexpr (RecordStatsLevel > 0)
         {
@@ -183,11 +181,9 @@ private:
         return a == c || a == d || b == c || b == d || (a < c && c < b && b < d) || (c < a && a < d && d < b);
     }
 
-    void queryTree(
-        int node,
-        Interval query,
-        size_t exclusive_level,
-        const std::function<void(Index, Interval)>& callback) const
+    void
+    queryTree(int node, Interval query, size_t exclusive_level, const std::function<void(Index, Interval)>& callback)
+        const
     {
         if (node < 0 || m_nodes[node].max_end < std::get<0>(query))
         {

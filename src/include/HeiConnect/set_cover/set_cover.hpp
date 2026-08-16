@@ -12,3 +12,4 @@
 #include "HeiConnect/set_cover/solver_base.hpp"
 #include "HeiConnect/set_cover/solver_greedy.hpp"
 #include "HeiConnect/set_cover/solver_ilp.hpp"
+#include "HeiConnect/set_cover/solver_lazy_block_tree_ilp.hpp"

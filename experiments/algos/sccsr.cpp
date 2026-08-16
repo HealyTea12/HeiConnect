@@ -962,14 +962,16 @@ namespace
     {
         config.run_reductions = parse_bool_param(params, "reductions", config.run_reductions);
         config.draw_graphs = parse_bool_param(params, "draw_graphs", config.draw_graphs);
-        config.reduction_config.run_shortest_path_reduction =
-            parse_bool_param(params, "shortest_path_reduction", config.reduction_config.run_shortest_path_reduction);
         config.reduction_config.run_project_in =
             parse_bool_param(params, "project_in", config.reduction_config.run_project_in);
         config.reduction_config.run_project_out =
             parse_bool_param(params, "project_out", config.reduction_config.run_project_out);
         config.reduction_config.run_cycle_reduction =
             parse_bool_param(params, "cycle_reduction", config.reduction_config.run_cycle_reduction);
+        config.reduction_config.run_single_link =
+            parse_bool_param(params, "single_link", config.reduction_config.run_single_link);
+        config.reduction_config.run_element_domination =
+            parse_bool_param(params, "element_domination", config.reduction_config.run_element_domination);
         config.reduction_config.max_rounds = parse_size_param(params, "max_rounds", config.reduction_config.max_rounds);
         config.reduction_config.compute_shortest_paths =
             parse_bool_param(params, "compute_shortest_paths", config.reduction_config.compute_shortest_paths);

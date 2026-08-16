@@ -95,6 +95,26 @@ TEST(ConnAugReducers, FrozenStackKeepsNestedContractionsSeparateOnCycle)
     EXPECT_EQ(stats.total_merged_nodes, 2);
 }
 
+TEST(ConnAugReducers, MaterializedContractionsPreserveParallelLinks)
+{
+    const auto graph = WeightedCRFGraph<>::vec_links_to_csr(
+        {{0, 1, 1.0}, {1, 0, 1.0}, {1, 2, 1.0}, {2, 1, 1.0}},
+        3);
+    const auto link_graph = WeightedCRFGraph<>::vec_links_to_csr(
+        {{0, 2, 2.0}, {0, 1, 1.0}, {1, 2, 3.0}},
+        3);
+    UnionFind uf(graph.num_vertices());
+    uf.unite(0, 1);
+
+    auto [contracted_graph, contracted_link_graph, original_link_ids] =
+        materialize_contractions_preserving_links(graph, link_graph, uf);
+
+    EXPECT_EQ(contracted_graph.num_vertices(), 2);
+    ASSERT_EQ(contracted_link_graph.num_edges(), 2);
+    EXPECT_EQ(contracted_link_graph.graph.edges[0], contracted_link_graph.graph.edges[1]);
+    EXPECT_EQ(original_link_ids, (std::vector<size_t>{0, 2}));
+}
+
 TEST(ConnAugReducers, IntersectionTreeMatchesBaselineCycleReduction)
 {
     std::vector<std::tuple<int, int, int>> links;
