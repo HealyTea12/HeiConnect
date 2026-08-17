@@ -2,6 +2,9 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <iomanip>
+#include <cctype>
+#include <string_view>
 #include <vector>
 
 #include "boost/program_options.hpp"
@@ -58,6 +61,68 @@ void print_available_algorithms(std::ostream& os)
     }
 }
 
+std::string normalize_token(std::string_view value)
+{
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (char c : value)
+    {
+        const char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (std::isalnum(static_cast<unsigned char>(lower)))
+        {
+            normalized.push_back(lower);
+            continue;
+        }
+        normalized.push_back('_');
+    }
+    return normalized;
+}
+
+const AlgorithmEntry* find_algorithm_entry(std::string_view algorithm_name)
+{
+    if (auto* exact = global_registry.find(algorithm_name))
+    {
+        return exact;
+    }
+
+    const auto normalized_requested = normalize_token(algorithm_name);
+    for (const auto& name : global_registry.names())
+    {
+        if (normalize_token(name) == normalized_requested)
+        {
+            return global_registry.find(name);
+        }
+    }
+    return nullptr;
+}
+
+void print_algorithm_parameters(std::ostream& os, const std::string_view algorithm_name)
+{
+    const auto* entry = find_algorithm_entry(algorithm_name);
+    if (entry == nullptr)
+    {
+        os << "Unknown algorithm '" << algorithm_name << "'.\n\n";
+        print_available_algorithms(os);
+        return;
+    }
+
+    os << "Parameters for algorithm '" << algorithm_name << "':\n";
+    if (entry->parameters.empty())
+    {
+        os << "  (no algorithm-specific parameters)\n\n";
+        return;
+    }
+
+    os << "  Name              Default            Description\n";
+    os << "  -------------------------------------------------------------\n";
+    for (const auto& parameter : entry->parameters)
+    {
+        os << "  " << std::left << std::setw(18) << parameter.name << std::left << std::setw(18)
+           << parameter.default_value << " " << parameter.description << "\n";
+    }
+    os << "\n";
+}
+
 int main(int argc, char** argv)
 {
     try
@@ -69,7 +134,7 @@ int main(int argc, char** argv)
             ("result_file_name",
              po::value<std::string>()->default_value("res.txt"),
              "name of the result file inside the output directory") //
-            ("algorithm,a", po::value<std::string>()->required(), "algorithm to run") //
+            ("algorithm,a", po::value<std::string>(), "algorithm to run") //
             ("input_file,f",
              po::value<std::vector<std::string>>()->multitoken()->required(),
              "input graph file and links file")(
@@ -86,8 +151,21 @@ int main(int argc, char** argv)
         if (vm.count("help"))
         {
             std::cout << desc << "\n";
-            print_available_algorithms(std::cout);
+            if (vm.count("algorithm"))
+            {
+                print_algorithm_parameters(std::cout, vm["algorithm"].as<std::string>());
+            }
+            else
+            {
+                std::cout << "\n";
+                print_available_algorithms(std::cout);
+            }
             return 0;
+        }
+
+        if (!vm.count("algorithm"))
+        {
+            throw std::invalid_argument("Missing required option: --algorithm, -a");
         }
 
         po::notify(vm);

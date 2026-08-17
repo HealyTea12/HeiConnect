@@ -15,7 +15,24 @@ void AlgorithmRegistry::add(AlgorithmEntry entry)
 
 void AlgorithmRegistry::add(std::string name, std::string description, AlgorithmFactory factory)
 {
-    add(AlgorithmEntry{std::move(name), std::move(description), std::move(factory)});
+    add(AlgorithmEntry{
+        std::move(name),
+        std::move(description),
+        std::vector<AlgorithmParameter>{},
+        std::move(factory)});
+}
+
+void AlgorithmRegistry::add(
+    std::string name,
+    std::string description,
+    std::vector<AlgorithmParameter> parameters,
+    AlgorithmFactory factory)
+{
+    add(AlgorithmEntry{
+        std::move(name),
+        std::move(description),
+        std::move(parameters),
+        std::move(factory)});
 }
 
 std::unique_ptr<AlgorithmRunner> AlgorithmRegistry::create(const std::string_view name, const ParamMap& params) const
@@ -26,6 +43,16 @@ std::unique_ptr<AlgorithmRunner> AlgorithmRegistry::create(const std::string_vie
         throw std::invalid_argument("Unknown algorithm: " + std::string(name));
     }
     return it->second.factory(params);
+}
+
+const AlgorithmEntry* AlgorithmRegistry::find(std::string_view name) const
+{
+    const auto it = m_entries.find(std::string(name));
+    if (it == m_entries.end())
+    {
+        return nullptr;
+    }
+    return &it->second;
 }
 
 std::vector<std::string> AlgorithmRegistry::names() const

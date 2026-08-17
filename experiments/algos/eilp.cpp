@@ -87,6 +87,9 @@ namespace
         global_registry.add(
             "Original EILP",
             "Original EILP solver used by the legacy app",
+            std::vector<AlgorithmParameter>{
+                {"use_initial", "false", "Start ILP from an initial solution when true."},
+                {"presolve", "0", "Presolve level passed to the ILP solver."}},
             [](const ParamMap& params) {
                 return std::make_unique<OriginalEILPRunner>(
                     parse_bool_param(params, "use_initial", false),

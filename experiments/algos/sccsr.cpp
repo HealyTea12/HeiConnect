@@ -986,16 +986,60 @@ namespace
         return config;
     }
 
+    const std::vector<AlgorithmParameter> set_cover_csr_parameters = {
+        {"reductions",
+         "true",
+         "Enable or disable all reduction phases before solving."},
+        {"draw_graphs",
+         "false",
+         "Write pre-reduction and post-reduction graphs as DOT files when true."},
+        {"project_in",
+         "true",
+         "Enable projection-in reduction."},
+        {"project_out",
+         "true",
+         "Enable projection-out reduction."},
+        {"cycle_reduction",
+         "true",
+         "Enable cycle-reduction preprocessing."},
+        {"single_link",
+         "true",
+         "Enable single-link reduction."},
+        {"element_domination",
+         "true",
+         "Enable element domination reduction."},
+        {"max_rounds", "0", "Maximum number of reduction rounds (0 means unlimited)."},
+        {"compute_shortest_paths",
+         "false",
+         "Enable shortest-path computations used by intersection heuristics."},
+        {"intersection_index",
+         "baseline",
+         "Intersection index used by cycle reduction: baseline, intersection_tree, weighted_intersection_tree."},
+        {"local_search", "true", "Run local search after solving."},
+        {"skip_local_search",
+         "false",
+         "If true, local search is skipped (takes precedence over local_search)."},
+        {"local_search_time_seconds",
+         "60.0",
+         "Maximum seconds allowed for local search."},
+        {"reduction_type",
+         "csr",
+         "Set-cover representation: csr, oracle, or double_csr_cyc."},
+        {"solver", "greedy", "Solver backend: greedy, greedy_cheapest, or ilp."},
+    };
+
     [[maybe_unused]] const bool registered_set_cover_csr = [] {
         global_registry.add(
             "Set Cover CSR",
             "Configurable set-cover representation and solver",
+            set_cover_csr_parameters,
             [](const ParamMap& params) {
                 return std::make_unique<SetCoverGreedyCSR>(parse_set_cover_greedy_csr_config(params));
             });
         global_registry.add(
             "Block Tree Set Cover CSR",
             "Set Cover CSR with a block-tree contraction solve first",
+            set_cover_csr_parameters,
             [](const ParamMap& params) {
                 SetCoverGreedyCSRConfig config;
                 config.run_reductions = false;

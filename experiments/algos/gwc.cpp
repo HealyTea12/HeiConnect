@@ -47,10 +47,14 @@ public:
 
 namespace
 {
+    const std::vector<AlgorithmParameter> gwc_parameters = {};
+
     [[maybe_unused]] const bool registered_classical_gwc = [] {
-        global_registry.add("GWC", "Classical GWC algorithm", [](const ParamMap&) {
-            return std::make_unique<ClassicalGWCRunner>();
-        });
+        global_registry.add(
+            "GWC",
+            "Classical GWC algorithm",
+            gwc_parameters,
+            [](const ParamMap&) { return std::make_unique<ClassicalGWCRunner>(); });
         return true;
     }();
 }
