@@ -186,7 +186,7 @@ namespace HeiConnect_details
         auto start = omp_get_wtime();
         std::vector<size_t> a = std::vector<size_t>(link_edges.size() + 1, static_cast<size_t>(0));
         std::vector<size_t> b = std::vector<size_t>(0ULL);
-        b.reserve(link_edges.size() * n_min_cuts / 2);
+        b.reserve(calculate_size_b_set_ull(min_cuts, link_vertices, link_edges));
         size_t n_vertices = vertices.size() - 1;
         constexpr const size_t B = 8 * sizeof(ull);
         auto end = omp_get_wtime();
