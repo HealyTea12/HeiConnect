@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import os
-from pathlib import Path
 import re
+from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/heiconnect-matplotlib")
 
@@ -12,30 +13,58 @@ import pandas as pd
 import seaborn as sns
 
 
-ALGORITHM_COLORS = {
-    "block_tree_nored": "#4E79A7",
-    "block_tree_red": "#F28E2B",
-    "double_nored": "#59A14F",
-    "double_red": "#E15759",
-    "gwc": "#B07AA1",
-}
-
-ALGORITHM_MARKERS = {
-    "block_tree_nored": "o",
-    "block_tree_red": "s",
-    "double_nored": "^",
-    "double_red": "D",
-    "gwc": "X",
-}
+MARKER_OPTIONS = ["o", "s", "^", "D", "v", "<", ">", "p", "P", "X", "h", "H", "8", "*"]
+LINE_STYLES = ["-", "--", "-.", ":"]
+MARKER_CACHE_PATH = Path(__file__).with_name("algorithm_markers.json")
 
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description="Create Seaborn visualizations from a collected results CSV."
+        description="Create compact runtime scaling visualizations from a results CSV."
     )
     parser.add_argument("results_csv", type=Path)
     parser.add_argument("output_dir", type=Path)
     return parser.parse_args()
+
+
+def _safe_filename(value):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value))
+
+
+def _load_marker_cache(path):
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_marker_cache(path, markers):
+    path.write_text(json.dumps(markers, indent=2, sort_keys=True))
+
+
+def _next_marker(used_markers):
+    used = set(used_markers)
+    for marker in MARKER_OPTIONS:
+        if marker not in used:
+            return marker
+    return MARKER_OPTIONS[len(used) % len(MARKER_OPTIONS)]
+
+
+def _get_marker_map(algorithms, cache_path):
+    marker_map = _load_marker_cache(cache_path)
+    changed = False
+
+    for algorithm in sorted(set(algorithms)):
+        if algorithm not in marker_map:
+            marker_map[algorithm] = _next_marker(marker_map.values())
+            changed = True
+
+    if changed:
+        _save_marker_cache(cache_path, marker_map)
+
+    return marker_map
 
 
 def save_figure(path):
@@ -46,259 +75,74 @@ def save_figure(path):
 
 
 def plot_runtime_scaling(data, output_dir):
-    plot_data = data.dropna(subset=["nodes", "runtime_seconds"])
+    plot_data = data.dropna(
+        subset=["dataset", "link_configuration", "algorithm", "nodes", "runtime_seconds"]
+    )
+    plot_data["nodes"] = pd.to_numeric(plot_data["nodes"], errors="coerce")
+    plot_data["runtime_seconds"] = pd.to_numeric(
+        plot_data["runtime_seconds"], errors="coerce"
+    )
+    plot_data = plot_data.dropna(subset=["nodes", "runtime_seconds"])
     if plot_data.empty:
         return
 
-    if plot_data["dataset"].nunique() == 1:
-        plt.figure(figsize=(11, 6.5))
-        axis = sns.lineplot(
-            data=plot_data,
-            x="nodes",
-            y="runtime_seconds",
-            hue="algorithm",
-            style="link_configuration",
-            markers=True,
-            dashes=False,
-            estimator="median",
-            errorbar=None,
+    marker_map = _get_marker_map(plot_data["algorithm"].unique(), MARKER_CACHE_PATH)
+    algorithms = sorted(plot_data["algorithm"].unique())
+    palette = {
+        algorithm: sns.color_palette("colorblind", len(algorithms))[index]
+        for index, algorithm in enumerate(algorithms)
+    }
+
+    for (dataset, link_distribution), group in plot_data.groupby(
+        ["dataset", "link_configuration"]
+    ):
+        plt.figure(figsize=(10.5, 6.5))
+        axis = plt.gca()
+        group_algorithms = sorted(group["algorithm"].unique())
+        for idx, algorithm in enumerate(group_algorithms):
+            alg_data = group[group["algorithm"] == algorithm].copy()
+            points = alg_data.groupby("nodes", as_index=False)["runtime_seconds"].median()
+            points = points.sort_values("nodes")
+            style = LINE_STYLES[idx % len(LINE_STYLES)]
+            axis.plot(
+                points["nodes"],
+                points["runtime_seconds"],
+                marker=marker_map.get(algorithm, "o"),
+                linestyle=style,
+                linewidth=2.1,
+                markersize=8,
+                markeredgewidth=1.0,
+                markeredgecolor=palette[algorithm],
+                markerfacecolor="white",
+                label=algorithm,
+                color=palette[algorithm],
+                alpha=0.95,
+            )
+            axis.scatter(
+                points["nodes"],
+                points["runtime_seconds"],
+                color=palette[algorithm],
+                marker=marker_map.get(algorithm, "o"),
+                s=24,
+                alpha=0.45,
+            )
+
+        print(
+            f"{dataset}/{link_distribution} algorithms: "
+            + ", ".join(group_algorithms)
         )
-        if (plot_data["runtime_seconds"] > 0).all():
+        if (group["runtime_seconds"] > 0).all():
             axis.set_yscale("log")
         axis.set(
             xlabel="Number of nodes",
             ylabel="Runtime (seconds)",
-            title=f"Runtime scaling on {plot_data['dataset'].iloc[0]}",
+            title=f"{dataset} — {link_distribution}",
         )
-        axis.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
-        save_figure(output_dir / "runtime_scaling.png")
-        return
-
-    grid = sns.relplot(
-        data=plot_data,
-        x="nodes",
-        y="runtime_seconds",
-        hue="algorithm",
-        style="link_configuration",
-        col="dataset",
-        col_wrap=2,
-        kind="line",
-        markers=True,
-        dashes=False,
-        estimator="median",
-        errorbar=None,
-        facet_kws={"sharex": False, "sharey": False},
-        height=4.2,
-        aspect=1.25,
-    )
-    grid.set_axis_labels("Number of nodes", "Runtime (seconds)")
-    grid.set_titles("{col_name}")
-    grid.figure.suptitle("Runtime scaling by dataset", y=1.03, fontsize=15)
-    for axis in grid.axes.flat:
-        if (plot_data["runtime_seconds"] > 0).all():
-            axis.set_yscale("log")
+        axis.legend(title="Algorithm", bbox_to_anchor=(1.02, 1), loc="upper left")
         axis.grid(True, alpha=0.2)
-    grid.figure.savefig(
-        output_dir / "runtime_scaling.png", dpi=220, bbox_inches="tight"
-    )
-    plt.close(grid.figure)
 
-
-def plot_runtime_distribution(data, output_dir):
-    plot_data = data.dropna(subset=["runtime_seconds"])
-    if plot_data.empty:
-        return
-
-    plt.figure(figsize=(12, 6))
-    sns.boxplot(
-        data=plot_data,
-        x="algorithm",
-        y="runtime_seconds",
-        hue="link_configuration",
-        showfliers=False,
-    )
-    sns.stripplot(
-        data=plot_data,
-        x="algorithm",
-        y="runtime_seconds",
-        hue="link_configuration",
-        dodge=True,
-        alpha=0.45,
-        size=4,
-        legend=False,
-    )
-    if (plot_data["runtime_seconds"] > 0).all():
-        plt.yscale("log")
-    plt.xlabel("Algorithm configuration")
-    plt.ylabel("Runtime (seconds, log scale)")
-    plt.title("Runtime distribution across instances")
-    plt.xticks(rotation=25, ha="right")
-    plt.legend(
-        title="Link configuration", bbox_to_anchor=(1.02, 1), loc="upper left"
-    )
-    save_figure(output_dir / "runtime_distribution.png")
-
-
-def plot_solution_quality(data, output_dir):
-    plot_data = data.dropna(subset=["solution_cost"]).copy()
-    if plot_data.empty:
-        return
-
-    groups = ["dataset", "instance", "link_configuration"]
-    best_cost = plot_data.groupby(groups)["solution_cost"].transform("min")
-    plot_data["cost_over_best"] = plot_data["solution_cost"] / best_cost
-
-    plt.figure(figsize=(11, 6))
-    sns.barplot(
-        data=plot_data,
-        x="algorithm",
-        y="cost_over_best",
-        hue="link_configuration",
-        estimator="mean",
-        errorbar=("ci", 95),
-    )
-    plt.axhline(1.0, color="black", linestyle="--", linewidth=1, alpha=0.7)
-    plt.xlabel("Algorithm configuration")
-    plt.ylabel("Solution cost / best cost")
-    plt.title("Relative solution quality (lower is better)")
-    plt.xticks(rotation=25, ha="right")
-    plt.legend(
-        title="Link configuration", bbox_to_anchor=(1.02, 1), loc="upper left"
-    )
-    save_figure(output_dir / "relative_solution_quality.png")
-
-
-def plot_runtime_memory(data, output_dir):
-    plot_data = data.dropna(
-        subset=["runtime_seconds", "peak_memory_mb", "nodes"]
-    )
-    if plot_data.empty:
-        return
-
-    plt.figure(figsize=(10, 7))
-    sns.scatterplot(
-        data=plot_data,
-        x="runtime_seconds",
-        y="peak_memory_mb",
-        hue="algorithm",
-        style="link_configuration",
-        size="nodes",
-        sizes=(50, 350),
-        alpha=0.8,
-    )
-    if (plot_data["runtime_seconds"] > 0).all():
-        plt.xscale("log")
-    if (plot_data["peak_memory_mb"] > 0).all():
-        plt.yscale("log")
-    plt.xlabel("Runtime (seconds, log scale)")
-    plt.ylabel("Peak memory (MiB, log scale)")
-    plt.title("Runtime–memory trade-off")
-    plt.grid(True, alpha=0.2)
-    plt.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
-    save_figure(output_dir / "runtime_memory_tradeoff.png")
-
-
-def plot_algorithm_scaling(data, output_dir):
-    plot_data = data.dropna(subset=["nodes", "runtime_seconds"])
-    for algorithm, algorithm_data in plot_data.groupby("algorithm"):
-        if algorithm_data["nodes"].nunique() < 2:
-            continue
-
-        plt.figure(figsize=(10.5, 6.5))
-        axis = sns.lineplot(
-            data=algorithm_data,
-            x="nodes",
-            y="runtime_seconds",
-            hue="dataset",
-            style="link_configuration",
-            markers=True,
-            dashes=True,
-            estimator="median",
-            errorbar=None,
-            linewidth=2,
-        )
-        if (algorithm_data["nodes"] > 0).all():
-            axis.set_xscale("log")
-        if (algorithm_data["runtime_seconds"] > 0).all():
-            axis.set_yscale("log")
-        axis.set(
-            xlabel="Number of nodes (log scale)",
-            ylabel="Runtime (seconds, log scale)",
-            title=f"Runtime scaling — {algorithm}",
-        )
-        axis.grid(True, which="both", alpha=0.2)
-        axis.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
-        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", algorithm)
-        save_figure(output_dir / f"scaling_{safe_name}.png")
-
-
-def plot_dataset_scaling(data, output_dir):
-    plot_data = data.dropna(subset=["nodes", "runtime_seconds"])
-    for dataset, dataset_data in plot_data.groupby("dataset"):
-        if dataset_data["nodes"].nunique() < 2:
-            continue
-
-        link_configurations = sorted(dataset_data["link_configuration"].unique())
-        algorithms = sorted(dataset_data["algorithm"].unique())
-        colors = {
-            algorithm: ALGORITHM_COLORS.get(
-                algorithm, sns.color_palette("husl", len(algorithms))[index]
-            )
-            for index, algorithm in enumerate(algorithms)
-        }
-        markers = {
-            algorithm: ALGORITHM_MARKERS.get(algorithm, "o")
-            for algorithm in algorithms
-        }
-        figure, axes = plt.subplots(
-            1,
-            len(link_configurations),
-            figsize=(7 * len(link_configurations), 6),
-            sharex=True,
-            sharey=True,
-            squeeze=False,
-        )
-        for index, link_configuration in enumerate(link_configurations):
-            axis = axes[0, index]
-            link_data = dataset_data[
-                dataset_data["link_configuration"] == link_configuration
-            ]
-            sns.lineplot(
-                data=link_data,
-                x="nodes",
-                y="runtime_seconds",
-                hue="algorithm",
-                style="algorithm",
-                palette=colors,
-                markers=markers,
-                dashes=False,
-                estimator="median",
-                errorbar=None,
-                linewidth=2.2,
-                markersize=8,
-                ax=axis,
-            )
-            axis.set_xscale("log")
-            axis.set_yscale("log")
-            axis.set(
-                xlabel="Number of nodes (log scale)",
-                ylabel="Runtime (seconds, log scale)" if index == 0 else "",
-                title=link_configuration.replace("_", " "),
-            )
-            axis.grid(True, which="both", alpha=0.2)
-            if index == 0:
-                axis.legend(
-                    title="Algorithm",
-                    bbox_to_anchor=(0.5, -0.2),
-                    loc="upper center",
-                    ncol=3,
-                )
-            else:
-                axis.get_legend().remove()
-
-        figure.suptitle(f"Algorithm runtime comparison — {dataset}", fontsize=15)
-        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", dataset)
-        save_figure(output_dir / f"algorithm_comparison_{safe_name}.png")
+        filename = f"runtime_{_safe_filename(dataset)}_{_safe_filename(link_distribution)}.png"
+        save_figure(output_dir / filename)
 
 
 def main():
@@ -310,11 +154,6 @@ def main():
     print(f"Loaded {len(data)} runs from {arguments.results_csv}")
 
     plot_runtime_scaling(data, arguments.output_dir)
-    plot_runtime_distribution(data, arguments.output_dir)
-    plot_solution_quality(data, arguments.output_dir)
-    plot_runtime_memory(data, arguments.output_dir)
-    plot_algorithm_scaling(data, arguments.output_dir)
-    plot_dataset_scaling(data, arguments.output_dir)
 
 
 if __name__ == "__main__":

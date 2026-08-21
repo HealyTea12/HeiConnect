@@ -10,6 +10,18 @@ import pandas as pd
 
 RESULT_PATTERN = re.compile(r"res-(.+)\.txt")
 
+def parse_path_metadata(parts):
+    if len(parts) >= 4:
+        return parts[-4], parts[-3], parts[-2]
+
+    if len(parts) == 3:
+        return parts[0], "unknown", parts[1]
+
+    if len(parts) == 2:
+        return "unknown", "unknown", parts[0]
+
+    return "unknown", "unknown", "unknown"
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -56,12 +68,8 @@ def load_results(results_dir):
             continue
 
         relative_path = result_file.relative_to(results_dir)
-        algorithm_configuration = relative_path.parts[0]
-        instance = result_file.parent.name
-        dataset = (
-            relative_path.parts[1]
-            if len(relative_path.parts) >= 4
-            else "unknown"
+        algorithm_configuration, dataset, instance = parse_path_metadata(
+            relative_path.parts
         )
         link_configuration = match.group(1)
 
