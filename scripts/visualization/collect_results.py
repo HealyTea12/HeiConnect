@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pandas",
+# ]
+# ///
 
 import argparse
-import os
 from pathlib import Path
 import re
 
@@ -9,6 +14,7 @@ import pandas as pd
 
 
 RESULT_PATTERN = re.compile(r"res-(.+)\.txt")
+PAGE_SIZE_BYTES = 4096
 
 def parse_path_metadata(parts):
     if len(parts) >= 4:
@@ -61,7 +67,6 @@ def parse_result_file(path):
 
 def load_results(results_dir):
     rows = []
-    page_size = os.sysconf("SC_PAGE_SIZE")
     for result_file in sorted(results_dir.rglob("res-*.txt")):
         match = RESULT_PATTERN.fullmatch(result_file.name)
         if not match:
@@ -96,7 +101,7 @@ def load_results(results_dir):
                     "solution_cost": run.get("solution.cost"),
                     "solution_size": run.get("solution.size"),
                     "peak_memory_mb": (
-                        memory_pages * page_size / (1024 * 1024)
+                        memory_pages * PAGE_SIZE_BYTES / (1024 * 1024)
                         if isinstance(memory_pages, float)
                         else None
                     ),
