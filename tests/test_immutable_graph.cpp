@@ -85,3 +85,74 @@ TEST(ImmutableGraphBlockTree, Cycle5BecomesStar)
         EXPECT_TRUE(center_neighbors.contains(u));
     }
 }
+
+// Verifies the random cactus generator's CSR, edge-count, weight, and connectivity invariants.
+TEST(RandomCactus, GeneratesValidWeightedCsrGraph)
+{
+    constexpr size_t node_count = 25;
+    constexpr size_t cycle_count = 4;
+    constexpr size_t cycle_length = 4;
+    const auto cactus = create_random_cactus(node_count, cycle_count, cycle_length, 42);
+
+    EXPECT_EQ(cactus.num_vertices(), node_count);
+    EXPECT_EQ(cactus.num_edges() / 2, node_count - 1 + cycle_count);
+    EXPECT_EQ(cactus.graph.vertices.front(), 0);
+    EXPECT_EQ(cactus.graph.vertices.back(), cactus.graph.edges.size());
+    EXPECT_TRUE(std::is_sorted(cactus.graph.vertices.begin(), cactus.graph.vertices.end()));
+
+    size_t directed_cycle_edge_count = 0;
+    size_t directed_bridge_edge_count = 0;
+    for (size_t edge = 0; edge < cactus.graph.edges.size(); ++edge)
+    {
+        EXPECT_LT(cactus.graph.edges[edge], node_count);
+        if (cactus.weights[edge] == 1.0)
+            ++directed_cycle_edge_count;
+        if (cactus.weights[edge] == 2.0)
+            ++directed_bridge_edge_count;
+    }
+    EXPECT_EQ(directed_cycle_edge_count, 2 * cycle_count * cycle_length);
+    EXPECT_EQ(
+        directed_bridge_edge_count,
+        2 * (node_count - 1 - cycle_count * (cycle_length - 1)));
+
+    const auto [block_tree, cycle_positions] = cactus.cactus_generate_block_tree(0);
+    EXPECT_EQ(block_tree.num_vertices(), node_count + cycle_count);
+    ASSERT_EQ(cycle_positions.size(), cycle_count);
+    for (const auto &positions : cycle_positions)
+    {
+        EXPECT_EQ(
+            std::count_if(positions.begin(), positions.end(), [](int position)
+                          { return position >= 0; }),
+            cycle_length);
+    }
+
+    std::vector<bool> visited(node_count, false);
+    std::vector<size_t> nodes_to_visit = {0};
+    visited[0] = true;
+    while (!nodes_to_visit.empty())
+    {
+        const size_t node = nodes_to_visit.back();
+        nodes_to_visit.pop_back();
+        for (size_t edge = cactus.graph.vertices[node];
+             edge < cactus.graph.vertices[node + 1];
+             ++edge)
+        {
+            const size_t neighbor = cactus.graph.edges[edge];
+            if (!visited[neighbor])
+            {
+                visited[neighbor] = true;
+                nodes_to_visit.push_back(neighbor);
+            }
+        }
+    }
+    EXPECT_TRUE(std::all_of(visited.begin(), visited.end(), [](bool was_visited)
+                            { return was_visited; }));
+}
+
+// Verifies that invalid cactus parameters are rejected by the CSR generator itself.
+TEST(RandomCactus, RejectsInvalidParameters)
+{
+    EXPECT_THROW(create_random_cactus(0, 0, 3), std::invalid_argument);
+    EXPECT_THROW(create_random_cactus(5, 1, 2), std::invalid_argument);
+    EXPECT_THROW(create_random_cactus(5, 3, 3), std::invalid_argument);
+}

@@ -2,6 +2,8 @@
 
 #include "HeiConnect/data_structures/graph_utils.hpp"
 
+#include "pugixml.hpp"
+
 #include <cassert>
 #include <fstream>
 #include <functional>
@@ -11,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace dataset_generator
 {
@@ -19,6 +22,13 @@ namespace
 
 using ull = unsigned long long;
 using WeightFunction = std::function<double(ull, ull, const WeightedCRFGraph<> &)>;
+
+struct GraphMetadata
+{
+    std::string name;
+    std::string type;
+    std::string value;
+};
 
 WeightFunction create_weight_function(const Config &config)
 {
@@ -63,6 +73,50 @@ void write_graph(const WeightedCRFGraph<> &graph,
     graph.write_to_file_metis(output_dir / (name + ".graph"));
 }
 
+// Adds graph-level metadata entries to a GraphML file that has already been written.
+void add_graph_metadata(const std::filesystem::path &graph_file,
+                        const std::vector<GraphMetadata> &metadata)
+{
+    pugi::xml_document document;
+    const auto parse_result = document.load_file(graph_file.c_str());
+    if (!parse_result)
+        throw std::runtime_error("could not read GraphML file: " + graph_file.string());
+
+    auto graphml_node = document.child("graphml");
+    auto graph_node = graphml_node.child("graph");
+    if (!graphml_node || !graph_node)
+        throw std::runtime_error("GraphML file does not contain a graph: " + graph_file.string());
+
+    const auto first_graph_child = graph_node.first_child();
+    for (const auto &entry : metadata)
+    {
+        auto key_node = graphml_node.insert_child_before("key", graph_node);
+        key_node.append_attribute("id") = entry.name.c_str();
+        key_node.append_attribute("for") = "graph";
+        key_node.append_attribute("attr.name") = entry.name.c_str();
+        key_node.append_attribute("attr.type") = entry.type.c_str();
+
+        auto data_node = first_graph_child
+                             ? graph_node.insert_child_before("data", first_graph_child)
+                             : graph_node.append_child("data");
+        data_node.append_attribute("key") = entry.name.c_str();
+        data_node.text().set(entry.value.c_str());
+    }
+
+    if (!document.save_file(graph_file.c_str()))
+        throw std::runtime_error("could not write GraphML file: " + graph_file.string());
+}
+
+// Writes the standard graph files and then enriches the GraphML file with graph-level metadata.
+void write_graph_with_metadata(const WeightedCRFGraph<> &graph,
+                               const std::filesystem::path &output_dir,
+                               const std::string &name,
+                               const std::vector<GraphMetadata> &metadata)
+{
+    write_graph(graph, output_dir, name);
+    add_graph_metadata(output_dir / (name + ".xml"), metadata);
+}
+
 void generate_graph(const Config &config)
 {
     std::filesystem::create_directories(config.output);
@@ -76,11 +130,43 @@ void generate_graph(const Config &config)
         write_graph(create_star_graph(config.nodes - 1), config.output,
                     "star_" + std::to_string(config.nodes));
     }
-    else
+    else if (config.generator == "tree")
     {
         write_graph(create_random_tree(config.nodes, config.seed), config.output,
                     "tree_" + std::to_string(config.nodes) + "_seed_" +
                         std::to_string(config.seed));
+    }
+    else
+    {
+        const size_t cycle_node_count = config.cycles * (config.cycle_length - 1);
+        const size_t bridge_count = config.nodes - 1 - cycle_node_count;
+        const size_t edge_count = config.nodes - 1 + config.cycles;
+        const double cycle_mass = config.nodes > 1
+                                      ? static_cast<double>(cycle_node_count) /
+                                            static_cast<double>(config.nodes - 1)
+                                      : 0.0;
+        const std::string name =
+            "cactus_n" + std::to_string(config.nodes) +
+            "_q" + std::to_string(config.cycles) +
+            "_k" + std::to_string(config.cycle_length) +
+            "_seed" + std::to_string(config.seed);
+        const std::vector<GraphMetadata> metadata = {
+            {"generator", "string", "simple_random_cactus"},
+            {"nodes", "long", std::to_string(config.nodes)},
+            {"edges", "long", std::to_string(edge_count)},
+            {"cycles", "long", std::to_string(config.cycles)},
+            {"cycle_length", "long", std::to_string(config.cycle_length)},
+            {"bridges", "long", std::to_string(bridge_count)},
+            {"cycle_budget", "long", std::to_string(cycle_node_count)},
+            {"cycle_mass", "double", std::to_string(cycle_mass)},
+            {"seed", "long", std::to_string(config.seed)}};
+
+        write_graph_with_metadata(
+            create_random_cactus(
+                config.nodes, config.cycles, config.cycle_length, config.seed),
+            config.output,
+            name,
+            metadata);
     }
 }
 

@@ -28,6 +28,8 @@ struct Config
     std::filesystem::path input_graph;
 
     std::size_t nodes = 0;
+    std::size_t cycles = 0;
+    std::size_t cycle_length = 0;
 
     DistributionType distribution = DistributionType::constant;
     double constant_weight = 1.0;

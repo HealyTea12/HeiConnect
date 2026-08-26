@@ -1,5 +1,8 @@
 #pragma once
+#include <algorithm>
+#include <numeric>
 #include <random>
+#include <stdexcept>
 
 #include "HeiConnect/data_structures/immutable_graph.hpp"
 #include "HeiConnect/graph.hpp"
@@ -77,5 +80,116 @@ inline WeightedCRFGraph<> create_random_tree(size_t n_nodes, unsigned int seed =
             edges[starting_point + i] = v;
         }
     }
+    return WeightedCRFGraph<>{{vertices, edges}, weights};
+}
+
+/**
+ * Creates a connected random cactus in weighted CSR form.
+ *
+ * The graph starts with one node. It then adds bridge blocks and fixed-length
+ * cycle blocks in random order. Every block is attached to a uniformly chosen
+ * node that is already part of the graph. Finally, the node labels are randomly
+ * permuted so that they do not reveal the order in which the nodes were created.
+ * Cycle edges receive weight 1.0 and bridge edges receive weight 2.0, so both a
+ * cut through two cycle edges and a cut through one bridge have value 2.0.
+ *
+ * @param node_count Total number of nodes in the generated cactus. This must be
+ *        at least one and includes the initial node.
+ * @param cycle_count Number of cycle blocks to add. Setting this to zero
+ *        generates a random tree.
+ * @param cycle_length Number of nodes in every cycle block. This must be at
+ *        least three. Each cycle uses one existing attachment node and creates
+ *        cycle_length - 1 new nodes.
+ * @param seed Seed used for block shuffling, attachment-node selection, and the
+ *        final node-label permutation. The same parameters and seed produce the
+ *        same graph.
+ * @return An undirected WeightedCRFGraph whose adjacency arrays store both
+ *         directions of every edge.
+ * @throws std::invalid_argument If node_count or cycle_length is invalid, or if
+ *         cycle_count * (cycle_length - 1) exceeds node_count - 1.
+ */
+inline WeightedCRFGraph<> create_random_cactus(
+    size_t node_count,
+    size_t cycle_count,
+    size_t cycle_length,
+    unsigned int seed = 42)
+{
+    if (node_count == 0)
+        throw std::invalid_argument("a cactus must contain at least one node");
+    if (cycle_length < 3)
+        throw std::invalid_argument("cactus cycles must contain at least three nodes");
+    if (cycle_count > 0 && cycle_length - 1 > (node_count - 1) / cycle_count)
+        throw std::invalid_argument("the requested cycles require more than the available nodes");
+
+    enum class BlockType
+    {
+        bridge,
+        cycle
+    };
+
+    const size_t cycle_node_count = cycle_count * (cycle_length - 1);
+    const size_t bridge_count = node_count - 1 - cycle_node_count;
+
+    auto random_engine = std::mt19937(seed);
+    auto blocks = std::vector<BlockType>(bridge_count, BlockType::bridge);
+    blocks.insert(blocks.end(), cycle_count, BlockType::cycle);
+    std::shuffle(blocks.begin(), blocks.end(), random_engine);
+
+    auto adjacency_lists = std::vector<std::vector<std::pair<size_t, double>>>(node_count);
+    size_t next_node = 1;
+    for (const auto block : blocks)
+    {
+        std::uniform_int_distribution<size_t> attachment_distribution(0, next_node - 1);
+        const size_t attachment_node = attachment_distribution(random_engine);
+
+        if (block == BlockType::bridge)
+        {
+            const size_t new_node = next_node++;
+            adjacency_lists[attachment_node].emplace_back(new_node, 2.0);
+            adjacency_lists[new_node].emplace_back(attachment_node, 2.0);
+            continue;
+        }
+
+        size_t previous_node = attachment_node;
+        for (size_t cycle_node = 0; cycle_node < cycle_length - 1; ++cycle_node)
+        {
+            const size_t new_node = next_node++;
+            adjacency_lists[previous_node].emplace_back(new_node, 1.0);
+            adjacency_lists[new_node].emplace_back(previous_node, 1.0);
+            previous_node = new_node;
+        }
+        adjacency_lists[previous_node].emplace_back(attachment_node, 1.0);
+        adjacency_lists[attachment_node].emplace_back(previous_node, 1.0);
+    }
+
+    auto shuffled_labels = std::vector<size_t>(node_count);
+    std::iota(shuffled_labels.begin(), shuffled_labels.end(), 0);
+    std::shuffle(shuffled_labels.begin(), shuffled_labels.end(), random_engine);
+
+    auto relabeled_adjacency_lists = std::vector<std::vector<std::pair<size_t, double>>>(node_count);
+    for (size_t node = 0; node < node_count; ++node)
+    {
+        for (const auto &[neighbor, weight] : adjacency_lists[node])
+        {
+            relabeled_adjacency_lists[shuffled_labels[node]].emplace_back(
+                shuffled_labels[neighbor], weight);
+        }
+    }
+
+    auto vertices = std::vector<size_t>(node_count + 1, 0);
+    auto edges = std::vector<size_t>();
+    auto weights = std::vector<double>();
+    edges.reserve(2 * (node_count - 1 + cycle_count));
+    weights.reserve(edges.capacity());
+    for (size_t node = 0; node < node_count; ++node)
+    {
+        for (const auto &[neighbor, weight] : relabeled_adjacency_lists[node])
+        {
+            edges.push_back(neighbor);
+            weights.push_back(weight);
+        }
+        vertices[node + 1] = edges.size();
+    }
+
     return WeightedCRFGraph<>{{vertices, edges}, weights};
 }
