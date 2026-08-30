@@ -86,6 +86,29 @@ TEST(ImmutableGraphBlockTree, Cycle5BecomesStar)
     }
 }
 
+TEST(ImmutableGraphCactusTraversal, TraversesBridgesTwiceAndCycleEdgesOnce)
+{
+    const auto cactus = WeightedCRFGraph<>{
+        {std::vector<size_t>{0, 2, 4, 7, 8},
+         std::vector<size_t>{1, 2, 0, 2, 0, 1, 3, 2}},
+        std::vector<double>(8, 1.0)};
+    auto order = std::vector<size_t>{};
+
+    cactus.cactus_for_each_hamiltonian_vertex(
+        0,
+        [&](size_t u) { order.push_back(u); });
+
+    ASSERT_EQ(order.size(), 5);
+    EXPECT_EQ(std::count(order.begin(), order.end(), 0), 1);
+    EXPECT_EQ(std::count(order.begin(), order.end(), 1), 1);
+    EXPECT_EQ(std::count(order.begin(), order.end(), 2), 2);
+    EXPECT_EQ(std::count(order.begin(), order.end(), 3), 1);
+    for (size_t i = 0; i < order.size(); ++i)
+    {
+        EXPECT_TRUE(cactus.is_edge(order[i], order[(i + 1) % order.size()]));
+    }
+}
+
 // Verifies the random cactus generator's CSR, edge-count, weight, and connectivity invariants.
 TEST(RandomCactus, GeneratesValidWeightedCsrGraph)
 {

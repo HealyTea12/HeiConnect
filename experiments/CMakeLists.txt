@@ -31,6 +31,7 @@ PRIVATE
     algos/gwc.cpp
     algos/eilp.cpp
     algos/lazy_block_tree_ilp.cpp
+    algos/wheel_con.cpp
 )
 target_include_directories(experiments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(experiments

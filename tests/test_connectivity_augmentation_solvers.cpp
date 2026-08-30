@@ -12,6 +12,7 @@
 #undef DEBUG
 
 #include "HeiConnect/data_structures/graph_utils.hpp"
+#include "HeiConnect/conn_aug/algorithms/wheel_con.hpp"
 #include "HeiConnect/conn_aug/reducers/full_single_dom_reducer.hpp"
 #include "HeiConnect/sc_reduction/transform_single_builders.hpp"
 #include "HeiConnect/set_cover/solver_greedy.hpp"
@@ -144,6 +145,52 @@ namespace
 TEST(ConnectivityAugmentationSolvers, CSRGreedyIncreasesConnectivity)
 {
     expect_csr_solver_increases_connectivity(GreedySetCoverSolver<>{});
+}
+
+TEST(ConnectivityAugmentationSolvers, WheelConIncreasesCycleConnectivity)
+{
+    const auto graph = create_cycle_graph_undirected(4);
+    const auto link_graph = graph.generate_links([](size_t, size_t) { return 1.0; });
+    auto links = std::vector<HeiConnect::conn_aug::Link<>>{};
+    for (const auto& [u, v, cost] : link_graph.csr_to_vec_links())
+    {
+        links.push_back({u, v, cost});
+    }
+    using Instance = HeiConnect::conn_aug::Instance<WeightedCRFGraph<>>;
+    const Instance instance{graph, std::move(links)};
+    const auto solution = HeiConnect::conn_aug::WheelCon{}.solve(instance);
+    const SelectedLinks selected_links(
+        solution.selected_link_ids.begin(),
+        solution.selected_link_ids.end());
+
+    ASSERT_EQ(solution.status, HeiConnect::conn_aug::SolveStatus::Feasible);
+    ASSERT_EQ(selected_links.size(), 2);
+    EXPECT_GT(
+        viecut_min_cut(graph, link_graph, selected_links),
+        viecut_min_cut(graph, link_graph));
+}
+
+TEST(ConnectivityAugmentationSolvers, WheelConIncreasesTreeConnectivity)
+{
+    const auto graph = create_star_graph<size_t, size_t, double>(4);
+    const auto link_graph = graph.generate_links([](size_t, size_t) { return 1.0; });
+    auto links = std::vector<HeiConnect::conn_aug::Link<>>{};
+    for (const auto& [u, v, cost] : link_graph.csr_to_vec_links())
+    {
+        links.push_back({u, v, cost});
+    }
+    using Instance = HeiConnect::conn_aug::Instance<WeightedCRFGraph<>>;
+    const Instance instance{graph, std::move(links)};
+    const auto solution = HeiConnect::conn_aug::WheelCon{}.solve(instance);
+    const SelectedLinks selected_links(
+        solution.selected_link_ids.begin(),
+        solution.selected_link_ids.end());
+
+    ASSERT_EQ(solution.status, HeiConnect::conn_aug::SolveStatus::Feasible);
+    ASSERT_EQ(selected_links.size(), 2);
+    EXPECT_GT(
+        viecut_min_cut(graph, link_graph, selected_links),
+        viecut_min_cut(graph, link_graph));
 }
 
 TEST(ConnectivityAugmentationSolvers, CSRGreedyCheapestIncreasesConnectivity)

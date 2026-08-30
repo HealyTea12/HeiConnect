@@ -1,6 +1,9 @@
 #pragma once
 #include <vector>
 #include <ranges>
+#include <functional>
+#include <limits>
+#include <span>
 #include <unordered_map>
 #include <unordered_set>
 #include <concepts>
@@ -117,6 +120,18 @@ public:
     size_t degree(NodeID u) const
     {
         return graph.vertices[u + 1] - graph.vertices[u];
+    }
+
+    std::span<const NodeID> neighbors(NodeID u) const
+    {
+        return std::span<const NodeID>{graph.edges}.subspan(
+            graph.vertices[u],
+            graph.vertices[u + 1] - graph.vertices[u]);
+    }
+
+    WeightType edge_weight(EdgeID e) const
+    {
+        return weights[e];
     }
 
     double average_degree() const
@@ -615,6 +630,92 @@ public:
             }
         }
         return uidx;
+    }
+
+    // Only works for connected undirected cactus graphs stored in both directions.
+    // Calls visit in the order of the cactus's outer Hamiltonian cycle. Bridge
+    // edges are traversed once in each direction and the repeated closing root
+    // is omitted.
+    template<typename Functor>
+    void cactus_for_each_hamiltonian_vertex(NodeID root, Functor&& visit) const
+    {
+        if (root >= num_vertices())
+        {
+            throw std::out_of_range("cactus traversal root is outside the graph");
+        }
+
+        const auto undirected_indices = calculate_undirected_indices();
+        const size_t undirected_edge_count = graph.edges.size() / 2;
+        auto is_bridge = std::vector<bool>(undirected_edge_count, false);
+        const EdgeID unvisited = std::numeric_limits<EdgeID>::max();
+        auto discovery = std::vector<EdgeID>(num_vertices(), unvisited);
+        auto low = std::vector<EdgeID>(num_vertices(), unvisited);
+        EdgeID timer{0};
+
+        auto find_bridges = [&](auto&& self, NodeID u, size_t parent_edge) -> void
+        {
+            discovery[u] = timer;
+            low[u] = timer++;
+            for (EdgeID e = graph.vertices[u]; e < graph.vertices[u + 1]; ++e)
+            {
+                const size_t edge = undirected_indices[e];
+                if (edge == parent_edge)
+                {
+                    continue;
+                }
+
+                const NodeID v = graph.edges[e];
+                if (discovery[v] == unvisited)
+                {
+                    self(self, v, edge);
+                    low[u] = std::min(low[u], low[v]);
+                    if (low[v] > discovery[u])
+                    {
+                        is_bridge[edge] = true;
+                    }
+                }
+                else
+                {
+                    low[u] = std::min(low[u], discovery[v]);
+                }
+            }
+        };
+        find_bridges(find_bridges, root, undirected_edge_count);
+
+        auto next_edge = std::vector<EdgeID>(graph.vertices.begin(), graph.vertices.end() - 1);
+        auto used_cycle_edge = std::vector<bool>(undirected_edge_count, false);
+        auto stack = std::vector<NodeID>{root};
+        bool traversed_edge = false;
+        while (!stack.empty())
+        {
+            const NodeID u = stack.back();
+            EdgeID& e = next_edge[u];
+            while (e < graph.vertices[u + 1] &&
+                   !is_bridge[undirected_indices[e]] &&
+                   used_cycle_edge[undirected_indices[e]])
+            {
+                ++e;
+            }
+
+            if (e == graph.vertices[u + 1])
+            {
+                if (stack.size() > 1 || !traversed_edge)
+                {
+                    std::invoke(visit, u);
+                }
+                stack.pop_back();
+                continue;
+            }
+
+            const EdgeID current_edge = e++;
+            const size_t undirected_edge = undirected_indices[current_edge];
+            if (!is_bridge[undirected_edge])
+            {
+                used_cycle_edge[undirected_edge] = true;
+            }
+            traversed_edge = true;
+            stack.push_back(graph.edges[current_edge]);
+        }
     }
 
     // Only works for cactus graphs
