@@ -29,6 +29,26 @@ static void BM_CycleReductionFullLinkGraph(benchmark::State& state)
             cycle_domination_baseline(links, cycle_size, intersection_index, nullptr, ReuseIntersectionIndex);
         benchmark::DoNotOptimize(removable.data());
         benchmark::DoNotOptimize(removable.size());
+        state.counters["removed"] = static_cast<double>(removable.size());
+    }
+
+    state.SetComplexityN(cycle_size);
+    state.counters["links"] = static_cast<double>(links.size());
+}
+
+template<typename IntersectionIndex>
+static void BM_CycleReductionSinglePassFullLinkGraph(benchmark::State& state)
+{
+    const int cycle_size = static_cast<int>(state.range(0));
+    const auto links = fullLinkGraph(cycle_size);
+    const IntersectionIndex intersection_index;
+
+    for (auto _ : state)
+    {
+        const auto removable = cycle_domination_single_pass(links, cycle_size, intersection_index);
+        benchmark::DoNotOptimize(removable.data());
+        benchmark::DoNotOptimize(removable.size());
+        state.counters["removed"] = static_cast<double>(removable.size());
     }
 
     state.SetComplexityN(cycle_size);
@@ -56,6 +76,18 @@ BENCHMARK_TEMPLATE(BM_CycleReductionFullLinkGraph, WeightedIntersectionTreeIdx<0
     ->Range(8, 256)
     ->Complexity();
 BENCHMARK_TEMPLATE(BM_CycleReductionFullLinkGraph, WeightedIntersectionTreeIdx<0>, false)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleReductionSinglePassFullLinkGraph, BaselineIntersectionIdx<0>)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleReductionSinglePassFullLinkGraph, IntersectionTreeIdx<0>)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleReductionSinglePassFullLinkGraph, WeightedIntersectionTreeIdx<0>)
     ->RangeMultiplier(2)
     ->Range(8, 256)
     ->Complexity();

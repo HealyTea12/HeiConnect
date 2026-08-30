@@ -5,6 +5,8 @@
 #include "HeiConnect/data_structures/intersection_index/intersection_tree.hpp"
 #include "HeiConnect/data_structures/graph_utils.hpp"
 
+#include <random>
+
 TEST(ConnAugReducers, MergesCrossingContractionsOnCycle)
 {
     auto graph = create_cycle_graph_undirected(4);
@@ -137,6 +139,81 @@ TEST(ConnAugReducers, IntersectionTreeMatchesBaselineCycleReduction)
     EXPECT_EQ(
         baseline_result,
         cycle_domination_baseline(links, cycle_size, weighted_intersection_tree));
+}
+
+TEST(ConnAugReducers, SinglePassReturnsBaselineCertifiedSubsetOnFullLinkGraph)
+{
+    std::vector<std::tuple<int, int, int>> links;
+    constexpr int cycle_size = 12;
+    for (int u = 0; u < cycle_size; ++u)
+    {
+        for (int v = u + 1; v < cycle_size; ++v)
+        {
+            links.emplace_back(u, v, (u + v) % cycle_size + 1);
+        }
+    }
+
+    const WeightedIntersectionTreeIdx<0> intersection_tree;
+    const auto baseline = cycle_domination_baseline(links, cycle_size, intersection_tree);
+    const auto single_pass = cycle_domination_single_pass(links, cycle_size, intersection_tree);
+
+    EXPECT_TRUE(std::includes(baseline.begin(), baseline.end(), single_pass.begin(), single_pass.end()));
+    EXPECT_LT(single_pass.size(), baseline.size());
+}
+
+TEST(ConnAugReducers, SinglePassOnlyReturnsBaselineCertifiedLinks)
+{
+    std::mt19937 random_engine(123456);
+    const BaselineIntersectionIdx<0> baseline_index;
+    const IntersectionTreeIdx<0> unweighted_intersection_tree;
+    const WeightedIntersectionTreeIdx<0> intersection_tree;
+
+    for (int cycle_size = 3; cycle_size <= 10; ++cycle_size)
+    {
+        std::bernoulli_distribution include_link(0.65);
+        std::uniform_int_distribution<int> link_weight(1, 20);
+        for (int instance = 0; instance < 100; ++instance)
+        {
+            std::vector<std::tuple<int, int, int>> links;
+            for (int u = 0; u < cycle_size; ++u)
+            {
+                for (int v = u + 1; v < cycle_size; ++v)
+                {
+                    if (include_link(random_engine))
+                    {
+                        links.emplace_back(u, v, link_weight(random_engine));
+                    }
+                }
+            }
+
+            const auto baseline = cycle_domination_baseline(links, cycle_size, baseline_index);
+            const std::vector<std::vector<int>> single_pass_results{
+                cycle_domination_single_pass(links, cycle_size, baseline_index),
+                cycle_domination_single_pass(links, cycle_size, unweighted_intersection_tree),
+                cycle_domination_single_pass(links, cycle_size, intersection_tree)};
+            for (const auto& single_pass : single_pass_results)
+            {
+                for (const int id : single_pass)
+                {
+                    EXPECT_TRUE(std::binary_search(baseline.begin(), baseline.end(), id));
+                }
+            }
+        }
+    }
+}
+
+TEST(ConnAugReducers, SinglePassDoesNotStopWhenAllCycleVerticesAreReached)
+{
+    const std::vector<std::tuple<int, int, int>> links{{0, 1, 1}, {1, 2, 2}, {0, 2, 10}};
+    const WeightedIntersectionTreeIdx<2> intersection_tree;
+    CycleReductionMetrics metrics;
+
+    cycle_domination_single_pass<2>(links, 3, intersection_tree, &metrics);
+
+    EXPECT_EQ(metrics.sources, 1);
+    EXPECT_EQ(metrics.termination_by_completion, 0);
+    EXPECT_EQ(metrics.termination_by_cutoff + metrics.termination_by_empty_queue, 1);
+    EXPECT_EQ(metrics.completed_vertices_at_stop, 3);
 }
 
 TEST(ConnAugReducers, RecordsDetailedCycleReductionMetrics)
