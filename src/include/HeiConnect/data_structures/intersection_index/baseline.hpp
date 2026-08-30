@@ -1,10 +1,37 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <vector>
 #include <tuple>
+
+using IntersectionInterval = std::tuple<size_t, size_t>;
+
+inline std::ptrdiff_t interval_overlap(IntersectionInterval left, IntersectionInterval right)
+{
+    const auto [a, b] = left;
+    const auto [c, d] = right;
+    const size_t overlap_begin = std::max(a, c);
+    const size_t overlap_end = std::min(b, d);
+    if (overlap_end < overlap_begin)
+    {
+        return -1;
+    }
+    return static_cast<std::ptrdiff_t>(overlap_end - overlap_begin);
+}
+
+inline bool intervals_touch_or_cross(IntersectionInterval left, IntersectionInterval right)
+{
+    const auto [a, b] = left;
+    const auto [c, d] = right;
+    const bool share_endpoint = a == c || a == d || b == c || b == d;
+    const std::ptrdiff_t overlap = interval_overlap(left, right);
+    const size_t smaller_interval = std::min(b - a, d - c);
+    const bool cross = overlap > 0 && static_cast<size_t>(overlap) < smaller_interval;
+    return share_endpoint || cross;
+}
 
 struct IntersectionIndexMetrics
 {
@@ -26,7 +53,7 @@ struct IntersectionIndexMetrics
 
 struct IntersectionRecord
 {
-    std::tuple<size_t, size_t> interval;
+    IntersectionInterval interval;
     size_t level;
 };
 
@@ -35,7 +62,7 @@ class BaseIntersectionIdx
 {
 public:
     virtual ~BaseIntersectionIdx() = default;
-    using Interval = std::tuple<size_t, size_t>;
+    using Interval = IntersectionInterval;
     using Index = size_t;
 
     virtual std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> make(
@@ -48,6 +75,8 @@ public:
 
     virtual void popInterval(Interval interval) = 0;
     virtual void popInterval(Index idx) = 0;
+    virtual void activateInterval(Index idx, size_t level) = 0;
+    virtual void clear() = 0;
     virtual void reset() = 0;
     virtual IntersectionIndexMetrics emit_metrics() const = 0;
 };
@@ -64,6 +93,11 @@ public:
     explicit BaselineIntersectionIdx(const std::vector<IntersectionRecord>& records) : m_records(records)
     {
         m_active.resize(records.size(), true);
+        m_initial_levels.reserve(records.size());
+        for (const IntersectionRecord& record : records)
+        {
+            m_initial_levels.push_back(record.level);
+        }
     }
 
     std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> make(
@@ -81,7 +115,6 @@ public:
         {
             m_metrics.queries++;
         }
-        auto [q_start, q_end] = query;
         for (size_t i{0}; i < m_records.size(); ++i)
         {
             if constexpr (RecordStatsLevel > 1)
@@ -94,11 +127,7 @@ public:
             }
             const auto& [start, end] = m_records[i].interval;
             // check if they intersect
-            auto intersection_size = std::min(q_end, end) - std::max(q_start, start);
-            auto query_size = q_end - q_start;
-            auto interval_size = end - start;
-            bool touch_endpoints = (q_start == end) || (q_start == start) || (q_end == end) || (q_end == start);
-            if (intersection_size < std::min(query_size, interval_size) || touch_endpoints)
+            if (intervals_touch_or_cross(query, {start, end}))
             {
                 if constexpr (RecordStatsLevel > 0)
                 {
@@ -132,9 +161,27 @@ public:
         }
     }
 
+    void activateInterval(Index idx, size_t level) override
+    {
+        if (idx < m_active.size())
+        {
+            m_records[idx].level = level;
+            m_active[idx] = true;
+        }
+    }
+
+    void clear() override
+    {
+        std::fill(m_active.begin(), m_active.end(), false);
+    }
+
     void reset() override
     {
         std::fill(m_active.begin(), m_active.end(), true);
+        for (Index index = 0; index < m_records.size(); ++index)
+        {
+            m_records[index].level = m_initial_levels[index];
+        }
     }
 
     IntersectionIndexMetrics emit_metrics() const override
@@ -145,5 +192,6 @@ public:
 private:
     std::vector<IntersectionRecord> m_records;
     std::vector<char> m_active;
+    std::vector<size_t> m_initial_levels;
     mutable IntersectionIndexMetrics m_metrics;
 };

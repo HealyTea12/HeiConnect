@@ -9,6 +9,54 @@
 #include <limits>
 #include <random>
 
+static std::vector<std::vector<int>> naive_cycle_distance_closure(std::vector<std::vector<int>> distance)
+{
+    const size_t n = distance.size();
+    bool changed = true;
+    while (changed)
+    {
+        changed = false;
+        auto relax = [&](size_t u, size_t v, int candidate) {
+            if (candidate < distance[u][v])
+            {
+                distance[u][v] = candidate;
+                distance[v][u] = candidate;
+                changed = true;
+            }
+        };
+
+        for (size_t x = 0; x < n; ++x)
+        {
+            for (size_t y = 0; y < n; ++y)
+            {
+                for (size_t z = 0; z < n; ++z)
+                {
+                    relax(x, z, distance[x][y] + distance[y][z]);
+                }
+            }
+        }
+
+        for (size_t a = 0; a < n; ++a)
+        {
+            for (size_t b = a + 1; b < n; ++b)
+            {
+                for (size_t c = b + 1; c < n; ++c)
+                {
+                    for (size_t d = c + 1; d < n; ++d)
+                    {
+                        const int candidate = distance[a][c] + distance[b][d];
+                        relax(a, b, candidate);
+                        relax(b, c, candidate);
+                        relax(c, d, candidate);
+                        relax(a, d, candidate);
+                    }
+                }
+            }
+        }
+    }
+    return distance;
+}
+
 TEST(ConnAugReducers, MergesCrossingContractionsOnCycle)
 {
     auto graph = create_cycle_graph_undirected(4);
@@ -143,6 +191,81 @@ TEST(ConnAugReducers, IntersectionTreeMatchesBaselineCycleReduction)
         cycle_domination_baseline(links, cycle_size, weighted_intersection_tree));
 }
 
+TEST(ConnAugReducers, DistinguishesTouchingCrossingAndContainedIntervals)
+{
+    EXPECT_EQ(interval_overlap({0, 2}, {3, 4}), -1);
+    EXPECT_EQ(interval_overlap({0, 2}, {2, 4}), 0);
+    EXPECT_EQ(interval_overlap({0, 2}, {1, 3}), 1);
+    EXPECT_EQ(interval_overlap({0, 4}, {1, 3}), 2);
+
+    EXPECT_TRUE(intervals_touch_or_cross({0, 2}, {2, 4}));
+    EXPECT_TRUE(intervals_touch_or_cross({0, 2}, {1, 3}));
+    EXPECT_TRUE(intervals_touch_or_cross({0, 4}, {0, 3}));
+    EXPECT_FALSE(intervals_touch_or_cross({0, 2}, {3, 4}));
+    EXPECT_FALSE(intervals_touch_or_cross({0, 4}, {1, 3}));
+}
+
+TEST(ConnAugReducers, DistanceClosureAppliesTriangleRule)
+{
+    const std::vector<std::vector<int>> distance{{0, 2, 10}, {2, 0, 3}, {10, 3, 0}};
+    const auto closed = cycle_distance_closure(distance);
+
+    EXPECT_EQ(closed[0][2], 5);
+}
+
+TEST(ConnAugReducers, DistanceClosureAppliesCrossingRule)
+{
+    const std::vector<std::vector<int>> distance{
+        {0, 10, 2, 10},
+        {10, 0, 10, 3},
+        {2, 10, 0, 10},
+        {10, 3, 10, 0}};
+    const auto closed = cycle_distance_closure(distance);
+
+    EXPECT_EQ(closed[0][1], 5);
+    EXPECT_EQ(closed[1][2], 5);
+    EXPECT_EQ(closed[2][3], 5);
+    EXPECT_EQ(closed[0][3], 5);
+}
+
+TEST(ConnAugReducers, DistanceClosureDoesNotApplyCrossingRuleToContainment)
+{
+    const std::vector<std::vector<int>> distance{
+        {0, 100, 100, 1},
+        {100, 0, 1, 100},
+        {100, 1, 0, 100},
+        {1, 100, 100, 0}};
+    const auto closed = cycle_distance_closure(distance);
+
+    EXPECT_EQ(closed, distance);
+}
+
+TEST(ConnAugReducers, DistanceClosureMatchesNaiveFixedPoint)
+{
+    std::mt19937 random_engine(246810);
+    std::uniform_int_distribution<int> link_weight(1, 100);
+    for (size_t n = 2; n <= 8; ++n)
+    {
+        for (int instance = 0; instance < 100; ++instance)
+        {
+            std::vector<std::vector<int>> distance(n, std::vector<int>(n));
+            for (size_t u = 0; u < n; ++u)
+            {
+                for (size_t v = u + 1; v < n; ++v)
+                {
+                    distance[u][v] = link_weight(random_engine);
+                    distance[v][u] = distance[u][v];
+                }
+            }
+
+            const auto expected = naive_cycle_distance_closure(distance);
+            EXPECT_EQ(cycle_distance_closure(distance), expected);
+            EXPECT_EQ(cycle_distance_closure<IntersectionTreeIdx<0>>(distance), expected);
+            EXPECT_EQ(cycle_distance_closure<WeightedIntersectionTreeIdx<0>>(distance), expected);
+        }
+    }
+}
+
 TEST(ConnAugReducers, GlobalSweepMatchesBaselineOnFullLinkGraph)
 {
     std::vector<std::tuple<int, int, int>> links;
@@ -215,7 +338,7 @@ TEST(ConnAugReducers, GlobalSweepMatchesBaselineExhaustivelyOnFourVertices)
     }
 }
 
-TEST(ConnAugReducers, GlobalSweepUsesDistinctCheapestIncidentSources)
+TEST(ConnAugReducers, GlobalSweepInitializesEveryPairState)
 {
     const std::vector<std::tuple<int, int, int>> links{
         {0, 1, 1}, {0, 2, 8}, {0, 3, 9}, {1, 2, 2}, {1, 3, 7}, {2, 3, 3}};
@@ -223,8 +346,7 @@ TEST(ConnAugReducers, GlobalSweepUsesDistinctCheapestIncidentSources)
 
     cycle_domination_global_sweep<2>(links, 4, &metrics);
 
-    EXPECT_EQ(metrics.sources, 3);
-    EXPECT_LE(metrics.sources, 4);
+    EXPECT_EQ(metrics.sources, 6);
 }
 
 TEST(ConnAugReducers, GlobalSweepKeepsStrictEquality)
@@ -256,17 +378,16 @@ TEST(ConnAugReducers, GlobalSweepHandlesWeightCutoffWithoutOverflow)
     EXPECT_EQ(std::find(actual.begin(), actual.end(), 0), actual.end());
 }
 
-TEST(ConnAugReducers, GlobalSweepDoesNotStopWhenAllCycleVerticesAreReached)
+TEST(ConnAugReducers, GlobalSweepUsesTheMaximumDistanceCutoff)
 {
     const std::vector<std::tuple<int, int, int>> links{{0, 1, 1}, {1, 2, 2}, {0, 2, 10}};
     CycleReductionMetrics metrics;
 
     cycle_domination_global_sweep<2>(links, 3, &metrics);
 
-    EXPECT_EQ(metrics.sources, 2);
+    EXPECT_EQ(metrics.sources, 3);
     EXPECT_EQ(metrics.termination_by_completion, 0);
     EXPECT_EQ(metrics.termination_by_cutoff + metrics.termination_by_empty_queue, 1);
-    EXPECT_EQ(metrics.completed_vertices_at_stop, 3);
 }
 
 TEST(ConnAugReducers, RecordsDetailedCycleReductionMetrics)

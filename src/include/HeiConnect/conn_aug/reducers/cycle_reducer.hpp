@@ -341,29 +341,64 @@ auto cycle_domination_baseline(
 }
 
 /**
- * Strict single-sweep cycle domination.
- *
- * Every cycle vertex contributes its cheapest incident actual link as a source. All distinct sources share one priority
- * queue. When a settled D(x,y) touches an actual link, the combined value is propagated to the materialized D entries
- * induced by their endpoints. Encountered actual links are introduced with the smaller of their original value and an
- * already generated value.
- *
- * The sweep keeps running after all cycle vertices have been reached. It stops only at the maximum original D value or
- * when the queue is empty.
+ * Computes the fixed point of a complete nonnegative pair-distance table under the triangle and cycle-crossing rules.
+ * Pairs are settled in increasing distance. Each pair is combined with the compatible pairs settled before it, then
+ * activated in the intersection index. Touching pairs apply the triangle rule; properly crossing pairs relax their four
+ * boundary pairs. Contained pairs do not interact unless they share an endpoint.
  */
-template<int RecordStatsLevel = 0, typename NodeID, typename Weight>
-auto cycle_domination_global_sweep(
-    const std::vector<std::tuple<NodeID, NodeID, Weight>>& links,
-    uint64_t n_nodes,
+template<int RecordStatsLevel = 0, typename Weight>
+auto cycle_distance_closure(
+    const std::vector<std::vector<Weight>>& initial_distance,
     const BaseIntersectionIdx<RecordStatsLevel>& intersection_index_type,
     CycleReductionMetrics* output_metrics = nullptr)
 {
-    using LinkID = size_t;
-    using QueueEntry = std::pair<Weight, LinkID>;
+    using PairID = size_t;
+    using QueueEntry = std::pair<Weight, PairID>;
 
-    const LinkID invalid_link = std::numeric_limits<LinkID>::max();
+    const size_t n = initial_distance.size();
+    const PairID invalid_pair = std::numeric_limits<PairID>::max();
     CycleReductionMetrics metrics;
-    if (links.empty())
+    for (const auto& row : initial_distance)
+    {
+        if (row.size() != n)
+        {
+            throw std::invalid_argument("Cycle distance closure requires a square distance table.");
+        }
+    }
+
+    auto distance = initial_distance;
+    const size_t number_of_pairs = n < 2 ? 0 : n * (n - 1) / 2;
+    std::vector<std::tuple<size_t, size_t>> intervals;
+    std::vector<PairID> pair_by_endpoints(n * n, invalid_pair);
+    std::vector<IntersectionRecord> intersection_records;
+    intervals.reserve(number_of_pairs);
+    intersection_records.reserve(number_of_pairs);
+
+    Weight maximum_distance{};
+    for (size_t u = 0; u < n; ++u)
+    {
+        if (distance[u][u] != Weight{})
+        {
+            throw std::invalid_argument("Cycle distance closure requires zero diagonal entries.");
+        }
+        for (size_t v = u + 1; v < n; ++v)
+        {
+            if (distance[u][v] < Weight{} || distance[u][v] != distance[v][u])
+            {
+                throw std::invalid_argument(
+                    "Cycle distance closure requires symmetric, nonnegative pair distances.");
+            }
+
+            const PairID pair = intervals.size();
+            intervals.emplace_back(u, v);
+            pair_by_endpoints[u * n + v] = pair;
+            pair_by_endpoints[v * n + u] = pair;
+            intersection_records.push_back({{u, v}, 0});
+            maximum_distance = std::max(maximum_distance, distance[u][v]);
+        }
+    }
+
+    if (intervals.empty())
     {
         if constexpr (RecordStatsLevel > 0)
         {
@@ -372,113 +407,67 @@ auto cycle_domination_global_sweep(
                 *output_metrics = metrics;
             }
         }
-        return std::vector<int>{};
+        return distance;
     }
 
-    std::vector<std::tuple<size_t, size_t>> intervals;
-    std::vector<LinkID> link_by_endpoints(n_nodes * n_nodes, invalid_link);
-    std::vector<IntersectionRecord> intersection_records;
-    intervals.reserve(links.size());
-    intersection_records.reserve(links.size());
-
-    Weight cutoff = std::get<2>(links.front());
-    for (LinkID id = 0; id < links.size(); ++id)
-    {
-        const auto& [input_u, input_v, weight] = links[id];
-        const size_t u = static_cast<size_t>(std::min(input_u, input_v));
-        const size_t v = static_cast<size_t>(std::max(input_u, input_v));
-        if (u == v || u >= n_nodes || v >= n_nodes)
-        {
-            throw std::invalid_argument("Cycle domination requires valid links with two distinct endpoints.");
-        }
-        if (link_by_endpoints[u * n_nodes + v] != invalid_link)
-        {
-            throw std::invalid_argument("Cycle domination requires unique links.");
-        }
-
-        intervals.emplace_back(u, v);
-        link_by_endpoints[u * n_nodes + v] = id;
-        link_by_endpoints[v * n_nodes + u] = id;
-        intersection_records.push_back({intervals.back(), 0});
-        cutoff = std::max(cutoff, weight);
-    }
-
-    std::vector<LinkID> cheapest_incident(n_nodes, invalid_link);
-    for (LinkID id = 0; id < links.size(); ++id)
-    {
-        const auto [u, v] = intervals[id];
-        const Weight weight = std::get<2>(links[id]);
-        for (const size_t endpoint : {u, v})
-        {
-            const LinkID previous = cheapest_incident[endpoint];
-            if (previous == invalid_link || weight < std::get<2>(links[previous]))
-            {
-                cheapest_incident[endpoint] = id;
-            }
-        }
-    }
-
-    std::vector<Weight> distance(links.size());
-    std::vector<char> known(links.size(), false);
-    std::vector<char> settled(links.size(), false);
-    std::vector<char> completed_vertices;
-    if constexpr (RecordStatsLevel > 1)
-    {
-        completed_vertices.resize(n_nodes, false);
-    }
     std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> queue;
-
-    auto enqueue = [&](LinkID id, Weight value) {
-        if (settled[id] || (known[id] && distance[id] <= value))
-        {
-            return false;
-        }
-        known[id] = true;
-        distance[id] = value;
-        queue.emplace(value, id);
-        if constexpr (RecordStatsLevel > 0)
-        {
-            metrics.links_enqueued++;
-        }
-        return true;
-    };
-
-    for (LinkID source : cheapest_incident)
+    for (PairID pair = 0; pair < intervals.size(); ++pair)
     {
-        if (source == invalid_link)
-        {
-            continue;
-        }
-        if (enqueue(source, std::get<2>(links[source])))
-        {
-            if constexpr (RecordStatsLevel > 0)
-            {
-                metrics.sources++;
-            }
-        }
+        const auto [u, v] = intervals[pair];
+        queue.emplace(distance[u][v], pair);
     }
 
-    auto intersection_index = intersection_index_type.make(intersection_records);
     if constexpr (RecordStatsLevel > 0)
     {
-        metrics.possible_priority_queue_pops = links.size();
+        metrics.sources = intervals.size();
+        metrics.links_enqueued = intervals.size();
+        metrics.possible_priority_queue_pops = intervals.size();
     }
     if constexpr (RecordStatsLevel > 1)
     {
         metrics.maximum_queue_size = queue.size();
     }
 
-    size_t n_complete_vertices = 0;
+    std::vector<char> settled(intervals.size(), false);
+    std::vector<Weight> settled_weight_levels;
+    auto intersection_index = intersection_index_type.make(intersection_records);
+    intersection_index->clear();
+
+    auto relax = [&](size_t u, size_t v, Weight candidate) {
+        if (u == v)
+        {
+            return;
+        }
+        if (u > v)
+        {
+            std::swap(u, v);
+        }
+        const PairID target = pair_by_endpoints[u * n + v];
+        if (settled[target] || distance[u][v] <= candidate)
+        {
+            return;
+        }
+
+        distance[u][v] = candidate;
+        distance[v][u] = candidate;
+        queue.emplace(candidate, target);
+        if constexpr (RecordStatsLevel > 0)
+        {
+            metrics.links_enqueued++;
+        }
+    };
+
     bool stopped_by_cutoff = false;
     while (!queue.empty())
     {
         const auto [current_distance, current] = queue.top();
         queue.pop();
-        if (settled[current] || current_distance != distance[current])
+        const auto [a, b] = intervals[current];
+        if (settled[current] || current_distance != distance[a][b])
         {
             continue;
         }
-        if (current_distance >= cutoff)
+        if (current_distance >= maximum_distance)
         {
             stopped_by_cutoff = true;
             if constexpr (RecordStatsLevel > 0)
@@ -494,36 +483,15 @@ auto cycle_domination_global_sweep(
             metrics.priority_queue_pops++;
         }
 
-        const auto [a, b] = intervals[current];
-        if constexpr (RecordStatsLevel > 1)
-        {
-            for (const size_t endpoint : {a, b})
-            {
-                if (!completed_vertices[endpoint])
-                {
-                    completed_vertices[endpoint] = true;
-                    n_complete_vertices++;
-                }
-            }
-        }
-
+        const Weight threshold = maximum_distance - current_distance;
+        const size_t exclusive_level = static_cast<size_t>(
+            std::lower_bound(settled_weight_levels.begin(), settled_weight_levels.end(), threshold) -
+            settled_weight_levels.begin());
         intersection_index->forEachIntersection(
-            [&](LinkID next, typename BaseIntersectionIdx<RecordStatsLevel>::Interval next_interval) {
-                const Weight next_weight = std::get<2>(links[next]);
-                if (!known[next])
-                {
-                    enqueue(next, next_weight);
-                    if constexpr (RecordStatsLevel > 0)
-                    {
-                        metrics.intersection_candidates_enqueued++;
-                    }
-                }
-                else if constexpr (RecordStatsLevel > 0)
-                {
-                    metrics.intersection_candidates_already_explored++;
-                }
-
-                if (next == current || next_weight >= cutoff - current_distance)
+            [&](PairID, typename BaseIntersectionIdx<RecordStatsLevel>::Interval other_interval) {
+                const auto [c, d] = other_interval;
+                const Weight other_distance = distance[c][d];
+                if (other_distance >= threshold)
                 {
                     if constexpr (RecordStatsLevel > 0)
                     {
@@ -532,31 +500,45 @@ auto cycle_domination_global_sweep(
                     return;
                 }
 
-                const Weight combined_distance = current_distance + next_weight;
-                const auto [c, d] = next_interval;
-                std::array<size_t, 4> joined_endpoints{a, b, c, d};
-                std::sort(joined_endpoints.begin(), joined_endpoints.end());
-                const size_t unique_end = static_cast<size_t>(
-                    std::unique(joined_endpoints.begin(), joined_endpoints.end()) - joined_endpoints.begin());
-
-                for (size_t left = 0; left < unique_end; ++left)
+                if constexpr (RecordStatsLevel > 0)
                 {
-                    for (size_t right = left + 1; right < unique_end; ++right)
-                    {
-                        const LinkID joined =
-                            link_by_endpoints[joined_endpoints[left] * n_nodes + joined_endpoints[right]];
-                        if (joined == invalid_link)
-                        {
-                            continue;
-                        }
-
-                        const Weight candidate = std::min(std::get<2>(links[joined]), combined_distance);
-                        enqueue(joined, candidate);
-                    }
+                    metrics.intersection_candidates_enqueued++;
+                }
+                const Weight candidate = current_distance + other_distance;
+                if (a == c)
+                {
+                    relax(b, d, candidate);
+                }
+                else if (a == d)
+                {
+                    relax(b, c, candidate);
+                }
+                else if (b == c)
+                {
+                    relax(a, d, candidate);
+                }
+                else if (b == d)
+                {
+                    relax(a, c, candidate);
+                }
+                else
+                {
+                    std::array<size_t, 4> endpoints{a, b, c, d};
+                    std::sort(endpoints.begin(), endpoints.end());
+                    relax(endpoints[0], endpoints[1], candidate);
+                    relax(endpoints[1], endpoints[2], candidate);
+                    relax(endpoints[2], endpoints[3], candidate);
+                    relax(endpoints[0], endpoints[3], candidate);
                 }
             },
             intervals[current],
-            1);
+            exclusive_level);
+
+        if (settled_weight_levels.empty() || settled_weight_levels.back() != current_distance)
+        {
+            settled_weight_levels.push_back(current_distance);
+        }
+        intersection_index->activateInterval(current, settled_weight_levels.size() - 1);
 
         if constexpr (RecordStatsLevel > 1)
         {
@@ -574,24 +556,86 @@ auto cycle_domination_global_sweep(
     }
     if constexpr (RecordStatsLevel > 1)
     {
-        metrics.completed_vertices_at_stop = n_complete_vertices;
         metrics.maximum_pops_per_link = metrics.priority_queue_pops == 0 ? 0 : 1;
     }
-
-    std::vector<int> result;
-    for (LinkID id = 0; id < links.size(); ++id)
-    {
-        if (known[id] && distance[id] < std::get<2>(links[id]))
-        {
-            result.push_back(static_cast<int>(id));
-        }
-    }
-
     if constexpr (RecordStatsLevel > 0)
     {
         if (output_metrics != nullptr)
         {
             *output_metrics = metrics;
+        }
+    }
+    return distance;
+}
+
+template<typename IntersectionIndex = BaselineIntersectionIdx<0>, typename Weight>
+auto cycle_distance_closure(const std::vector<std::vector<Weight>>& initial_distance)
+{
+    const IntersectionIndex intersection_index_type;
+    return cycle_distance_closure(initial_distance, intersection_index_type);
+}
+
+template<int RecordStatsLevel = 0, typename NodeID, typename Weight>
+auto cycle_domination_global_sweep(
+    const std::vector<std::tuple<NodeID, NodeID, Weight>>& links,
+    uint64_t n_nodes,
+    const BaseIntersectionIdx<RecordStatsLevel>& intersection_index_type,
+    CycleReductionMetrics* output_metrics = nullptr)
+{
+    if (links.empty())
+    {
+        if constexpr (RecordStatsLevel > 0)
+        {
+            if (output_metrics != nullptr)
+            {
+                *output_metrics = {};
+            }
+        }
+        return std::vector<int>{};
+    }
+
+    std::vector<std::vector<Weight>> distance(n_nodes, std::vector<Weight>(n_nodes));
+    std::vector<char> present(n_nodes * n_nodes, false);
+    for (const auto& [input_u, input_v, weight] : links)
+    {
+        const size_t u = static_cast<size_t>(std::min(input_u, input_v));
+        const size_t v = static_cast<size_t>(std::max(input_u, input_v));
+        if (u == v || u >= n_nodes || v >= n_nodes)
+        {
+            throw std::invalid_argument("Cycle domination requires valid links with two distinct endpoints.");
+        }
+        if (present[u * n_nodes + v])
+        {
+            throw std::invalid_argument("Cycle domination requires unique links.");
+        }
+        distance[u][v] = weight;
+        distance[v][u] = weight;
+        present[u * n_nodes + v] = true;
+        present[v * n_nodes + u] = true;
+    }
+
+    for (size_t u = 0; u < n_nodes; ++u)
+    {
+        for (size_t v = u + 1; v < n_nodes; ++v)
+        {
+            if (!present[u * n_nodes + v])
+            {
+                throw std::invalid_argument("Cycle domination requires a complete pair-distance table.");
+            }
+        }
+    }
+
+    const auto closed_distance =
+        cycle_distance_closure(distance, intersection_index_type, output_metrics);
+    std::vector<int> result;
+    for (size_t id = 0; id < links.size(); ++id)
+    {
+        const auto& [input_u, input_v, weight] = links[id];
+        const size_t u = static_cast<size_t>(std::min(input_u, input_v));
+        const size_t v = static_cast<size_t>(std::max(input_u, input_v));
+        if (closed_distance[u][v] < weight)
+        {
+            result.push_back(static_cast<int>(id));
         }
     }
     return result;

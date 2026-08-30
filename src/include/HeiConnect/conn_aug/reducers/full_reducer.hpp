@@ -4,6 +4,7 @@
 #include <chrono>
 #include <optional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -268,8 +269,46 @@ public:
                     }
                 }
 
-                std::vector<std::tuple<int, int, LinkDistance>> cycle_links;
-                std::vector<LinkEdgeID> original_link_ids;
+                std::vector<NodeID> cycle_vertices(cycle_size);
+                std::vector<char> has_cycle_vertex(cycle_size, false);
+                for (NodeID u{0}; u < link_graph.num_vertices(); ++u)
+                {
+                    const int position = cycle_positions[u];
+                    if (position >= 0)
+                    {
+                        cycle_vertices[position] = u;
+                        has_cycle_vertex[position] = true;
+                    }
+                }
+
+                if (std::find(has_cycle_vertex.begin(), has_cycle_vertex.end(), false) != has_cycle_vertex.end())
+                {
+                    throw std::invalid_argument("Cycle reduction requires one graph vertex for every cycle position.");
+                }
+
+                std::vector<std::vector<LinkDistance>> cycle_distance(
+                    cycle_size,
+                    std::vector<LinkDistance>(cycle_size));
+                for (int u = 0; u < cycle_size; ++u)
+                {
+                    for (int v = u + 1; v < cycle_size; ++v)
+                    {
+                        const LinkDistance distance =
+                            distance_oracle.get_distance(cycle_vertices[u], cycle_vertices[v]);
+                        cycle_distance[u][v] = distance;
+                        cycle_distance[v][u] = distance;
+                    }
+                }
+
+                CycleReductionMetrics current_cycle_metrics;
+                const auto closed_cycle_distance = cycle_distance_closure<RecordStatsLevel>(
+                    cycle_distance,
+                    *m_intersection_index,
+                    &current_cycle_metrics);
+                if constexpr (RecordStatsLevel > 0)
+                {
+                    cycle_reduction_metrics.add(current_cycle_metrics);
+                }
 
                 for (NodeID u{0}; u < link_graph.num_vertices(); ++u)
                 {
@@ -288,27 +327,11 @@ public:
                             continue;
                         }
 
-                        cycle_links.emplace_back(
-                            std::min(cycle_u, cycle_v),
-                            std::max(cycle_u, cycle_v),
-                            distance_oracle.get_distance(u, v));
-                        original_link_ids.emplace_back(e);
+                        if (closed_cycle_distance[cycle_u][cycle_v] < distance_oracle.get_distance(u, v))
+                        {
+                            removable[e] = true;
+                        }
                     }
-                }
-
-                CycleReductionMetrics current_cycle_metrics;
-                const auto removable_cycle_links = cycle_domination_global_sweep<RecordStatsLevel>(
-                    cycle_links,
-                    cycle_size,
-                    *m_intersection_index,
-                    &current_cycle_metrics);
-                if constexpr (RecordStatsLevel > 0)
-                {
-                    cycle_reduction_metrics.add(current_cycle_metrics);
-                }
-                for (const int id : removable_cycle_links)
-                {
-                    removable[original_link_ids[id]] = true;
                 }
             }
         }
