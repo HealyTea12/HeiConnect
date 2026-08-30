@@ -2,12 +2,14 @@
 
 #include "HeiConnect/data_structures/intersection_index/baseline.hpp"
 
+#include <array>
 #include <stdexcept>
 #include <algorithm>
 #include <tuple>
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <queue>
 #include <utility>
@@ -340,27 +342,29 @@ auto cycle_domination_baseline(
 }
 
 /**
- * Single-pass cycle domination.
+ * Global cycle domination sweep.
  *
- * The Dijkstra tree is rooted at the globally cheapest link. For every input link {u,v}, the cheapest tree path between
- * a link incident to u and a link incident to v is a valid connected replacement. The input link is removable when
- * that path is strictly cheaper than the input link.
+ * Every available link initializes its endpoint-pair state with its own weight. The priority queue therefore processes
+ * the cheapest singleton first without making it the only source. Compatible crossing states are joined and their
+ * combined weight is propagated to every pair induced by their endpoints. Dense instances directly join settled states;
+ * sparse instances use the intersection index to extend states with available links. Extending only with available links
+ * is sufficient because an available link can always be removed last from a connected crossing witness.
  *
- * Unlike the baseline, this algorithm deliberately keeps exploring after every cycle vertex has been reached because
- * later links add paths to the tree used to certify removals. The search only stops at the global weight cutoff or when
- * the queue is empty.
+ * A separate replacement flag records generated states whose weight ties an original link. This is needed because the
+ * original singleton may already have been settled when an equal-cost replacement is found. The sweep does not stop
+ * when every cycle vertex has been reached. It only stops at the global weight cutoff or when the queue is empty.
+ * Link weights must be strictly positive.
  */
 template<int RecordStatsLevel = 0, typename NodeID, typename Weight>
-auto cycle_domination_single_pass(
+auto cycle_domination_global_sweep(
     const std::vector<std::tuple<NodeID, NodeID, Weight>>& links,
     uint64_t n_nodes,
     const BaseIntersectionIdx<RecordStatsLevel>& intersection_index_type,
     CycleReductionMetrics* output_metrics = nullptr)
 {
-    using LinkID = size_t;
-    using QueueEntry = std::pair<Weight, LinkID>;
+    using StateID = size_t;
+    using QueueEntry = std::pair<Weight, StateID>;
 
-    const LinkID invalid_link = std::numeric_limits<LinkID>::max();
     CycleReductionMetrics metrics;
     if (links.empty())
     {
@@ -374,63 +378,190 @@ auto cycle_domination_single_pass(
         return std::vector<int>{};
     }
 
+    std::vector<NodeID> coordinates;
+    coordinates.reserve(2 * links.size());
+    for (const auto& [u, v, weight] : links)
+    {
+        coordinates.push_back(u);
+        coordinates.push_back(v);
+    }
+    std::sort(coordinates.begin(), coordinates.end());
+    coordinates.erase(std::unique(coordinates.begin(), coordinates.end()), coordinates.end());
+
+    const size_t cycle_size = coordinates.size();
+    auto coordinate_of = [&](NodeID vertex) {
+        return static_cast<size_t>(std::lower_bound(coordinates.begin(), coordinates.end(), vertex) - coordinates.begin());
+    };
     std::vector<std::tuple<size_t, size_t>> intervals;
+    std::vector<size_t> incident_links(cycle_size);
     std::vector<Weight> sorted_weights;
-    std::vector<std::vector<LinkID>> incident(n_nodes);
     intervals.reserve(links.size());
     sorted_weights.reserve(links.size());
-    for (LinkID id = 0; id < links.size(); ++id)
+    for (const auto& [input_u, input_v, weight] : links)
     {
-        const auto& [u, v, weight] = links[id];
-        intervals.emplace_back(static_cast<size_t>(u), static_cast<size_t>(v));
-        sorted_weights.push_back(weight);
-        incident[static_cast<size_t>(u)].push_back(id);
-        incident[static_cast<size_t>(v)].push_back(id);
-    }
-    std::sort(sorted_weights.begin(), sorted_weights.end());
+        if (weight <= Weight{})
+        {
+            throw std::invalid_argument("Cycle domination requires strictly positive link weights.");
+        }
+        if (input_u == input_v)
+        {
+            throw std::invalid_argument("Cycle domination requires links with two distinct endpoints.");
+        }
 
+        const size_t u = coordinate_of(std::min(input_u, input_v));
+        const size_t v = coordinate_of(std::max(input_u, input_v));
+        intervals.emplace_back(u, v);
+        incident_links[u]++;
+        incident_links[v]++;
+        sorted_weights.push_back(weight);
+    }
+
+    auto sorted_intervals = intervals;
+    std::sort(sorted_intervals.begin(), sorted_intervals.end());
+    if (std::adjacent_find(sorted_intervals.begin(), sorted_intervals.end()) != sorted_intervals.end())
+    {
+        throw std::invalid_argument("Cycle domination requires unique links.");
+    }
+
+    const bool has_possible_target = std::any_of(intervals.begin(), intervals.end(), [&](const auto& interval) {
+        const auto [u, v] = interval;
+        return incident_links[u] > 1 && incident_links[v] > 1;
+    });
+    if (!has_possible_target)
+    {
+        if constexpr (RecordStatsLevel > 0)
+        {
+            if (output_metrics != nullptr)
+            {
+                *output_metrics = metrics;
+            }
+        }
+        return std::vector<int>{};
+    }
+
+    std::vector<std::pair<size_t, size_t>> endpoints;
+    // Intermediate states may be virtual chords that are not available input links.
+    const size_t possible_states = cycle_size * (cycle_size - 1) / 2;
+    endpoints.reserve(possible_states);
+    for (size_t u = 0; u < cycle_size; ++u)
+    {
+        for (size_t v = u + 1; v < cycle_size; ++v)
+        {
+            endpoints.emplace_back(u, v);
+        }
+    }
+    // A direct settled-state scan considers at most N^2 / 2 pairs, while indexed extensions consider at most N * m.
+    const bool use_settled_state_joins = links.size() >= (endpoints.size() + 1) / 2;
+    std::vector<StateID> state_by_endpoints;
+    if (use_settled_state_joins)
+    {
+        state_by_endpoints.resize(cycle_size * cycle_size);
+        for (StateID state = 0; state < endpoints.size(); ++state)
+        {
+            const auto [u, v] = endpoints[state];
+            state_by_endpoints[u * cycle_size + v] = state;
+            state_by_endpoints[v * cycle_size + u] = state;
+        }
+    }
+    auto dense_state_for = [&](size_t u, size_t v) { return state_by_endpoints[u * cycle_size + v]; };
+    auto sparse_state_for = [&](size_t u, size_t v) {
+        if (u > v)
+        {
+            std::swap(u, v);
+        }
+        return u * (2 * cycle_size - u - 1) / 2 + v - u - 1;
+    };
+    auto state_for = [&](size_t u, size_t v) {
+        return use_settled_state_joins ? dense_state_for(u, v) : sparse_state_for(u, v);
+    };
+
+    auto states_touch = [&](StateID left, StateID right) {
+        const auto [a, b] = endpoints[left];
+        const auto [c, d] = endpoints[right];
+        return a == c || a == d || b == c || b == d || (a < c && c < b && b < d) ||
+            (c < a && a < d && d < b);
+    };
+
+    std::vector<Weight> best(endpoints.size());
+    std::vector<char> known(endpoints.size(), false);
+    std::vector<char> has_replacement(endpoints.size(), false);
+    std::vector<char> settled(endpoints.size(), false);
+    std::vector<char> completed_vertices(cycle_size, false);
+    std::vector<StateID> settled_states;
+    if (use_settled_state_joins)
+    {
+        settled_states.reserve(endpoints.size());
+    }
+    std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> queue;
+
+    for (size_t id = 0; id < links.size(); ++id)
+    {
+        const auto [u, v] = intervals[id];
+        const Weight weight = std::get<2>(links[id]);
+        const StateID state = state_for(u, v);
+        if (known[state])
+        {
+            throw std::invalid_argument("Cycle domination requires unique links.");
+        }
+        known[state] = true;
+        best[state] = weight;
+        queue.emplace(weight, state);
+        if constexpr (RecordStatsLevel > 0)
+        {
+            metrics.links_enqueued++;
+        }
+    }
+
+    std::sort(sorted_weights.begin(), sorted_weights.end());
+    const Weight cutoff = sorted_weights.back();
     std::vector<IntersectionRecord> intersection_records;
     intersection_records.reserve(links.size());
-    for (LinkID id = 0; id < links.size(); ++id)
+    for (size_t id = 0; id < links.size(); ++id)
     {
         const Weight weight = std::get<2>(links[id]);
         const size_t level = static_cast<size_t>(
             std::lower_bound(sorted_weights.begin(), sorted_weights.end(), weight) - sorted_weights.begin());
         intersection_records.push_back({intervals[id], level});
     }
-
-    const LinkID cheapest_link = static_cast<LinkID>(std::min_element(
-        links.begin(),
-        links.end(),
-        [](const auto& left, const auto& right) { return std::get<2>(left) < std::get<2>(right); }) - links.begin());
-    const Weight cutoff = sorted_weights.back();
-
-    std::vector<char> explored(links.size(), false);
-    std::vector<char> complete(n_nodes, false);
-    std::vector<LinkID> predecessor(links.size(), invalid_link);
-    std::vector<Weight> distance(links.size());
-    std::vector<LinkID> tree_order;
-    tree_order.reserve(links.size());
-    std::vector<size_t> pops_per_link;
-    if constexpr (RecordStatsLevel > 1)
+    std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> intersection_index;
+    if (!use_settled_state_joins)
     {
-        pops_per_link.resize(links.size());
+        intersection_index = intersection_index_type.make(intersection_records);
     }
 
-    auto intersection_index = intersection_index_type.make(intersection_records);
-    std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> queue;
-    explored[cheapest_link] = true;
-    predecessor[cheapest_link] = cheapest_link;
-    distance[cheapest_link] = std::get<2>(links[cheapest_link]);
-    intersection_index->popInterval(cheapest_link);
-    queue.emplace(distance[cheapest_link], cheapest_link);
-    tree_order.push_back(cheapest_link);
+    auto relax_join = [&](const auto& find_state, size_t a, size_t b, size_t c, size_t d, Weight combined_weight) {
+        std::array<size_t, 4> joined_endpoints{a, b, c, d};
+        std::sort(joined_endpoints.begin(), joined_endpoints.end());
+        const size_t unique_end = static_cast<size_t>(
+            std::unique(joined_endpoints.begin(), joined_endpoints.end()) - joined_endpoints.begin());
+        for (size_t left = 0; left < unique_end; ++left)
+        {
+            for (size_t right = left + 1; right < unique_end; ++right)
+            {
+                const StateID joined = find_state(joined_endpoints[left], joined_endpoints[right]);
+                if (!known[joined] || combined_weight < best[joined])
+                {
+                    known[joined] = true;
+                    best[joined] = combined_weight;
+                    has_replacement[joined] = true;
+                    queue.emplace(combined_weight, joined);
+                    if constexpr (RecordStatsLevel > 0)
+                    {
+                        metrics.links_enqueued++;
+                    }
+                }
+                else if (combined_weight == best[joined])
+                {
+                    has_replacement[joined] = true;
+                }
+            }
+        }
+    };
 
     if constexpr (RecordStatsLevel > 0)
     {
         metrics.sources = 1;
-        metrics.links_enqueued = 1;
-        metrics.possible_priority_queue_pops = links.size();
+        metrics.possible_priority_queue_pops = possible_states;
     }
     if constexpr (RecordStatsLevel > 1)
     {
@@ -441,29 +572,15 @@ auto cycle_domination_single_pass(
     bool stopped_by_cutoff = false;
     while (!queue.empty())
     {
-        const auto [current_distance, current] = queue.top();
+        const auto [current_weight, current] = queue.top();
         queue.pop();
-        if constexpr (RecordStatsLevel > 0)
+        if (settled[current] || current_weight != best[current])
         {
-            metrics.priority_queue_pops++;
+            continue;
         }
-        if constexpr (RecordStatsLevel > 1)
-        {
-            pops_per_link[current]++;
-        }
-
-        const auto& [u, v, weight] = links[current];
-        for (const NodeID endpoint : {u, v})
-        {
-            const size_t vertex = static_cast<size_t>(endpoint);
-            if (!complete[vertex])
-            {
-                complete[vertex] = true;
-                n_complete_vertices++;
-            }
-        }
-
-        if (current_distance >= cutoff)
+        // Equal-cost replacements are recorded when they are generated. With positive link weights, a state at the
+        // cutoff cannot produce another useful state.
+        if (current_weight >= cutoff)
         {
             stopped_by_cutoff = true;
             if constexpr (RecordStatsLevel > 0)
@@ -472,58 +589,71 @@ auto cycle_domination_single_pass(
             }
             break;
         }
+        if constexpr (RecordStatsLevel > 0)
+        {
+            metrics.priority_queue_pops++;
+        }
 
-        std::vector<LinkID> neighbours;
-        std::vector<LinkID> rejected_by_cutoff;
-        const Weight weight_limit = cutoff - current_distance;
-        const size_t exclusive_level = static_cast<size_t>(
-            std::lower_bound(sorted_weights.begin(), sorted_weights.end(), weight_limit) - sorted_weights.begin());
-        intersection_index->forEachIntersection(
-            [&](LinkID next, typename BaseIntersectionIdx<RecordStatsLevel>::Interval) {
-                const Weight next_weight = std::get<2>(links[next]);
-                if (explored[next])
+        settled[current] = true;
+        const auto [a, b] = endpoints[current];
+        for (const size_t endpoint : {a, b})
+        {
+            if (!completed_vertices[endpoint])
+            {
+                completed_vertices[endpoint] = true;
+                n_complete_vertices++;
+            }
+        }
+
+        const Weight weight_limit = cutoff - current_weight;
+        if (use_settled_state_joins)
+        {
+            for (StateID other : settled_states)
+            {
+                if (best[other] > weight_limit)
                 {
-                    if constexpr (RecordStatsLevel > 0)
-                    {
-                        metrics.intersection_candidates_already_explored++;
-                    }
+                    break;
                 }
-                else if (next_weight >= cutoff - current_distance)
+                if (!states_touch(current, other))
                 {
-                    if constexpr (RecordStatsLevel > 0)
-                    {
-                        metrics.intersection_candidates_rejected_by_cutoff++;
-                    }
-                    rejected_by_cutoff.push_back(next);
+                    continue;
                 }
-                else
+                if constexpr (RecordStatsLevel > 0)
                 {
-                    explored[next] = true;
-                    predecessor[next] = current;
-                    distance[next] = current_distance + next_weight;
-                    neighbours.push_back(next);
-                    tree_order.push_back(next);
+                    metrics.intersection_candidates_enqueued++;
+                }
+
+                const auto [c, d] = endpoints[other];
+                relax_join(dense_state_for, a, b, c, d, current_weight + best[other]);
+            }
+            settled_states.push_back(current);
+        }
+        else
+        {
+            const size_t exclusive_level = static_cast<size_t>(
+                std::upper_bound(sorted_weights.begin(), sorted_weights.end(), weight_limit) - sorted_weights.begin());
+            intersection_index->forEachIntersection(
+                [&](size_t next, typename BaseIntersectionIdx<RecordStatsLevel>::Interval next_interval) {
+                    const Weight next_weight = std::get<2>(links[next]);
+                    if (next_weight > weight_limit)
+                    {
+                        if constexpr (RecordStatsLevel > 0)
+                        {
+                            metrics.intersection_candidates_rejected_by_cutoff++;
+                        }
+                        return;
+                    }
                     if constexpr (RecordStatsLevel > 0)
                     {
                         metrics.intersection_candidates_enqueued++;
                     }
-                }
-            },
-            intervals[current],
-            exclusive_level);
 
-        for (LinkID rejected : rejected_by_cutoff)
-        {
-            intersection_index->popInterval(rejected);
-        }
-        for (LinkID next : neighbours)
-        {
-            intersection_index->popInterval(next);
-            queue.emplace(distance[next], next);
-            if constexpr (RecordStatsLevel > 0)
-            {
-                metrics.links_enqueued++;
-            }
+                    const Weight combined_weight = current_weight + next_weight;
+                    const auto [c, d] = next_interval;
+                    relax_join(sparse_state_for, a, b, c, d, combined_weight);
+                },
+                std::tuple{a, b},
+                exclusive_level);
         }
         if constexpr (RecordStatsLevel > 1)
         {
@@ -537,92 +667,28 @@ auto cycle_domination_single_pass(
         {
             metrics.termination_by_empty_queue++;
         }
-        metrics.intersection_index = intersection_index->emit_metrics();
     }
     if constexpr (RecordStatsLevel > 1)
     {
         metrics.completed_vertices_at_stop = n_complete_vertices;
-        metrics.maximum_pops_per_link = *std::max_element(pops_per_link.begin(), pops_per_link.end());
+        metrics.maximum_pops_per_link = metrics.priority_queue_pops == 0 ? 0 : 1;
     }
-
-    const Weight infinity = std::numeric_limits<Weight>::max();
-    std::vector<char> removable(links.size(), false);
-    std::vector<Weight> tree_distance(links.size());
-    std::vector<Weight> vertex_distance(n_nodes);
-    for (size_t source = 0; source < n_nodes; ++source)
+    if constexpr (RecordStatsLevel > 0)
     {
-        if (incident[source].empty())
+        if (intersection_index != nullptr)
         {
-            continue;
-        }
-
-        std::fill(tree_distance.begin(), tree_distance.end(), infinity);
-        for (LinkID id : incident[source])
-        {
-            if (explored[id])
-            {
-                tree_distance[id] = std::get<2>(links[id]);
-            }
-        }
-
-        for (auto iterator = tree_order.rbegin(); iterator != tree_order.rend(); ++iterator)
-        {
-            const LinkID current = *iterator;
-            const LinkID parent = predecessor[current];
-            if (current == parent || tree_distance[current] >= cutoff)
-            {
-                continue;
-            }
-
-            const Weight parent_weight = std::get<2>(links[parent]);
-            if (parent_weight < cutoff - tree_distance[current])
-            {
-                tree_distance[parent] =
-                    std::min(tree_distance[parent], tree_distance[current] + parent_weight);
-            }
-        }
-
-        for (LinkID current : tree_order)
-        {
-            const LinkID parent = predecessor[current];
-            if (current == parent || tree_distance[parent] >= cutoff)
-            {
-                continue;
-            }
-
-            const Weight current_weight = std::get<2>(links[current]);
-            if (current_weight < cutoff - tree_distance[parent])
-            {
-                tree_distance[current] =
-                    std::min(tree_distance[current], tree_distance[parent] + current_weight);
-            }
-        }
-
-        std::fill(vertex_distance.begin(), vertex_distance.end(), infinity);
-        for (LinkID id : tree_order)
-        {
-            const auto& [u, v, weight] = links[id];
-            vertex_distance[static_cast<size_t>(u)] =
-                std::min(vertex_distance[static_cast<size_t>(u)], tree_distance[id]);
-            vertex_distance[static_cast<size_t>(v)] =
-                std::min(vertex_distance[static_cast<size_t>(v)], tree_distance[id]);
-        }
-
-        for (LinkID id : incident[source])
-        {
-            const auto& [u, v, weight] = links[id];
-            const size_t target = static_cast<size_t>(u) == source ? static_cast<size_t>(v) : static_cast<size_t>(u);
-            if (vertex_distance[target] < weight)
-            {
-                removable[id] = true;
-            }
+            metrics.intersection_index = intersection_index->emit_metrics();
         }
     }
 
     std::vector<int> result;
-    for (LinkID id = 0; id < links.size(); ++id)
+    for (size_t id = 0; id < links.size(); ++id)
     {
-        if (removable[id])
+        const auto& [input_u, input_v, weight] = links[id];
+        const size_t u = coordinate_of(std::min(input_u, input_v));
+        const size_t v = coordinate_of(std::max(input_u, input_v));
+        const StateID state = state_for(u, v);
+        if (known[state] && (best[state] < weight || (has_replacement[state] && best[state] == weight)))
         {
             result.push_back(static_cast<int>(id));
         }
@@ -635,17 +701,22 @@ auto cycle_domination_single_pass(
             *output_metrics = metrics;
         }
     }
+    static_cast<void>(n_nodes);
     return result;
 }
 
 template<int RecordStatsLevel = 0, typename NodeID, typename Weight>
-auto cycle_domination_single_pass(
+auto cycle_domination_global_sweep(
     const std::vector<std::tuple<NodeID, NodeID, Weight>>& links,
     uint64_t n_nodes,
     CycleReductionMetrics* output_metrics = nullptr)
 {
     const BaselineIntersectionIdx<RecordStatsLevel> intersection_index_type;
-    return cycle_domination_single_pass<RecordStatsLevel>(links, n_nodes, intersection_index_type, output_metrics);
+    return cycle_domination_global_sweep<RecordStatsLevel>(
+        links,
+        n_nodes,
+        intersection_index_type,
+        output_metrics);
 }
 
 // /*

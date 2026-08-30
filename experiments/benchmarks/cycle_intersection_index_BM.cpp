@@ -16,6 +16,20 @@ static std::vector<std::tuple<int, int, int>> fullLinkGraph(int cycle_size)
     return links;
 }
 
+static std::vector<std::tuple<int, int, int>> sparseCrossingLinkGraph(int cycle_size)
+{
+    std::vector<std::tuple<int, int, int>> links;
+    const int half_cycle = cycle_size / 2;
+    for (int u = 0; u < half_cycle; ++u)
+    {
+        const int opposite = u + half_cycle;
+        const int shifted_opposite = half_cycle + (u + 1) % half_cycle;
+        links.emplace_back(u, opposite, u + 1);
+        links.emplace_back(u, shifted_opposite, cycle_size * cycle_size + u + 1);
+    }
+    return links;
+}
+
 template<typename IntersectionIndex, bool ReuseIntersectionIndex>
 static void BM_CycleReductionFullLinkGraph(benchmark::State& state)
 {
@@ -37,7 +51,7 @@ static void BM_CycleReductionFullLinkGraph(benchmark::State& state)
 }
 
 template<typename IntersectionIndex>
-static void BM_CycleReductionSinglePassFullLinkGraph(benchmark::State& state)
+static void BM_CycleReductionGlobalSweepFullLinkGraph(benchmark::State& state)
 {
     const int cycle_size = static_cast<int>(state.range(0));
     const auto links = fullLinkGraph(cycle_size);
@@ -45,7 +59,46 @@ static void BM_CycleReductionSinglePassFullLinkGraph(benchmark::State& state)
 
     for (auto _ : state)
     {
-        const auto removable = cycle_domination_single_pass(links, cycle_size, intersection_index);
+        const auto removable = cycle_domination_global_sweep(links, cycle_size, intersection_index);
+        benchmark::DoNotOptimize(removable.data());
+        benchmark::DoNotOptimize(removable.size());
+        state.counters["removed"] = static_cast<double>(removable.size());
+    }
+
+    state.SetComplexityN(cycle_size);
+    state.counters["links"] = static_cast<double>(links.size());
+}
+
+template<typename IntersectionIndex, bool ReuseIntersectionIndex>
+static void BM_CycleReductionSparseCrossingLinkGraph(benchmark::State& state)
+{
+    const int cycle_size = static_cast<int>(state.range(0));
+    const auto links = sparseCrossingLinkGraph(cycle_size);
+    const IntersectionIndex intersection_index;
+
+    for (auto _ : state)
+    {
+        const auto removable =
+            cycle_domination_baseline(links, cycle_size, intersection_index, nullptr, ReuseIntersectionIndex);
+        benchmark::DoNotOptimize(removable.data());
+        benchmark::DoNotOptimize(removable.size());
+        state.counters["removed"] = static_cast<double>(removable.size());
+    }
+
+    state.SetComplexityN(cycle_size);
+    state.counters["links"] = static_cast<double>(links.size());
+}
+
+template<typename IntersectionIndex>
+static void BM_CycleReductionGlobalSweepSparseCrossingLinkGraph(benchmark::State& state)
+{
+    const int cycle_size = static_cast<int>(state.range(0));
+    const auto links = sparseCrossingLinkGraph(cycle_size);
+    const IntersectionIndex intersection_index;
+
+    for (auto _ : state)
+    {
+        const auto removable = cycle_domination_global_sweep(links, cycle_size, intersection_index);
         benchmark::DoNotOptimize(removable.data());
         benchmark::DoNotOptimize(removable.size());
         state.counters["removed"] = static_cast<double>(removable.size());
@@ -79,15 +132,23 @@ BENCHMARK_TEMPLATE(BM_CycleReductionFullLinkGraph, WeightedIntersectionTreeIdx<0
     ->RangeMultiplier(2)
     ->Range(8, 256)
     ->Complexity();
-BENCHMARK_TEMPLATE(BM_CycleReductionSinglePassFullLinkGraph, BaselineIntersectionIdx<0>)
+BENCHMARK_TEMPLATE(BM_CycleReductionGlobalSweepFullLinkGraph, BaselineIntersectionIdx<0>)
     ->RangeMultiplier(2)
     ->Range(8, 256)
     ->Complexity();
-BENCHMARK_TEMPLATE(BM_CycleReductionSinglePassFullLinkGraph, IntersectionTreeIdx<0>)
+BENCHMARK_TEMPLATE(BM_CycleReductionGlobalSweepFullLinkGraph, IntersectionTreeIdx<0>)
     ->RangeMultiplier(2)
     ->Range(8, 256)
     ->Complexity();
-BENCHMARK_TEMPLATE(BM_CycleReductionSinglePassFullLinkGraph, WeightedIntersectionTreeIdx<0>)
+BENCHMARK_TEMPLATE(BM_CycleReductionGlobalSweepFullLinkGraph, WeightedIntersectionTreeIdx<0>)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleReductionSparseCrossingLinkGraph, WeightedIntersectionTreeIdx<0>, true)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleReductionGlobalSweepSparseCrossingLinkGraph, WeightedIntersectionTreeIdx<0>)
     ->RangeMultiplier(2)
     ->Range(8, 256)
     ->Complexity();

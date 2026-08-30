@@ -297,7 +297,7 @@ public:
                 }
 
                 CycleReductionMetrics current_cycle_metrics;
-                const auto removable_cycle_links = cycle_domination_single_pass<RecordStatsLevel>(
+                const auto removable_cycle_links = cycle_domination_global_sweep<RecordStatsLevel>(
                     cycle_links,
                     cycle_size,
                     *m_intersection_index,
