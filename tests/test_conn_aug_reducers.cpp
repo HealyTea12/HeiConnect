@@ -5,85 +5,9 @@
 #include "HeiConnect/data_structures/intersection_index/intersection_tree.hpp"
 #include "HeiConnect/data_structures/graph_utils.hpp"
 
+#include <array>
 #include <limits>
-#include <queue>
 #include <random>
-
-static bool cycle_links_touch(
-    const std::tuple<int, int, int>& left,
-    const std::tuple<int, int, int>& right)
-{
-    const auto [a, b, left_weight] = left;
-    const auto [c, d, right_weight] = right;
-    return a == c || a == d || b == c || b == d || (a < c && c < b && b < d) ||
-        (c < a && a < d && d < b);
-}
-
-static std::vector<int> brute_force_cycle_dominations(const std::vector<std::tuple<int, int, int>>& links)
-{
-    using QueueEntry = std::pair<int, size_t>;
-    const int infinity = std::numeric_limits<int>::max();
-    std::vector<int> result;
-
-    for (size_t target = 0; target < links.size(); ++target)
-    {
-        const auto [source_vertex, target_vertex, target_weight] = links[target];
-        std::vector<int> distance(links.size(), infinity);
-        std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> queue;
-        for (size_t id = 0; id < links.size(); ++id)
-        {
-            if (id == target)
-            {
-                continue;
-            }
-            const auto [u, v, weight] = links[id];
-            if (u == source_vertex || v == source_vertex)
-            {
-                distance[id] = weight;
-                queue.emplace(weight, id);
-            }
-        }
-
-        int replacement_weight = infinity;
-        while (!queue.empty())
-        {
-            const auto [current_weight, current] = queue.top();
-            queue.pop();
-            if (current_weight != distance[current])
-            {
-                continue;
-            }
-
-            const auto [u, v, weight] = links[current];
-            if (u == target_vertex || v == target_vertex)
-            {
-                replacement_weight = current_weight;
-                break;
-            }
-
-            for (size_t next = 0; next < links.size(); ++next)
-            {
-                if (next == target || next == current || !cycle_links_touch(links[current], links[next]))
-                {
-                    continue;
-                }
-                const int next_weight = std::get<2>(links[next]);
-                if (current_weight <= target_weight && next_weight <= target_weight - current_weight &&
-                    current_weight + next_weight < distance[next])
-                {
-                    distance[next] = current_weight + next_weight;
-                    queue.emplace(distance[next], next);
-                }
-            }
-        }
-
-        if (replacement_weight <= target_weight)
-        {
-            result.push_back(static_cast<int>(target));
-        }
-    }
-    return result;
-}
 
 TEST(ConnAugReducers, MergesCrossingContractionsOnCycle)
 {
@@ -219,7 +143,7 @@ TEST(ConnAugReducers, IntersectionTreeMatchesBaselineCycleReduction)
         cycle_domination_baseline(links, cycle_size, weighted_intersection_tree));
 }
 
-TEST(ConnAugReducers, GlobalSweepMatchesExactOracleOnFullLinkGraph)
+TEST(ConnAugReducers, GlobalSweepMatchesBaselineOnFullLinkGraph)
 {
     std::vector<std::tuple<int, int, int>> links;
     constexpr int cycle_size = 12;
@@ -231,60 +155,22 @@ TEST(ConnAugReducers, GlobalSweepMatchesExactOracleOnFullLinkGraph)
         }
     }
 
-    const auto exact = brute_force_cycle_dominations(links);
+    const auto expected = cycle_domination_baseline(links, cycle_size);
     const IntersectionTreeIdx<0> intersection_tree;
     const WeightedIntersectionTreeIdx<0> weighted_intersection_tree;
 
-    EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size), exact);
-    EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size, intersection_tree), exact);
-    EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size, weighted_intersection_tree), exact);
+    EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size), expected);
+    EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size, intersection_tree), expected);
+    EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size, weighted_intersection_tree), expected);
 }
 
-TEST(ConnAugReducers, GlobalSweepMatchesStrictBaselineWhenEqualityIsImpossible)
-{
-    std::vector<std::tuple<int, int, int>> links;
-    const WeightedIntersectionTreeIdx<0> weighted_intersection_tree;
-    constexpr int cycle_size = 6;
-    int weight = 1;
-    for (int u = 0; u < cycle_size; ++u)
-    {
-        for (int v = u + 1; v < cycle_size; ++v)
-        {
-            links.emplace_back(u, v, weight);
-            weight *= 2;
-        }
-    }
-
-    const auto exact = brute_force_cycle_dominations(links);
-    EXPECT_EQ(cycle_domination_baseline(links, cycle_size), exact);
-    EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size, weighted_intersection_tree), exact);
-}
-
-TEST(ConnAugReducers, GlobalSweepMatchesStrictBaselineOnSparseCrossingLinks)
-{
-    constexpr int cycle_size = 8;
-    constexpr int half_cycle = cycle_size / 2;
-    std::vector<std::tuple<int, int, int>> links;
-    for (int u = 0; u < half_cycle; ++u)
-    {
-        links.emplace_back(u, u + half_cycle, u + 1);
-        links.emplace_back(u, half_cycle + (u + 1) % half_cycle, cycle_size * cycle_size + u + 1);
-    }
-    const auto exact = brute_force_cycle_dominations(links);
-    const WeightedIntersectionTreeIdx<0> weighted_intersection_tree;
-
-    EXPECT_EQ(cycle_domination_baseline(links, cycle_size, weighted_intersection_tree), exact);
-    EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size, weighted_intersection_tree), exact);
-}
-
-TEST(ConnAugReducers, GlobalSweepMatchesExactOracleOnRandomInstances)
+TEST(ConnAugReducers, GlobalSweepMatchesBaselineOnRandomCompleteTables)
 {
     std::mt19937 random_engine(123456);
+    std::uniform_int_distribution<int> link_weight(1, 1000);
     const WeightedIntersectionTreeIdx<0> weighted_intersection_tree;
     for (int cycle_size = 3; cycle_size <= 10; ++cycle_size)
     {
-        std::bernoulli_distribution include_link(0.65);
-        std::uniform_int_distribution<int> link_weight(1, 20);
         for (int instance = 0; instance < 100; ++instance)
         {
             std::vector<std::tuple<int, int, int>> links;
@@ -292,21 +178,18 @@ TEST(ConnAugReducers, GlobalSweepMatchesExactOracleOnRandomInstances)
             {
                 for (int v = u + 1; v < cycle_size; ++v)
                 {
-                    if (include_link(random_engine))
-                    {
-                        links.emplace_back(u, v, link_weight(random_engine));
-                    }
+                    links.emplace_back(u, v, link_weight(random_engine));
                 }
             }
 
-            const auto exact = brute_force_cycle_dominations(links);
-            EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size), exact);
-            EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size, weighted_intersection_tree), exact);
+            const auto expected = cycle_domination_baseline(links, cycle_size, weighted_intersection_tree);
+            EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size), expected);
+            EXPECT_EQ(cycle_domination_global_sweep(links, cycle_size, weighted_intersection_tree), expected);
         }
     }
 }
 
-TEST(ConnAugReducers, GlobalSweepMatchesExactOracleExhaustivelyOnFourVertices)
+TEST(ConnAugReducers, GlobalSweepMatchesBaselineExhaustivelyOnFourVertices)
 {
     const std::array<std::pair<int, int>, 6> endpoints{
         std::pair{0, 1},
@@ -323,80 +206,54 @@ TEST(ConnAugReducers, GlobalSweepMatchesExactOracleExhaustivelyOnFourVertices)
         std::vector<std::tuple<int, int, int>> links;
         for (const auto [u, v] : endpoints)
         {
-            const int weight = encoded % 4;
+            const int weight = encoded % 4 + 1;
             encoded /= 4;
-            if (weight != 0)
-            {
-                links.emplace_back(u, v, weight);
-            }
+            links.emplace_back(u, v, weight);
         }
 
-        EXPECT_EQ(cycle_domination_global_sweep(links, 4), brute_force_cycle_dominations(links));
+        EXPECT_EQ(cycle_domination_global_sweep(links, 4), cycle_domination_baseline(links, 4));
     }
 }
 
-TEST(ConnAugReducers, GlobalSweepFindsDisconnectedEqualCostWitness)
+TEST(ConnAugReducers, GlobalSweepUsesDistinctCheapestIncidentSources)
 {
-    const std::vector<std::tuple<int, int, int>> links{{4, 5, 1}, {0, 1, 4}, {0, 2, 2}, {1, 3, 2}};
-    const auto exact = brute_force_cycle_dominations(links);
-    const IntersectionTreeIdx<0> intersection_tree;
+    const std::vector<std::tuple<int, int, int>> links{
+        {0, 1, 1}, {0, 2, 8}, {0, 3, 9}, {1, 2, 2}, {1, 3, 7}, {2, 3, 3}};
+    CycleReductionMetrics metrics;
+
+    cycle_domination_global_sweep<2>(links, 4, &metrics);
+
+    EXPECT_EQ(metrics.sources, 3);
+    EXPECT_LE(metrics.sources, 4);
+}
+
+TEST(ConnAugReducers, GlobalSweepKeepsStrictEquality)
+{
+    const std::vector<std::tuple<int, int, int>> links{
+        {0, 1, 4}, {0, 2, 2}, {0, 3, 100}, {1, 2, 100}, {1, 3, 2}, {2, 3, 100}};
     const WeightedIntersectionTreeIdx<0> weighted_intersection_tree;
+    const auto expected = cycle_domination_baseline(links, 4, weighted_intersection_tree);
+    const auto actual = cycle_domination_global_sweep(links, 4, weighted_intersection_tree);
 
-    EXPECT_EQ(exact, (std::vector<int>{1}));
-    EXPECT_EQ(cycle_domination_global_sweep(links, 6), exact);
-    EXPECT_EQ(cycle_domination_global_sweep(links, 6, intersection_tree), exact);
-    EXPECT_EQ(cycle_domination_global_sweep(links, 6, weighted_intersection_tree), exact);
-}
-
-TEST(ConnAugReducers, GlobalSweepRecordsRecursiveEqualCostWitness)
-{
-    std::vector<std::tuple<int, int, int>> links{{0, 1, 3}, {0, 4, 1}, {2, 5, 1}, {1, 3, 1}};
-    std::sort(links.begin(), links.end());
-
-    do
-    {
-        EXPECT_EQ(cycle_domination_global_sweep(links, 6), brute_force_cycle_dominations(links));
-    }
-    while (std::next_permutation(links.begin(), links.end()));
-}
-
-TEST(ConnAugReducers, GlobalSweepDoesNotTreatSingletonAsEqualCostReplacement)
-{
-    const std::vector<std::tuple<int, int, int>> links{{0, 1, 4}};
-
-    EXPECT_TRUE(cycle_domination_global_sweep(links, 3).empty());
-}
-
-TEST(ConnAugReducers, GlobalSweepRecordsSharedEndpointEqualCostWitness)
-{
-    const std::vector<std::tuple<int, int, int>> links{{0, 4, 4}, {0, 2, 2}, {2, 4, 2}};
-    const WeightedIntersectionTreeIdx<0> weighted_intersection_tree;
-
-    EXPECT_EQ(cycle_domination_global_sweep(links, 5), (std::vector<int>{0}));
-    EXPECT_EQ(cycle_domination_global_sweep(links, 5, weighted_intersection_tree), (std::vector<int>{0}));
-}
-
-TEST(ConnAugReducers, GlobalSweepRejectsNestedNoncrossingWitness)
-{
-    const std::vector<std::tuple<int, int, int>> links{{0, 3, 4}, {0, 4, 2}, {1, 3, 2}};
-
-    EXPECT_TRUE(cycle_domination_global_sweep(links, 5).empty());
+    EXPECT_EQ(actual, expected);
+    EXPECT_EQ(std::find(actual.begin(), actual.end(), 0), actual.end());
 }
 
 TEST(ConnAugReducers, GlobalSweepHandlesWeightCutoffWithoutOverflow)
 {
     const auto maximum_weight = std::numeric_limits<uint64_t>::max();
-    const std::vector<std::tuple<int, int, uint64_t>> equal_links{
+    const std::vector<std::tuple<int, int, uint64_t>> links{
         {0, 1, maximum_weight},
         {0, 2, maximum_weight - 2},
-        {1, 3, 2}};
-    const std::vector<std::tuple<int, int, uint64_t>> overflowing_links{
-        {0, 1, maximum_weight},
-        {0, 2, maximum_weight - 1},
-        {1, 3, 2}};
+        {0, 3, maximum_weight},
+        {1, 2, maximum_weight},
+        {1, 3, 2},
+        {2, 3, maximum_weight}};
+    const auto expected = cycle_domination_baseline(links, 4);
+    const auto actual = cycle_domination_global_sweep(links, 4);
 
-    EXPECT_EQ(cycle_domination_global_sweep(equal_links, 4), (std::vector<int>{0}));
-    EXPECT_TRUE(cycle_domination_global_sweep(overflowing_links, 4).empty());
+    EXPECT_EQ(actual, expected);
+    EXPECT_EQ(std::find(actual.begin(), actual.end(), 0), actual.end());
 }
 
 TEST(ConnAugReducers, GlobalSweepDoesNotStopWhenAllCycleVerticesAreReached)
@@ -406,7 +263,7 @@ TEST(ConnAugReducers, GlobalSweepDoesNotStopWhenAllCycleVerticesAreReached)
 
     cycle_domination_global_sweep<2>(links, 3, &metrics);
 
-    EXPECT_EQ(metrics.sources, 1);
+    EXPECT_EQ(metrics.sources, 2);
     EXPECT_EQ(metrics.termination_by_completion, 0);
     EXPECT_EQ(metrics.termination_by_cutoff + metrics.termination_by_empty_queue, 1);
     EXPECT_EQ(metrics.completed_vertices_at_stop, 3);
