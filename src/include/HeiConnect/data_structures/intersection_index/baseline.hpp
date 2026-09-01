@@ -4,8 +4,9 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
-#include <vector>
+#include <stdexcept>
 #include <tuple>
+#include <vector>
 
 using IntersectionInterval = std::tuple<size_t, size_t>;
 
@@ -68,6 +69,11 @@ public:
     virtual std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> make(
         const std::vector<IntersectionRecord>& records) const = 0;
 
+    virtual std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> makeEmpty(
+        const std::vector<IntersectionRecord>& possible_records) const = 0;
+
+    virtual Index addInterval(IntersectionRecord record) = 0;
+
     virtual void forEachIntersection(
         std::function<void(Index, Interval)> callback,
         Interval query,
@@ -100,10 +106,37 @@ public:
         }
     }
 
+    explicit BaselineIntersectionIdx(size_t capacity) : m_incremental(true)
+    {
+        m_records.reserve(capacity);
+        m_active.reserve(capacity);
+        m_initial_levels.reserve(capacity);
+    }
+
     std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> make(
         const std::vector<IntersectionRecord>& records) const override
     {
         return std::make_unique<BaselineIntersectionIdx<RecordStatsLevel>>(records);
+    }
+
+    std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> makeEmpty(
+        const std::vector<IntersectionRecord>& possible_records) const override
+    {
+        return std::make_unique<BaselineIntersectionIdx<RecordStatsLevel>>(possible_records.size());
+    }
+
+    Index addInterval(IntersectionRecord record) override
+    {
+        if (!m_records.empty() && m_records.back().level > record.level)
+        {
+            throw std::invalid_argument("Intervals must be added in nondecreasing level order.");
+        }
+
+        const Index index = m_records.size();
+        m_records.push_back(record);
+        m_active.push_back(true);
+        m_initial_levels.push_back(record.level);
+        return index;
     }
 
     void forEachIntersection(
@@ -117,6 +150,10 @@ public:
         }
         for (size_t i{0}; i < m_records.size(); ++i)
         {
+            if (m_incremental && m_records[i].level >= exclusive_level)
+            {
+                break;
+            }
             if constexpr (RecordStatsLevel > 1)
             {
                 m_metrics.candidates_inspected++;
@@ -193,5 +230,6 @@ private:
     std::vector<IntersectionRecord> m_records;
     std::vector<char> m_active;
     std::vector<size_t> m_initial_levels;
+    bool m_incremental{false};
     mutable IntersectionIndexMetrics m_metrics;
 };

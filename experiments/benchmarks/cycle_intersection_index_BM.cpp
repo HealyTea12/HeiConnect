@@ -3,6 +3,8 @@
 #include "HeiConnect/conn_aug/reducers/cycle_reducer.hpp"
 #include "HeiConnect/data_structures/intersection_index/intersection_tree.hpp"
 
+#include <random>
+
 static std::vector<std::tuple<int, int, int>> fullLinkGraph(int cycle_size)
 {
     std::vector<std::tuple<int, int, int>> links;
@@ -16,14 +18,40 @@ static std::vector<std::tuple<int, int, int>> fullLinkGraph(int cycle_size)
     return links;
 }
 
-static std::vector<std::vector<int>> fullDistanceTable(int cycle_size)
+struct UniformRealZeroToOne
 {
-    std::vector<std::vector<int>> distance(cycle_size, std::vector<int>(cycle_size));
+    using Weight = double;
+
+    static auto makeDistribution()
+    {
+        return std::uniform_real_distribution<double>(0.0, 1.0);
+    }
+};
+
+template<int Maximum>
+struct UniformIntegerOneTo
+{
+    using Weight = int;
+
+    static auto makeDistribution()
+    {
+        return std::uniform_int_distribution<int>(1, Maximum);
+    }
+};
+
+template<typename WeightDistribution>
+static auto randomFullDistanceTable(int cycle_size)
+{
+    using Weight = typename WeightDistribution::Weight;
+
+    std::mt19937 random_engine(42);
+    auto weight_distribution = WeightDistribution::makeDistribution();
+    std::vector<std::vector<Weight>> distance(cycle_size, std::vector<Weight>(cycle_size));
     for (int u = 0; u < cycle_size; ++u)
     {
         for (int v = u + 1; v < cycle_size; ++v)
         {
-            distance[u][v] = (u + v) % cycle_size + 1;
+            distance[u][v] = weight_distribution(random_engine);
             distance[v][u] = distance[u][v];
         }
     }
@@ -50,20 +78,28 @@ static void BM_CycleReductionFullLinkGraph(benchmark::State& state)
     state.counters["links"] = static_cast<double>(links.size());
 }
 
-template<typename IntersectionIndex>
+template<typename IntersectionIndex, typename WeightDistribution>
 static void BM_CycleDistanceClosureFullTable(benchmark::State& state)
 {
     const int cycle_size = static_cast<int>(state.range(0));
-    const auto distance = fullDistanceTable(cycle_size);
+    const auto distance = randomFullDistanceTable<WeightDistribution>(cycle_size);
+    CycleReductionMetrics metrics;
 
     for (auto _ : state)
     {
-        const auto closed = cycle_distance_closure<IntersectionIndex>(distance);
+        const IntersectionIndex intersection_index;
+        const auto closed = cycle_distance_closure<2>(distance, intersection_index, &metrics);
         benchmark::DoNotOptimize(closed.data());
     }
 
+    const double pairs = static_cast<double>(cycle_size * (cycle_size - 1) / 2);
+    const double worst_case_iterations = pairs * (pairs + 1) / 2;
     state.SetComplexityN(cycle_size);
-    state.counters["pairs"] = static_cast<double>(cycle_size * (cycle_size - 1) / 2);
+    state.counters["index_iterations"] = static_cast<double>(metrics.intersection_index.candidates_inspected);
+    state.counters["iteration_ratio"] =
+        static_cast<double>(metrics.intersection_index.candidates_inspected) / worst_case_iterations;
+    state.counters["pairs"] = pairs;
+    state.counters["worst_case_iterations"] = worst_case_iterations;
 }
 
 BENCHMARK_TEMPLATE(BM_CycleReductionFullLinkGraph, BaselineIntersectionIdx<0>, true)
@@ -90,15 +126,39 @@ BENCHMARK_TEMPLATE(BM_CycleReductionFullLinkGraph, WeightedIntersectionTreeIdx<0
     ->RangeMultiplier(2)
     ->Range(8, 256)
     ->Complexity();
-BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, BaselineIntersectionIdx<0>)
+BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, BaselineIntersectionIdx<2>, UniformRealZeroToOne)
     ->RangeMultiplier(2)
     ->Range(8, 256)
     ->Complexity();
-BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, IntersectionTreeIdx<0>)
+BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, IntersectionTreeIdx<2>, UniformRealZeroToOne)
     ->RangeMultiplier(2)
     ->Range(8, 256)
     ->Complexity();
-BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, WeightedIntersectionTreeIdx<0>)
+BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, WeightedIntersectionTreeIdx<2>, UniformRealZeroToOne)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, BaselineIntersectionIdx<2>, UniformIntegerOneTo<5>)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, IntersectionTreeIdx<2>, UniformIntegerOneTo<5>)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, WeightedIntersectionTreeIdx<2>, UniformIntegerOneTo<5>)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, BaselineIntersectionIdx<2>, UniformIntegerOneTo<10>)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, IntersectionTreeIdx<2>, UniformIntegerOneTo<10>)
+    ->RangeMultiplier(2)
+    ->Range(8, 256)
+    ->Complexity();
+BENCHMARK_TEMPLATE(BM_CycleDistanceClosureFullTable, WeightedIntersectionTreeIdx<2>, UniformIntegerOneTo<10>)
     ->RangeMultiplier(2)
     ->Range(8, 256)
     ->Complexity();

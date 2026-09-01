@@ -52,6 +52,30 @@ public:
         return std::make_unique<IntersectionTreeIdx<RecordStatsLevel, PruneByLevel>>(records);
     }
 
+    std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> makeEmpty(
+        const std::vector<IntersectionRecord>& possible_records) const override
+    {
+        auto result = std::make_unique<IntersectionTreeIdx<RecordStatsLevel, PruneByLevel>>(possible_records);
+        result->clear();
+        return result;
+    }
+
+    Index addInterval(IntersectionRecord record) override
+    {
+        int node = m_root;
+        while (node >= 0)
+        {
+            const Index index = m_nodes[node].interval;
+            if (m_records[index].interval == record.interval)
+            {
+                activateInterval(index, record.level);
+                return index;
+            }
+            node = record.interval < m_records[index].interval ? m_nodes[node].left : m_nodes[node].right;
+        }
+        throw std::invalid_argument("Cannot add an interval that was not preallocated.");
+    }
+
     void forEachIntersection(std::function<void(Index, Interval)> callback, Interval query, size_t exclusive_level)
         const override
     {

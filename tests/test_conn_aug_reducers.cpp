@@ -205,6 +205,34 @@ TEST(ConnAugReducers, DistinguishesTouchingCrossingAndContainedIntervals)
     EXPECT_FALSE(intervals_touch_or_cross({0, 4}, {1, 3}));
 }
 
+TEST(ConnAugReducers, IncrementalBaselineStartsEmptyAndStopsAtExclusiveLevel)
+{
+    const std::vector<IntersectionRecord> possible_records{
+        {{0, 2}, 0},
+        {{1, 3}, 0},
+        {{2, 4}, 0}};
+    const BaselineIntersectionIdx<2> index_type;
+    auto index = index_type.makeEmpty(possible_records);
+    std::vector<size_t> intersections;
+
+    index->forEachIntersection(
+        [&](size_t id, IntersectionInterval) { intersections.push_back(id); },
+        {0, 4},
+        3);
+    EXPECT_TRUE(intersections.empty());
+
+    EXPECT_EQ(index->addInterval({{0, 2}, 0}), 0);
+    EXPECT_EQ(index->addInterval({{1, 3}, 1}), 1);
+    EXPECT_EQ(index->addInterval({{2, 4}, 2}), 2);
+    index->forEachIntersection(
+        [&](size_t id, IntersectionInterval) { intersections.push_back(id); },
+        {0, 4},
+        2);
+
+    EXPECT_EQ(intersections, (std::vector<size_t>{0}));
+    EXPECT_EQ(index->emit_metrics().candidates_inspected, 2);
+}
+
 TEST(ConnAugReducers, DistanceClosureAppliesTriangleRule)
 {
     const std::vector<std::vector<int>> distance{{0, 2, 10}, {2, 0, 3}, {10, 3, 0}};
@@ -226,6 +254,38 @@ TEST(ConnAugReducers, DistanceClosureAppliesCrossingRule)
     EXPECT_EQ(closed[1][2], 5);
     EXPECT_EQ(closed[2][3], 5);
     EXPECT_EQ(closed[0][3], 5);
+}
+
+TEST(ConnAugReducers, DistanceClosureRecordsIndexIterationsAtMetricsLevelTwo)
+{
+    const std::vector<std::vector<int>> distance{
+        {0, 10, 2, 10},
+        {10, 0, 10, 3},
+        {2, 10, 0, 10},
+        {10, 3, 10, 0}};
+    const BaselineIntersectionIdx<2> intersection_index;
+    CycleReductionMetrics metrics;
+
+    cycle_distance_closure<2>(distance, intersection_index, &metrics);
+
+    constexpr size_t number_of_pairs = 6;
+    constexpr size_t worst_case_iterations = number_of_pairs * (number_of_pairs + 1) / 2;
+    EXPECT_GT(metrics.intersection_index.candidates_inspected, 0);
+    EXPECT_LE(metrics.intersection_index.candidates_inspected, worst_case_iterations);
+}
+
+TEST(ConnAugReducers, DistanceClosureTightensMaximumAfterRelaxation)
+{
+    const std::vector<std::vector<int>> distance{{0, 1, 5}, {1, 0, 1}, {5, 1, 0}};
+    const BaselineIntersectionIdx<2> intersection_index;
+    CycleReductionMetrics metrics;
+
+    const auto closed = cycle_distance_closure<2>(distance, intersection_index, &metrics);
+
+    EXPECT_EQ(closed[0][2], 2);
+    EXPECT_EQ(metrics.priority_queue_pops, 2);
+    EXPECT_EQ(metrics.intersection_index.candidates_inspected, 1);
+    EXPECT_EQ(metrics.termination_by_cutoff, 1);
 }
 
 TEST(ConnAugReducers, DistanceClosureDoesNotApplyCrossingRuleToContainment)

@@ -374,7 +374,6 @@ auto cycle_distance_closure(
     intervals.reserve(number_of_pairs);
     intersection_records.reserve(number_of_pairs);
 
-    Weight maximum_distance{};
     for (size_t u = 0; u < n; ++u)
     {
         if (distance[u][u] != Weight{})
@@ -394,7 +393,6 @@ auto cycle_distance_closure(
             pair_by_endpoints[u * n + v] = pair;
             pair_by_endpoints[v * n + u] = pair;
             intersection_records.push_back({{u, v}, 0});
-            maximum_distance = std::max(maximum_distance, distance[u][v]);
         }
     }
 
@@ -411,10 +409,12 @@ auto cycle_distance_closure(
     }
 
     std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> queue;
+    std::priority_queue<QueueEntry> maximum_queue;
     for (PairID pair = 0; pair < intervals.size(); ++pair)
     {
         const auto [u, v] = intervals[pair];
         queue.emplace(distance[u][v], pair);
+        maximum_queue.emplace(distance[u][v], pair);
     }
 
     if constexpr (RecordStatsLevel > 0)
@@ -430,8 +430,7 @@ auto cycle_distance_closure(
 
     std::vector<char> settled(intervals.size(), false);
     std::vector<Weight> settled_weight_levels;
-    auto intersection_index = intersection_index_type.make(intersection_records);
-    intersection_index->clear();
+    auto intersection_index = intersection_index_type.makeEmpty(intersection_records);
 
     auto relax = [&](size_t u, size_t v, Weight candidate) {
         if (u == v)
@@ -451,6 +450,7 @@ auto cycle_distance_closure(
         distance[u][v] = candidate;
         distance[v][u] = candidate;
         queue.emplace(candidate, target);
+        maximum_queue.emplace(candidate, target);
         if constexpr (RecordStatsLevel > 0)
         {
             metrics.links_enqueued++;
@@ -467,7 +467,20 @@ auto cycle_distance_closure(
         {
             continue;
         }
-        if (current_distance >= maximum_distance)
+
+        while (!maximum_queue.empty())
+        {
+            const auto [maximum_distance, maximum_pair] = maximum_queue.top();
+            const auto [maximum_u, maximum_v] = intervals[maximum_pair];
+            if (!settled[maximum_pair] && maximum_distance == distance[maximum_u][maximum_v])
+            {
+                break;
+            }
+            maximum_queue.pop();
+        }
+
+        const Weight maximum_unsettled_distance = maximum_queue.top().first;
+        if (current_distance >= maximum_unsettled_distance)
         {
             stopped_by_cutoff = true;
             if constexpr (RecordStatsLevel > 0)
@@ -483,7 +496,7 @@ auto cycle_distance_closure(
             metrics.priority_queue_pops++;
         }
 
-        const Weight threshold = maximum_distance - current_distance;
+        const Weight threshold = maximum_unsettled_distance - current_distance;
         const size_t exclusive_level = static_cast<size_t>(
             std::lower_bound(settled_weight_levels.begin(), settled_weight_levels.end(), threshold) -
             settled_weight_levels.begin());
@@ -538,7 +551,7 @@ auto cycle_distance_closure(
         {
             settled_weight_levels.push_back(current_distance);
         }
-        intersection_index->activateInterval(current, settled_weight_levels.size() - 1);
+        intersection_index->addInterval({intervals[current], settled_weight_levels.size() - 1});
 
         if constexpr (RecordStatsLevel > 1)
         {
