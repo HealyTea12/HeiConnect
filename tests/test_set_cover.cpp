@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include "HeiConnect/set_cover/set_cover.hpp"
+#include "HeiConnect/set_cover/solver_greedy_cheapest.hpp"
 #include "HeiConnect/data_structures/immutable_graph.hpp"
 #include "HeiConnect/sc_reduction/transform_single_builders.hpp"
 #include "HeiConnect/min_cut/simple_mincut.hpp"
@@ -34,6 +35,33 @@ TEST(SetCoverTest, SetCoverBasic)
 
     std::unordered_set<size_t> expected_solution = {1, 2};
     EXPECT_EQ(context.get_solution(), expected_solution);
+}
+
+TEST(SetCoverTest, GreedyCheapestSkipsSetsWithoutNewCoverage)
+{
+    std::vector<size_t> offsets = {0, 0, 1, 2};
+    std::vector<size_t> elements = {0, 1};
+    std::vector<double> costs = {1.0, 2.0, 3.0};
+    SetCover<> set_cover{offsets, elements, costs, 2};
+    BoundContext context{BasicContext(set_cover), USSolution{}};
+    SetCoverSolverGreedyCheapest solver;
+
+    solver.solve(set_cover, context);
+
+    const std::unordered_set<size_t> expected_solution = {1, 2};
+    EXPECT_EQ(context.get_solution(), expected_solution);
+}
+
+TEST(SetCoverTest, GreedyCheapestReportsInfeasibleInstance)
+{
+    std::vector<size_t> offsets = {0, 1};
+    std::vector<size_t> elements = {0};
+    std::vector<double> costs = {1.0};
+    SetCover<> set_cover{offsets, elements, costs, 2};
+    BoundContext context{BasicContext(set_cover), USSolution{}};
+    SetCoverSolverGreedyCheapest solver;
+
+    EXPECT_THROW(solver.solve(set_cover, context), std::runtime_error);
 }
 
 TEST(Transpose, Basic)

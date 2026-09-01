@@ -2,6 +2,9 @@
 
 #include "HeiConnect/pipeline/common.hpp"
 #include "HeiConnect/set_cover/common.hpp"
+#include "HeiConnect/set_cover/set_cover_cyc.hpp"
+#include "HeiConnect/set_cover/set_cover_double.hpp"
+#include "HeiConnect/set_cover/set_cover_pseudo.hpp"
 #include "HeiConnect/set_cover/trimmer_context.hpp"
 #include "HeiConnect/set_cover/solver_greedy_context.hpp"
 #include "HeiConnect/set_cover/util.hpp"
@@ -28,6 +31,21 @@ concept TrimmerRequirements = requires(const SetCoverT& set_cover, TrimmerContex
 template<size_t RecordMetricsLevel = 0>
 class SetCoverTrimmer
 {
+    template<typename LinkNode, typename LinkEdge, typename LinkWeight>
+    using DoubleSetCover = SetCoverDouble<
+        SetCoverPseudo<LinkNode, LinkEdge>,
+        SetCoverCyc<LinkNode, LinkEdge, LinkWeight>>;
+
+    template<typename LinkNode, typename LinkEdge, typename LinkWeight>
+    using DoubleContext = ContextDouble<
+        SetCoverPseudo<LinkNode, LinkEdge>,
+        SetCoverCyc<LinkNode, LinkEdge, LinkWeight>,
+        BitPackedContext<SetCoverPseudo<LinkNode, LinkEdge>>,
+        CycContext<LinkNode, LinkEdge, LinkWeight>>;
+
+    template<typename LinkNode, typename LinkEdge, typename LinkWeight>
+    using BoundDoubleContext = BoundContext<DoubleContext<LinkNode, LinkEdge, LinkWeight>, USSolution>;
+
 public:
     static constexpr std::string_view name = "Trim redundant sets";
     SetCoverTrimmer() = default;
@@ -46,7 +64,9 @@ public:
         std::vector<size_t> selected_sets(context.get_solution().begin(), context.get_solution().end());
 
         std::sort(selected_sets.begin(), selected_sets.end(), [&](size_t a, size_t b) {
-            return set_cover.get_set_cost(a) > set_cover.get_set_cost(b);
+            const auto cost_a = set_cover.get_set_cost(a);
+            const auto cost_b = set_cover.get_set_cost(b);
+            return cost_a == cost_b ? a < b : cost_a > cost_b;
         });
 
         for (size_t set_index : selected_sets)
@@ -57,13 +77,38 @@ public:
             }
         }
 
-        if constexpr (RecordMetricsLevel > 0)
+        record_metrics(set_cover, context);
+    }
+
+    template<typename LinkNode, typename LinkEdge, typename LinkWeight>
+    void trim(
+        const DoubleSetCover<LinkNode, LinkEdge, LinkWeight>& set_cover,
+        BoundDoubleContext<LinkNode, LinkEdge, LinkWeight>& context)
+    {
+        std::vector<size_t> selected_sets(context.get_solution().begin(), context.get_solution().end());
+
+        std::sort(selected_sets.begin(), selected_sets.end(), [&](size_t a, size_t b) {
+            const auto cost_a = set_cover.get_set_cost(a);
+            const auto cost_b = set_cover.get_set_cost(b);
+            return cost_a == cost_b ? a < b : cost_a > cost_b;
+        });
+
+        for (const size_t set_index : selected_sets)
         {
-            m_metrics = StageMetrics{
-                {"cost", std::to_string(HeiConnect::sc::cost(set_cover, context.get_solution()))},
-                {"size", std::to_string(context.get_solution().size())}
-            };
+            if (covers_without(set_cover, context.get_solution(), set_index))
+            {
+                context.remove_set(set_index);
+            }
         }
+
+        auto rebuilt_context = make_double_context(set_cover);
+        for (const size_t set_index : context.get_solution())
+        {
+            rebuilt_context.add_set(set_index);
+        }
+        context.get_context() = std::move(rebuilt_context);
+
+        record_metrics(set_cover, context);
     }
 
     std::optional<StageMetrics> emit_metrics() const
@@ -79,6 +124,52 @@ public:
     }
 
 private:
+    template<typename LinkNode, typename LinkEdge, typename LinkWeight>
+    static DoubleContext<LinkNode, LinkEdge, LinkWeight>
+    make_double_context(const DoubleSetCover<LinkNode, LinkEdge, LinkWeight>& set_cover)
+    {
+        BitPackedContext pseudo_context{set_cover.first()};
+        CycContext cycle_context{set_cover.second()};
+        return DoubleContext<LinkNode, LinkEdge, LinkWeight>{
+            set_cover,
+            std::move(pseudo_context),
+            std::move(cycle_context)};
+    }
+
+    template<typename LinkNode, typename LinkEdge, typename LinkWeight>
+    static bool covers_without(
+        const DoubleSetCover<LinkNode, LinkEdge, LinkWeight>& set_cover,
+        const std::unordered_set<size_t>& solution,
+        size_t omitted_set)
+    {
+        auto trial_context = make_double_context(set_cover);
+        for (const size_t set_index : solution)
+        {
+            if (set_index == omitted_set)
+            {
+                continue;
+            }
+
+            trial_context.add_set(set_index);
+            if (trial_context.get_total_covered_elements() == set_cover.get_num_elements())
+            {
+                return true;
+            }
+        }
+        return trial_context.get_total_covered_elements() == set_cover.get_num_elements();
+    }
+
+    template<typename SetCoverT, typename TrimmerContext>
+    void record_metrics(const SetCoverT& set_cover, const TrimmerContext& context)
+    {
+        if constexpr (RecordMetricsLevel > 0)
+        {
+            m_metrics = StageMetrics{
+                {"cost", std::to_string(HeiConnect::sc::cost(set_cover, context.get_solution()))},
+                {"size", std::to_string(context.get_solution().size())}
+            };
+        }
+    }
     std::optional<StageMetrics> m_metrics;
 };
 

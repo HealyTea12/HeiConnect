@@ -19,6 +19,7 @@
 #include "HeiConnect/set_cover/solver_greedy_cheapest.hpp"
 #include "HeiConnect/set_cover/solver_ilp.hpp"
 #include "HeiConnect/set_cover/solver_lazy_block_tree_ilp.hpp"
+#include "HeiConnect/set_cover/trimmer.hpp"
 
 namespace
 {
@@ -323,5 +324,63 @@ TEST(ConnectivityAugmentationSolvers, DoubleGreedyIncreasesConnectivity)
     ASSERT_FALSE(context.get_solution().empty());
     EXPECT_GT(
         viecut_min_cut(graph, link_graph, context.get_solution()),
+        viecut_min_cut(graph, link_graph));
+}
+
+TEST(ConnectivityAugmentationSolvers, DoubleGreedyCheapestIncreasesConnectivity)
+{
+    const auto graph = create_cycle_graph_undirected(4);
+    const auto link_graph = graph.generate_links([](size_t, size_t) { return 1.0; });
+    const auto set_cover = construct_set_cover_cyc_pseudo_ancestry_vec(
+        graph.graph.vertices,
+        graph.graph.edges,
+        graph.weights,
+        link_graph.graph.vertices,
+        link_graph.graph.edges,
+        link_graph.weights);
+    BitPackedContext pseudo_context{set_cover.first()};
+    CycContext cycle_context{set_cover.second()};
+    ContextDouble double_context{set_cover, std::move(pseudo_context), std::move(cycle_context)};
+    BoundContext context{std::move(double_context), USSolution{}};
+    SetCoverSolverGreedyCheapest solver;
+    solver.solve(set_cover, context);
+
+    ASSERT_FALSE(context.get_solution().empty());
+    EXPECT_EQ(context.get_total_covered_elements(), set_cover.get_num_elements());
+    EXPECT_GT(
+        viecut_min_cut(graph, link_graph, context.get_solution()),
+        viecut_min_cut(graph, link_graph));
+}
+
+TEST(ConnectivityAugmentationSolvers, DoubleTrimmerReplaysRetainedSolution)
+{
+    const auto graph = create_cycle_graph_undirected(6);
+    const auto link_graph = graph.generate_links([](size_t, size_t) { return 1.0; });
+    auto set_cover = construct_set_cover_cyc_pseudo_ancestry_vec(
+        graph.graph.vertices,
+        graph.graph.edges,
+        graph.weights,
+        link_graph.graph.vertices,
+        link_graph.graph.edges,
+        link_graph.weights);
+    auto set_cover_ptr = std::make_shared<const decltype(set_cover)>(std::move(set_cover));
+    BitPackedContext pseudo_context{set_cover_ptr->first()};
+    CycContext cycle_context{set_cover_ptr->second()};
+    ContextDouble double_context{*set_cover_ptr, std::move(pseudo_context), std::move(cycle_context)};
+    BoundContext context{std::move(double_context), USSolution{}};
+    for (size_t set_index = 0; set_index < set_cover_ptr->get_num_sets(); ++set_index)
+    {
+        context.add_set(set_index);
+    }
+    const size_t untrimmed_size = context.get_solution_size();
+    ASSERT_EQ(context.get_total_covered_elements(), set_cover_ptr->get_num_elements());
+
+    SetCoverTrimmer trimmer;
+    auto [trimmed_set_cover, trimmed_context] = trimmer(set_cover_ptr, std::move(context));
+
+    EXPECT_LT(trimmed_context.get_solution_size(), untrimmed_size);
+    EXPECT_EQ(trimmed_context.get_total_covered_elements(), trimmed_set_cover->get_num_elements());
+    EXPECT_GT(
+        viecut_min_cut(graph, link_graph, trimmed_context.get_solution()),
         viecut_min_cut(graph, link_graph));
 }
