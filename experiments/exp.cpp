@@ -4,6 +4,7 @@
 #include <iostream>
 #include <iomanip>
 #include <cctype>
+#include <stdexcept>
 #include <string_view>
 #include <vector>
 
@@ -46,7 +47,8 @@ void run_experiment_file(
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Error processing graph " << graph_file << ": " << e.what() << std::endl;
+        throw std::runtime_error(
+            "Error processing graph " + graph_file.string() + ": " + e.what());
     }
 }
 

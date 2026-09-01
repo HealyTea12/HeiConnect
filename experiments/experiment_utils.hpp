@@ -5,6 +5,8 @@
 #include <iostream>
 #include <fstream>
 #include <chrono>
+#include <stdexcept>
+#include <string>
 
 #include "HeiConnect/tools/timer.hpp"
 
@@ -36,7 +38,20 @@ long run_isolated_and_measure_memory_usage(ChildFn child_function)
         int status;
         struct rusage rusage{};
         pid_t wpid = wait4(pid, &status, 0, &rusage);
-        if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+        if (wpid == -1)
+        {
+            throw std::runtime_error("Failed to wait for child process");
+        }
+        if (!WIFEXITED(status))
+        {
+            if (WIFSIGNALED(status))
+            {
+                throw std::runtime_error(
+                    "Child process terminated by signal " + std::to_string(WTERMSIG(status)));
+            }
+            throw std::runtime_error("Child process did not exit normally");
+        }
+        if (WEXITSTATUS(status) != 0)
         {
             throw std::runtime_error("Child process failed");
         }

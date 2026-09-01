@@ -1,5 +1,5 @@
 [dataset_selection]
-include = ["cycles", "stars", "trees"]
+include = ["cycles", "stars", "trees", "cacti"]
 default_max_nodes = 500
 
 [dataset_selection.datasets.cycles]
@@ -11,6 +11,9 @@ max_nodes = 500
 [dataset_selection.datasets.trees]
 max_nodes = 300
 
+[dataset_selection.datasets.cacti]
+max_nodes = 300
+
 [link_configurations.unit]
 distribution = "constant"
 constant_weight = 1.0
@@ -20,7 +23,8 @@ seed = 42
 distribution = "float_uniform"
 float_uniform_lower = 0.0
 float_uniform_upper = 1.0
-seed = 42
+# Use seeds for repeated draws from one distribution; seed remains supported.
+seeds = [42, 43, 44, 45, 46]
 
 [configurations.baseline]
 algorithm = "Set Cover CSR"

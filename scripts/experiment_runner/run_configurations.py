@@ -8,6 +8,7 @@
 
 import argparse
 from collections import defaultdict
+from itertools import product
 import os
 from pathlib import Path
 import re
@@ -49,14 +50,17 @@ def parse_arguments():
         "--mode",
         choices=("exhaustive", "adaptive"),
         default="exhaustive",
-        help="run every instance or discover each algorithm's solvability frontier",
+        help=(
+            "run every instance or use bounded probes to discover each algorithm's "
+            "solvability frontier"
+        ),
     )
     parser.add_argument(
         "--adaptive-probes",
         type=int,
-        default=8,
+        default=6,
         metavar="COUNT",
-        help="number of widely spaced size levels to consider in adaptive mode",
+        help="maximum frontier probes before adaptive mode fills lower levels",
     )
     return parser.parse_args()
 
@@ -68,13 +72,163 @@ def validate_name(name, kind):
         )
 
 
+def configuration_name_component(value):
+    component = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).lower()).strip("_")
+    if not component:
+        raise ValueError(f"cannot use {value!r} in an expanded configuration name")
+    return component
+
+
+def expand_configuration_matrices(matrices):
+    if not isinstance(matrices, dict):
+        raise ValueError("configuration_matrices must be a TOML table")
+
+    expanded = {}
+    for matrix_name, matrix in matrices.items():
+        validate_name(matrix_name, "configuration matrix")
+        if not isinstance(matrix, dict):
+            raise ValueError(f"configuration matrix {matrix_name!r} must be a table")
+
+        allowed_keys = {"algorithms", "timeout", "max_memory_mb", "params"}
+        unknown_keys = set(matrix) - allowed_keys
+        if unknown_keys:
+            raise ValueError(
+                f"configuration matrix {matrix_name!r} has unknown keys: "
+                f"{', '.join(sorted(unknown_keys))}"
+            )
+
+        algorithms = matrix.get("algorithms")
+        if not isinstance(algorithms, list) or not algorithms or not all(
+            isinstance(algorithm, str) for algorithm in algorithms
+        ):
+            raise ValueError(
+                f"configuration matrix {matrix_name!r} algorithms must be "
+                "a non-empty array of strings"
+            )
+        params = matrix.get("params", {})
+        if not isinstance(params, dict):
+            raise ValueError(
+                f"configuration matrix {matrix_name!r} params must be a table"
+            )
+
+        fixed_params = {}
+        dimensions = []
+        for key, value in params.items():
+            validate_name(key, "matrix parameter")
+            if isinstance(value, list):
+                if not value:
+                    raise ValueError(
+                        f"configuration matrix {matrix_name!r} parameter "
+                        f"{key!r} must not be an empty array"
+                    )
+                if not all(
+                    isinstance(item, (str, int, float, bool)) for item in value
+                ):
+                    raise ValueError(
+                        f"configuration matrix {matrix_name!r} parameter "
+                        f"{key!r} values must be strings, numbers, or booleans"
+                    )
+                dimensions.append((key, value))
+            else:
+                if not isinstance(value, (str, int, float, bool)):
+                    raise ValueError(
+                        f"configuration matrix {matrix_name!r} parameter "
+                        f"{key!r} must be a string, number, boolean, or array"
+                    )
+                fixed_params[key] = value
+
+        dimension_values = [values for _, values in dimensions]
+        for algorithm in algorithms:
+            algorithm_name = configuration_name_component(algorithm)
+            combinations = product(*dimension_values) if dimensions else [()]
+            for values in combinations:
+                configuration_name_parts = [matrix_name, algorithm_name]
+                configuration_params = dict(fixed_params)
+                for (key, _), value in zip(dimensions, values):
+                    configuration_params[key] = value
+                    configuration_name_parts.extend(
+                        [key, configuration_name_component(value)]
+                    )
+
+                configuration_name = "_".join(configuration_name_parts)
+                if configuration_name in expanded:
+                    raise ValueError(
+                        f"expanded configuration name {configuration_name!r} "
+                        "is not unique"
+                    )
+                configuration = {
+                    "algorithm": algorithm,
+                    "params": configuration_params,
+                }
+                for key in ("timeout", "max_memory_mb"):
+                    if key in matrix:
+                        configuration[key] = matrix[key]
+                expanded[configuration_name] = configuration
+    return expanded
+
+
+def expand_link_configurations(link_configurations):
+    expanded = {}
+    for name, configuration in link_configurations.items():
+        has_seed = "seed" in configuration
+        has_seeds = "seeds" in configuration
+        if has_seed == has_seeds:
+            raise ValueError(
+                f"link configuration {name!r} requires exactly one of seed or seeds"
+            )
+
+        seeds = [configuration["seed"]] if has_seed else configuration["seeds"]
+        if not isinstance(seeds, list) or not seeds:
+            raise ValueError(
+                f"link configuration {name!r} seeds must be a non-empty array"
+            )
+        for seed in seeds:
+            if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
+                raise ValueError(
+                    f"link configuration {name!r} seeds must be non-negative integers"
+                )
+        if len(seeds) != len(set(seeds)):
+            raise ValueError(f"link configuration {name!r} seeds must be unique")
+
+        for seed in seeds:
+            expanded_name = name if has_seed else f"{name}_seed_{seed}"
+            if expanded_name in expanded:
+                raise ValueError(
+                    f"expanded link configuration name {expanded_name!r} is not unique"
+                )
+            expanded_configuration = {
+                key: value
+                for key, value in configuration.items()
+                if key not in {"seed", "seeds"}
+            }
+            expanded_configuration["seed"] = seed
+            expanded_configuration["_family"] = name
+            expanded[expanded_name] = expanded_configuration
+    return expanded
+
+
 def load_configurations(path):
     with path.open("rb") as file:
         document = tomllib.load(file)
 
-    configurations = document.get("configurations")
-    if not isinstance(configurations, dict) or not configurations:
-        raise ValueError("the TOML file must contain [configurations.<name>] tables")
+    configurations = document.get("configurations", {})
+    if not isinstance(configurations, dict):
+        raise ValueError("configurations must be a TOML table")
+    configurations = dict(configurations)
+    matrix_configurations = expand_configuration_matrices(
+        document.get("configuration_matrices", {})
+    )
+    duplicate_names = set(configurations) & set(matrix_configurations)
+    if duplicate_names:
+        raise ValueError(
+            "configuration names are not unique: "
+            + ", ".join(sorted(duplicate_names))
+        )
+    configurations.update(matrix_configurations)
+    if not configurations:
+        raise ValueError(
+            "the TOML file must contain configurations or configuration_matrices"
+        )
 
     for name, configuration in configurations.items():
         validate_name(name, "configuration")
@@ -104,11 +258,7 @@ def load_configurations(path):
                 f"link configuration {name!r} distribution must be constant, "
                 "float_uniform, or integer_uniform"
             )
-        seed = configuration.get("seed")
-        if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
-            raise ValueError(
-                f"link configuration {name!r} requires a non-negative integer seed"
-            )
+    link_configurations = expand_link_configurations(link_configurations)
 
     dataset_selection = document.get("dataset_selection", {})
     if not isinstance(dataset_selection, dict):
@@ -177,24 +327,20 @@ def find_instances(input_dir, dataset_selection):
     return instances, skipped
 
 
-def evenly_spaced_indices(size_levels, count):
-    if count == 1:
-        return [0]
-    if len(size_levels) <= count:
-        return list(range(len(size_levels)))
-
-    smallest = size_levels[0]
-    size_range = size_levels[-1] - smallest
-    targets = [smallest + index * size_range / (count - 1) for index in range(count)]
-    return sorted(
-        {
-            min(
-                range(len(size_levels)),
-                key=lambda index: abs(size_levels[index] - target),
-            )
-            for target in targets
-        }
-    )
+def exponential_probe_indices(level_count, probe_count):
+    indices = []
+    index = 0
+    step = 1
+    while len(indices) < probe_count:
+        indices.append(index)
+        if index == level_count - 1:
+            break
+        if len(indices) == probe_count - 1:
+            index = level_count - 1
+        else:
+            index = min(level_count - 1, index + step)
+            step *= 2
+    return indices
 
 
 def group_instances_by_dataset_and_size(instances):
@@ -204,32 +350,39 @@ def group_instances_by_dataset_and_size(instances):
     return grouped
 
 
+def group_link_configurations(link_configurations):
+    grouped = defaultdict(list)
+    for name, configuration in link_configurations.items():
+        grouped[configuration["_family"]].append(name)
+    return grouped
+
+
 def run_adaptive_series(size_levels, probe_count, run_level):
     outcomes = {}
-    consecutive_timeout_levels = 0
+    last_solved_index = -1
+    terminal_index = None
+    terminal_outcome = None
 
-    for index in evenly_spaced_indices(size_levels, probe_count):
+    for index in exponential_probe_indices(len(size_levels), probe_count):
         outcome = run_level(size_levels[index])
         outcomes[index] = outcome
-        if outcome == "timeout":
-            consecutive_timeout_levels += 1
-            if consecutive_timeout_levels == 3:
-                break
-        else:
-            consecutive_timeout_levels = 0
+        if outcome != "solved":
+            terminal_index = index
+            terminal_outcome = outcome
+            break
+        last_solved_index = index
 
-    solved_indices = [index for index, outcome in outcomes.items() if outcome == "solved"]
-    last_solved = max(solved_indices, default=-1)
-    timeout_indices = [
-        index
-        for index, outcome in outcomes.items()
-        if index > last_solved and outcome == "timeout"
-    ]
-    boundary = min(timeout_indices, default=max(outcomes))
+    fill_through = last_solved_index
+    if terminal_outcome == "timeout":
+        fill_through = terminal_index - 1
 
-    for index in range(boundary + 1):
-        if index not in outcomes:
-            outcomes[index] = run_level(size_levels[index])
+    for index in range(fill_through + 1):
+        if index in outcomes:
+            continue
+        outcome = run_level(size_levels[index])
+        outcomes[index] = outcome
+        if outcome != "solved":
+            break
 
     return {size_levels[index]: outcome for index, outcome in outcomes.items()}
 
@@ -253,6 +406,8 @@ def write_configuration(
         lines.append(f"param.{key}={serialize_parameter(value)}")
     for link_name, link_configuration in link_configurations.items():
         for key, value in link_configuration.items():
+            if key.startswith("_"):
+                continue
             lines.append(
                 f"link_configuration.{link_name}.{key}={serialize_parameter(value)}"
             )
@@ -384,9 +539,16 @@ def run_experiment(
 
     result_size = result_file.stat().st_size if result_file.exists() else 0
     if return_code == 0 and result_size > previous_size:
-        return "completed"
+        with result_file.open("rb") as file:
+            file.seek(previous_size)
+            if b"run.total_time_seconds=" in file.read():
+                return "completed"
 
-    reason = f"exit code {return_code}" if return_code else "no result was written"
+    reason = (
+        f"exit code {return_code}"
+        if return_code
+        else "no complete result was written"
+    )
     print(
         f"[{configuration_name}] Failed ({reason}): {graph_file}",
         file=sys.stderr,
@@ -452,11 +614,23 @@ def main():
     progress = tqdm(total=total_runs, desc="Running experiments", unit="run")
     adaptive_reports = defaultdict(list)
 
-    def run_graph(graph_file, metis_file, selected_configurations):
+    def run_graph(
+        graph_file,
+        metis_file,
+        selected_configurations,
+        selected_link_configurations=None,
+        link_cache_dir=None,
+    ):
         nonlocal completed, failed, timed_out, skipped, processed
         relative_path = graph_file.relative_to(input_dir).with_suffix("")
         outcomes = {name: [] for name in selected_configurations}
-        for link_name, link_configuration in link_configurations.items():
+        selected_link_configurations = (
+            link_configurations
+            if selected_link_configurations is None
+            else selected_link_configurations
+        )
+        for link_name in selected_link_configurations:
+            link_configuration = link_configurations[link_name]
             result_file_name = f"res-{link_name}.txt"
             pending = []
             for configuration_name in selected_configurations:
@@ -487,8 +661,17 @@ def main():
             if not pending:
                 continue
 
-            with tempfile.TemporaryDirectory(prefix="heiconnect-links-") as temp_dir:
-                links_file = Path(temp_dir) / f"{graph_file.stem}-{link_name}.links"
+            temporary_links = None
+            if link_cache_dir is None:
+                temporary_links = tempfile.TemporaryDirectory(
+                    prefix="heiconnect-links-"
+                )
+                links_dir = Path(temporary_links.name)
+            else:
+                links_dir = link_cache_dir / relative_path.parent
+                links_dir.mkdir(parents=True, exist_ok=True)
+            links_file = links_dir / f"{graph_file.stem}-{link_name}.links"
+            if not links_file.is_file() or links_file.stat().st_size == 0:
                 print(f"[{link_name}] Generating links for {relative_path}")
                 generator_result = run_command(
                     link_generator_command(
@@ -503,6 +686,7 @@ def main():
                         f"[{link_name}] Link generation failed for {graph_file}",
                         file=sys.stderr,
                     )
+                    links_file.unlink(missing_ok=True)
                     failed += len(pending)
                     processed += len(pending)
                     for configuration_name, _, _ in pending:
@@ -511,38 +695,44 @@ def main():
                             f"failed {configuration_name}/{link_name}/{relative_path}"
                         )
                         progress.update()
+                    if temporary_links is not None:
+                        temporary_links.cleanup()
                     continue
+            else:
+                print(f"[{link_name}] Reusing links for {relative_path}")
 
-                for configuration_name, configuration, instance_output in pending:
-                    instance_output.mkdir(parents=True, exist_ok=True)
-                    print(
-                        f"[{configuration_name}/{link_name}] "
-                        f"Running {relative_path}"
-                    )
-                    outcome = run_experiment(
-                        experiments_executable,
-                        configuration_name,
-                        configuration,
-                        graph_file,
-                        links_file,
-                        instance_output,
-                        result_file_name,
-                    )
-                    outcomes[configuration_name].append(outcome)
-                    processed += 1
-                    if outcome == "completed":
-                        completed += 1
-                        status = "completed"
-                    elif outcome == "timeout":
-                        timed_out += 1
-                        status = "timed out"
-                    else:
-                        failed += 1
-                        status = "failed"
-                    progress.set_postfix_str(
-                        f"{status} {configuration_name}/{link_name}/{relative_path}"
-                    )
-                    progress.update()
+            for configuration_name, configuration, instance_output in pending:
+                instance_output.mkdir(parents=True, exist_ok=True)
+                print(
+                    f"[{configuration_name}/{link_name}] "
+                    f"Running {relative_path}"
+                )
+                outcome = run_experiment(
+                    experiments_executable,
+                    configuration_name,
+                    configuration,
+                    graph_file,
+                    links_file,
+                    instance_output,
+                    result_file_name,
+                )
+                outcomes[configuration_name].append(outcome)
+                processed += 1
+                if outcome == "completed":
+                    completed += 1
+                    status = "completed"
+                elif outcome == "timeout":
+                    timed_out += 1
+                    status = "timed out"
+                else:
+                    failed += 1
+                    status = "failed"
+                progress.set_postfix_str(
+                    f"{status} {configuration_name}/{link_name}/{relative_path}"
+                )
+                progress.update()
+            if temporary_links is not None:
+                temporary_links.cleanup()
         return outcomes
 
     if arguments.mode == "exhaustive":
@@ -550,45 +740,65 @@ def main():
             run_graph(graph_file, metis_file, configurations)
     else:
         grouped_instances = group_instances_by_dataset_and_size(instances)
+        grouped_link_configurations = group_link_configurations(link_configurations)
         for dataset_name, instances_by_size in sorted(grouped_instances.items()):
             size_levels = sorted(instances_by_size)
-            for configuration_name in configurations:
-                print(f"[{configuration_name}] Discovering frontier for {dataset_name}")
-
-                def run_level(node_count):
-                    level_outcomes = []
-                    print(
-                        f"[{configuration_name}] Testing {dataset_name} "
-                        f"at {node_count} nodes"
-                    )
-                    for graph_file, metis_file in instances_by_size[node_count]:
-                        outcomes = run_graph(
-                            graph_file, metis_file, [configuration_name]
+            for link_family, link_names in grouped_link_configurations.items():
+                with tempfile.TemporaryDirectory(
+                    prefix="heiconnect-adaptive-links-"
+                ) as cache_dir:
+                    link_cache_dir = Path(cache_dir)
+                    for configuration_name in configurations:
+                        print(
+                            f"[{configuration_name}] Discovering frontier for "
+                            f"{dataset_name}/{link_family}"
                         )
-                        level_outcomes.extend(outcomes[configuration_name])
-                    if level_outcomes and all(
-                        outcome == "timeout" for outcome in level_outcomes
-                    ):
-                        return "timeout"
-                    if "completed" in level_outcomes:
-                        return "solved"
-                    return "failed"
 
-                outcomes = run_adaptive_series(
-                    size_levels, arguments.adaptive_probes, run_level
-                )
-                tested_sizes = ", ".join(
-                    f"{size}={outcome}" for size, outcome in sorted(outcomes.items())
-                )
-                print(f"[{configuration_name}/{dataset_name}] {tested_sizes}")
-                adaptive_reports[configuration_name].append(
-                    f"dataset={dataset_name}"
-                )
-                for size in size_levels:
-                    outcome = outcomes.get(size, "censored")
-                    adaptive_reports[configuration_name].append(
-                        f"size={size} status={outcome}"
-                    )
+                        def run_level(node_count):
+                            level_completed = False
+                            print(
+                                f"[{configuration_name}] Testing {dataset_name}/"
+                                f"{link_family} at {node_count} nodes"
+                            )
+                            for graph_file, metis_file in instances_by_size[
+                                node_count
+                            ]:
+                                for link_name in link_names:
+                                    outcomes = run_graph(
+                                        graph_file,
+                                        metis_file,
+                                        [configuration_name],
+                                        [link_name],
+                                        link_cache_dir,
+                                    )
+                                    outcome = outcomes[configuration_name][0]
+                                    if outcome == "timeout":
+                                        return "timeout"
+                                    if outcome == "failed":
+                                        return "failed"
+                                    level_completed = True
+                            return "solved" if level_completed else "failed"
+
+                        outcomes = run_adaptive_series(
+                            size_levels, arguments.adaptive_probes, run_level
+                        )
+                        tested_sizes = ", ".join(
+                            f"{size}={outcome}"
+                            for size, outcome in sorted(outcomes.items())
+                        )
+                        print(
+                            f"[{configuration_name}/{dataset_name}/{link_family}] "
+                            f"{tested_sizes}"
+                        )
+                        adaptive_reports[configuration_name].append(
+                            f"dataset={dataset_name} "
+                            f"link_configuration={link_family}"
+                        )
+                        for size in size_levels:
+                            outcome = outcomes.get(size, "censored")
+                            adaptive_reports[configuration_name].append(
+                                f"size={size} status={outcome}"
+                            )
 
         for configuration_name, report in adaptive_reports.items():
             report_path = output_dir / configuration_name / "adaptive-frontier.txt"

@@ -1,0 +1,79 @@
+# Generate graphs with:
+# uv run scripts/dataset_generation/generate_graph_datasets.py
+# Run this matrix with:
+# uv run scripts/experiment_runner/run_configurations.py datasets results/all \
+#   --configurations scripts/experiment_runner/configurations.all.toml --mode adaptive
+
+[dataset_selection]
+include = ["cycles", "stars", "trees", "cacti"]
+default_max_nodes = 500
+
+[dataset_selection.datasets.cycles]
+max_nodes = 1000
+
+[dataset_selection.datasets.stars]
+max_nodes = 500
+
+[dataset_selection.datasets.trees]
+max_nodes = 300
+
+[dataset_selection.datasets.cacti]
+max_nodes = 300
+
+# Every seed becomes a separate result file while sharing one adaptive frontier.
+[link_configurations.float_uniform_0_1]
+distribution = "float_uniform"
+float_uniform_lower = 0.0
+float_uniform_upper = 1.0
+seeds = [42, 43, 44, 45, 46]
+
+[link_configurations.int_uniform_1_5]
+distribution = "integer_uniform"
+integer_uniform_lower = 1
+integer_uniform_upper = 5
+seeds = [42, 43, 44, 45, 46]
+
+# The legacy GWC and original EILP are intentionally omitted.
+# This matrix expands to 72 set-cover configurations:
+# 2 approaches x 3 representations x 3 solvers x 2 reduction modes x 2 trimming modes.
+[configuration_matrices.set_cover]
+algorithms = ["Set Cover CSR", "Block Tree Set Cover CSR"]
+timeout = 120
+max_memory_mb = 4096
+
+[configuration_matrices.set_cover.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = ["csr", "oracle", "double_csr_cyc"]
+solver = ["greedy", "greedy_cheapest", "ilp"]
+reductions = [false, true]
+trimming = [false, true]
+
+[configurations.lazy_block_tree_ilp]
+algorithm = "Lazy Block Tree ILP"
+timeout = 120
+max_memory_mb = 4096
+
+[configurations.lazy_block_tree_ilp.params]
+reductions = true
+intersection_index = "baseline"
+
+[configurations.wheel_con]
+algorithm = "WheelCon"
+timeout = 120
+max_memory_mb = 4096
+
+[configurations.mst_connect]
+algorithm = "mst-connect"
+timeout = 120
+max_memory_mb = 4096
+
+[configurations.mst_connect_local_search]
+algorithm = "mst-connect-ls"
+timeout = 120
+max_memory_mb = 4096
+
+[configurations.mst_connect_local_search.params]
+depth = 0
+cache = false
+trees = 0
