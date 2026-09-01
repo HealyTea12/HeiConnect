@@ -127,3 +127,49 @@ private:
 
 template<size_t RecordMetricsLevel = 0>
 SetCoverTrimmer() -> SetCoverTrimmer<RecordMetricsLevel>;
+
+template<size_t RecordMetricsLevel = 0>
+class OptionalSetCoverTrimmer
+{
+public:
+    static constexpr std::string_view name = SetCoverTrimmer<RecordMetricsLevel>::name;
+
+    explicit OptionalSetCoverTrimmer(bool run_trimming) : m_runTrimming(run_trimming)
+    {}
+
+    template<typename SetCoverT, typename TrimmerContext>
+    auto operator()(std::shared_ptr<const SetCoverT> set_cover, TrimmerContext context)
+    {
+        if (m_runTrimming)
+        {
+            return m_trimmer(std::move(set_cover), std::move(context));
+        }
+        return std::tuple{std::move(set_cover), std::move(context)};
+    }
+
+    template<typename SetCoverT, typename TrimmerContext>
+    void trim(const SetCoverT& set_cover, TrimmerContext& context)
+    {
+        if (m_runTrimming)
+        {
+            m_trimmer.trim(set_cover, context);
+        }
+    }
+
+    std::optional<StageMetrics> emit_metrics() const
+    {
+        if (m_runTrimming)
+        {
+            return m_trimmer.emit_metrics();
+        }
+        if constexpr (RecordMetricsLevel > 0)
+        {
+            return StageMetrics{{"skipped", "true"}};
+        }
+        return std::nullopt;
+    }
+
+private:
+    bool m_runTrimming;
+    SetCoverTrimmer<RecordMetricsLevel> m_trimmer;
+};

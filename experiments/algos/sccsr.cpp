@@ -53,6 +53,7 @@ struct SetCoverGreedyCSRConfig
     bool run_reductions = true;
     bool draw_graphs = false;
     ConnectivityAugmentationReductionConfig reduction_config{};
+    bool run_trimming = true;
     bool run_local_search = true;
     double local_search_time_seconds = 60.0;
     SetCoverRepresentation representation = SetCoverRepresentation::CSR;
@@ -416,7 +417,7 @@ private:
         const ReadFromFileCSRStage read_stage{};
         const GraphMetricsCalculator input_graph_metrics_stage{"Input Graph"};
         const GraphMetricsCalculator reduced_graph_metrics_stage{"Reduced Graph"};
-        SetCoverTrimmer<1> trimmer{};
+        OptionalSetCoverTrimmer<1> trimmer{m_config.run_trimming};
         GreedySetCoverSolver<1> repair_solver{};
         auto engine = std::mt19937_64{std::random_device{}()};
         auto move_generator = CostFractionPerturbator(.1, engine);
@@ -765,7 +766,7 @@ private:
     {
         auto set_cover = std::move(std::get<0>(state));
         auto context = std::move(std::get<1>(state));
-        SetCoverTrimmer<1> trimmer{};
+        OptionalSetCoverTrimmer<1> trimmer{m_config.run_trimming};
         GreedySetCoverSolver<1> repair_solver{};
         auto engine = std::mt19937_64{std::random_device{}()};
         auto move_generator = CostFractionPerturbator(.5, engine);
@@ -997,6 +998,8 @@ namespace
             parse_bool_param(params, "compute_shortest_paths", config.reduction_config.compute_shortest_paths);
         config.reduction_config.intersection_index =
             parse_intersection_index_param(params, config.reduction_config.intersection_index);
+        config.run_trimming = parse_bool_param(params, "trimming", config.run_trimming);
+        config.run_trimming = !parse_bool_param(params, "skip_trimming", !config.run_trimming);
         config.run_local_search = parse_bool_param(params, "local_search", config.run_local_search);
         config.run_local_search = !parse_bool_param(params, "skip_local_search", !config.run_local_search);
         config.local_search_time_seconds =
@@ -1035,6 +1038,10 @@ namespace
         {"intersection_index",
          "baseline",
          "Intersection index used by cycle reduction: baseline, intersection_tree, weighted_intersection_tree."},
+        {"trimming", "true", "Trim redundant sets after solving."},
+        {"skip_trimming",
+         "false",
+         "If true, trimming is skipped (takes precedence over trimming)."},
         {"local_search", "true", "Run local search after solving."},
         {"skip_local_search",
          "false",

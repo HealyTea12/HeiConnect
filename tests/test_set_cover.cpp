@@ -113,6 +113,39 @@ TEST(SetCoverTest, DoubleContextChecksRemovalFromLeftToRight)
     EXPECT_EQ(*second_calls, 0);
 }
 
+TEST(SetCoverTest, OptionalTrimmerPreservesSolutionWhenDisabled)
+{
+    SetCover<> set_cover{{0, 1, 2}, {0, 0}, {2.0, 1.0}, 1};
+    BoundContext context{BasicContext(set_cover), USSolution{}};
+    context.add_set(0);
+    context.add_set(1);
+    OptionalSetCoverTrimmer<1> trimmer{false};
+
+    trimmer.trim(set_cover, context);
+
+    EXPECT_EQ(context.get_solution_size(), 2);
+    EXPECT_EQ(context.get_total_covered_elements(), 1);
+    const auto metrics = trimmer.emit_metrics();
+    ASSERT_TRUE(metrics.has_value());
+    ASSERT_EQ(metrics->size(), 1);
+    EXPECT_EQ(metrics->front().name, "skipped");
+    EXPECT_EQ(metrics->front().printable_value, "true");
+}
+
+TEST(SetCoverTest, OptionalTrimmerRemovesRedundantSetsWhenEnabled)
+{
+    SetCover<> set_cover{{0, 1, 2}, {0, 0}, {2.0, 1.0}, 1};
+    BoundContext context{BasicContext(set_cover), USSolution{}};
+    context.add_set(0);
+    context.add_set(1);
+    OptionalSetCoverTrimmer<1> trimmer{true};
+
+    trimmer.trim(set_cover, context);
+
+    EXPECT_EQ(context.get_solution_size(), 1);
+    EXPECT_EQ(context.get_total_covered_elements(), 1);
+}
+
 TEST(Transpose, Basic)
 {
     std::vector<uint8_t> input = {
