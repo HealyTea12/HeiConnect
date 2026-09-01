@@ -30,6 +30,7 @@ PRIVATE
     algos/sccsr.cpp
     algos/gwc.cpp
     algos/eilp.cpp
+    algos/mst_connect.cpp
     algos/lazy_block_tree_ilp.cpp
     algos/wheel_con.cpp
 )
