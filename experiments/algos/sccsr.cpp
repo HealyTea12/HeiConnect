@@ -145,16 +145,22 @@ public:
     template<typename SetCoverType, typename ContextType>
     auto operator()(std::shared_ptr<const SetCoverType> set_cover, ContextType context)
     {
-        if (!m_runLocalSearch)
+        if constexpr (IncrementallyRemovableContext<ContextType>)
         {
-            return std::tuple{std::move(set_cover), std::move(context)};
+            if (m_runLocalSearch)
+            {
+                m_skipped = false;
+                return m_localSearch(std::move(set_cover), std::move(context));
+            }
         }
-        return m_localSearch(std::move(set_cover), std::move(context));
+
+        m_skipped = true;
+        return std::tuple{std::move(set_cover), std::move(context)};
     }
 
     std::optional<StageMetrics> emit_metrics() const
     {
-        if (!m_runLocalSearch)
+        if (m_skipped)
         {
             return StageMetrics{{"skipped", "true"}};
         }
@@ -164,6 +170,7 @@ public:
 private:
     LocalSearchType& m_localSearch;
     bool m_runLocalSearch;
+    bool m_skipped = true;
 };
 
 class CSRReductionStage
@@ -418,8 +425,7 @@ private:
                 move_generator,
                 repair_solver,
                 m_config.local_search_time_seconds};
-        const bool run_local_search = m_config.run_local_search && m_config.solver != SetCoverSolver::ILP &&
-            m_config.representation != SetCoverRepresentation::DoubleCSRCyc;
+        const bool run_local_search = m_config.run_local_search && m_config.solver != SetCoverSolver::ILP;
         OptionalLocalSearchStage optional_local_search{local_search, run_local_search};
 
         if (!m_config.run_reductions)
@@ -787,12 +793,26 @@ private:
         record_stage(prefix + " trim redundant sets", trim_start, omp_get_wtime(), trimmer.emit_metrics());
 
         const double local_search_start = omp_get_wtime();
-        const bool run_local_search = m_config.run_local_search && m_config.solver != SetCoverSolver::ILP &&
-            m_config.representation != SetCoverRepresentation::DoubleCSRCyc;
-        if (run_local_search)
+        const bool run_local_search = m_config.run_local_search && m_config.solver != SetCoverSolver::ILP;
+        if constexpr (IncrementallyRemovableContext<decltype(context)>)
         {
-            local_search.run(*set_cover, context);
-            record_stage(prefix + " local search", local_search_start, omp_get_wtime(), local_search.emit_metrics());
+            if (run_local_search)
+            {
+                local_search.run(*set_cover, context);
+                record_stage(
+                    prefix + " local search",
+                    local_search_start,
+                    omp_get_wtime(),
+                    local_search.emit_metrics());
+            }
+            else
+            {
+                record_stage(
+                    prefix + " local search",
+                    local_search_start,
+                    omp_get_wtime(),
+                    StageMetrics{{"skipped", "true"}});
+            }
         }
         else
         {

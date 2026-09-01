@@ -40,6 +40,19 @@ concept SetCoverCon = requires(T t, size_t i) {
     { t.get_set_cost(i) } -> std::floating_point;
 };
 
+template<typename ContextType>
+concept IncrementallyRemovableContext = requires(ContextType& context, size_t set_index) {
+    context.remove_set(set_index);
+};
+
+template<typename ContextType, typename SolutionType>
+concept CanRemoveContext = requires(
+    const ContextType& context,
+    size_t set_index,
+    const SolutionType& solution) {
+    { context.can_remove(set_index, solution) } -> std::convertible_to<bool>;
+};
+
 class USSolution
 {
 public:
@@ -148,20 +161,42 @@ public:
     }
 
     void remove_set(size_t set_index)
+        requires IncrementallyRemovableContext<ContextType>
     {
         m_context.remove_set(set_index);
         m_solution.remove_set(set_index);
     }
 
     template<typename SolType>
+        requires CanRemoveContext<ContextType, SolType>
     bool can_remove(size_t set_index, const SolType& solution) const
     {
         return m_context.can_remove(set_index, solution);
     }
 
     bool can_remove(size_t set_index) const
+        requires CanRemoveContext<ContextType, SolutionType>
     {
         return m_context.can_remove(set_index, m_solution);
+    }
+
+    // Remove a selected set without changing a context that cannot remove sets incrementally.
+    void remove_set_from_solution(size_t set_index)
+    {
+        m_solution.remove_set(set_index);
+    }
+
+    void rebuild_context()
+        requires requires(ContextType& context, size_t set_index) {
+            context.reset();
+            context.add_set(set_index);
+        }
+    {
+        m_context.reset();
+        for (const size_t set_index : m_solution.get_solution())
+        {
+            m_context.add_set(set_index);
+        }
     }
 
 

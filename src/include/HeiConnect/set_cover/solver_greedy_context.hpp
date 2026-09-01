@@ -101,11 +101,8 @@ public:
     // ATTENTION: Need to be very careful when calling this one because it breaks the underlying state
     // so subsequent calls to add set and cover count will be incorrect
     // this method is required so that we can pass the same context to the trimmer
-    void remove_set(typename SetCoverType::SetID set_index)
-    {
-        // Does nothing
-        return;
-    }
+    // The rebuilding trimmer now replaces that workaround.
+    // remove_set is intentionally not provided because this context cannot update the union incrementally.
 
     size_t cover_count(SetCoverType::SetID set_index) const
     {
@@ -191,14 +188,17 @@ public:
     }
 
     void remove_set(size_t set_index)
+        requires IncrementallyRemovableContext<FirstContext> && IncrementallyRemovableContext<SecondContext>
     {
         m_context1.remove_set(set_index);
         m_context2.remove_set(set_index);
     }
 
     template<typename SolutionType>
+        requires CanRemoveContext<FirstContext, SolutionType> && CanRemoveContext<SecondContext, SolutionType>
     bool can_remove(size_t set_index, const SolutionType& solution) const
     {
+        // Keep cheaper removal checks in the first context so they can short-circuit later checks.
         return m_context1.can_remove(set_index, solution) && m_context2.can_remove(set_index, solution);
     }
 
@@ -252,8 +252,15 @@ class CycContext
 public:
     CycContext(const SetCoverCyc<link_node_T, link_edge_T, link_weight_T>& sc) : m_setCover(&sc)
     {
+        reset();
+    }
+
+    void reset()
+    {
         const auto& cycleSizes = m_setCover->get_cycle_sizes();
         m_arcEquivClasses = std::vector<std::vector<ArcEquivClass>>(cycleSizes.size());
+        m_classSizes.clear();
+        m_classSizes.reserve(cycleSizes.size());
         for (size_t c{0}; c < cycleSizes.size(); c++)
         {
             m_arcEquivClasses[c].emplace_back(ArcEquivClass{0, 0, static_cast<CycPos>(cycleSizes[c])});
@@ -262,7 +269,9 @@ public:
         const size_t max_cycle_size =
             cycleSizes.empty() ? 0 : *std::max_element(cycleSizes.begin(), cycleSizes.end());
         m_classIntersects = std::vector<size_t>(max_cycle_size, 0);
+        m_touchedClasses.clear();
         m_touchedClasses.reserve(max_cycle_size);
+        m_totalCoveredElements = 0;
     }
 
     size_t cover_count(size_t set_index) const
@@ -324,21 +333,28 @@ public:
 
     // TODO: right now there is no way of going backwards
     // or calculating if a set is removable in this context
+    // The fallback calculates removability by replaying the other selected sets.
     template<typename Solution>
-    bool can_remove(size_t, const Solution&) const
+    bool can_remove(size_t set_index, const Solution& solution) const
     {
-        return false;
+        CycContext replay_context{*m_setCover};
+        for (const size_t other_set_index : solution.get_solution())
+        {
+            if (other_set_index == set_index)
+            {
+                continue;
+            }
+
+            replay_context.add_set(other_set_index);
+            if (replay_context.get_total_covered_elements() == m_setCover->get_num_elements())
+            {
+                return true;
+            }
+        }
+        return replay_context.get_total_covered_elements() == m_setCover->get_num_elements();
     }
 
-    bool can_remove(size_t) const
-    {
-        return false;
-    }
-
-    void remove_set(size_t)
-    {
-        // not supported for CycContext
-    }
+    // not supported for CycContext
 
     size_t get_total_covered_elements() const
     {

@@ -1,6 +1,8 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
+
 #include "HeiConnect/set_cover/set_cover.hpp"
 #include "HeiConnect/set_cover/solver_greedy_cheapest.hpp"
 #include "HeiConnect/data_structures/immutable_graph.hpp"
@@ -8,6 +10,36 @@
 #include "HeiConnect/min_cut/simple_mincut.hpp"
 #include "HeiConnect/viecut_runner.hpp" // Really would like not to need this
 #include "HeiConnect/data_structures/graph_utils.hpp"
+
+namespace
+{
+    using PseudoSetCover = SetCoverPseudo<size_t, size_t>;
+    using CycleSetCover = SetCoverCyc<size_t, size_t, double>;
+    using DoubleContextType = ContextDouble<
+        PseudoSetCover,
+        CycleSetCover,
+        BitPackedContext<PseudoSetCover>,
+        CycContext<size_t, size_t, double>>;
+
+    static_assert(IncrementallyRemovableContext<BasicContext<SetCover<>>>);
+    static_assert(!IncrementallyRemovableContext<BitPackedContext<PseudoSetCover>>);
+    static_assert(!IncrementallyRemovableContext<CycContext<size_t, size_t, double>>);
+    static_assert(!IncrementallyRemovableContext<DoubleContextType>);
+    static_assert(IncrementallyRemovableContext<BoundContext<BasicContext<SetCover<>>, USSolution>>);
+    static_assert(!IncrementallyRemovableContext<BoundContext<DoubleContextType, USSolution>>);
+
+    struct CountingRemovalContext
+    {
+        bool result;
+        std::shared_ptr<size_t> calls;
+
+        bool can_remove(size_t, const USSolution&) const
+        {
+            ++*calls;
+            return result;
+        }
+    };
+}
 
 TEST(Utils, Max)
 {
@@ -62,6 +94,23 @@ TEST(SetCoverTest, GreedyCheapestReportsInfeasibleInstance)
     SetCoverSolverGreedyCheapest solver;
 
     EXPECT_THROW(solver.solve(set_cover, context), std::runtime_error);
+}
+
+TEST(SetCoverTest, DoubleContextChecksRemovalFromLeftToRight)
+{
+    SetCover<> first{{0, 1}, {0}, {1.0}, 1};
+    SetCover<> second{{0, 1}, {0}, {1.0}, 1};
+    SetCoverDouble set_cover{std::move(first), std::move(second)};
+    const auto first_calls = std::make_shared<size_t>(0);
+    const auto second_calls = std::make_shared<size_t>(0);
+    CountingRemovalContext first_context{false, first_calls};
+    CountingRemovalContext second_context{true, second_calls};
+    ContextDouble context{set_cover, std::move(first_context), std::move(second_context)};
+    const USSolution solution;
+
+    EXPECT_FALSE(context.can_remove(0, solution));
+    EXPECT_EQ(*first_calls, 1);
+    EXPECT_EQ(*second_calls, 0);
 }
 
 TEST(Transpose, Basic)
