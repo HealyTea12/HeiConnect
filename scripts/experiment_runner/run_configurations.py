@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 
 from tqdm import tqdm
@@ -24,6 +25,25 @@ from tqdm import tqdm
 
 VALID_NAME = re.compile(r"[A-Za-z0-9_.-]+")
 VALID_DISTRIBUTIONS = {"constant", "float_uniform", "integer_uniform"}
+
+
+def compact_label(value, max_length=64):
+    text = str(value)
+    if len(text) <= max_length:
+        return text
+    side_length = (max_length - 1) // 2
+    return f"{text[:side_length]}…{text[-side_length:]}"
+
+
+def format_duration(seconds):
+    seconds = int(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"
 
 
 def positive_integer(value):
@@ -277,7 +297,13 @@ def load_configurations(path):
         validate_name(name, "dataset")
         if not isinstance(selection, dict):
             raise ValueError(f"dataset selection {name!r} must be a TOML table")
+        if selection.get("min_nodes") is not None:
+            positive_integer(selection["min_nodes"])
         positive_integer(selection.get("max_nodes"))
+        if selection.get("min_nodes", 1) > selection["max_nodes"]:
+            raise ValueError(
+                f"dataset selection {name!r} min_nodes must not exceed max_nodes"
+            )
 
     return configurations, link_configurations, dataset_selection
 
@@ -316,9 +342,14 @@ def find_instances(input_dir, dataset_selection):
             continue
 
         node_count = read_node_count(metis_file)
-        max_nodes = dataset_limits.get(dataset_name, {}).get(
+        limits = dataset_limits.get(dataset_name, {})
+        min_nodes = limits.get("min_nodes")
+        max_nodes = limits.get(
             "max_nodes", default_max_nodes
         )
+        if min_nodes is not None and node_count < min_nodes:
+            skipped += 1
+            continue
         if max_nodes is not None and node_count > max_nodes:
             skipped += 1
             continue
@@ -419,6 +450,11 @@ def write_configuration(
             f"{dataset_selection['default_max_nodes']}"
         )
     for dataset_name, selection in dataset_selection.get("datasets", {}).items():
+        if selection.get("min_nodes") is not None:
+            lines.append(
+                f"dataset_selection.{dataset_name}.min_nodes="
+                f"{selection['min_nodes']}"
+            )
         lines.append(
             f"dataset_selection.{dataset_name}.max_nodes={selection['max_nodes']}"
         )
@@ -557,6 +593,7 @@ def run_experiment(
 
 
 def main():
+    start_time = time.monotonic()
     arguments = parse_arguments()
     positive_integer(arguments.adaptive_probes)
     input_dir = arguments.input_dir.resolve()
@@ -590,9 +627,20 @@ def main():
     if not instances:
         raise ValueError("no .xml files with matching .graph files were found")
     total_runs = len(instances) * len(link_configurations) * len(configurations)
-    print(f"Selected instances: {len(instances)}")
-    print(f"Filtered or invalid instances: {filtered_instances}")
-    print(f"Total experiment runs: {total_runs}")
+    instances_by_dataset = defaultdict(int)
+    for _, _, dataset_name, _ in instances:
+        instances_by_dataset[dataset_name] += 1
+    dataset_summary = ", ".join(
+        f"{name}: {count:,}" for name, count in sorted(instances_by_dataset.items())
+    )
+    print("\nExperiment plan")
+    print(f"  Mode             {arguments.mode}")
+    print(f"  Configurations   {len(configurations):,}")
+    print(f"  Link variants    {len(link_configurations):,}")
+    print(f"  Instances        {len(instances):,} ({dataset_summary})")
+    print(f"  Filtered         {filtered_instances:,}")
+    print(f"  Matrix size      {total_runs:,} runs")
+    print(f"  Output           {output_dir}\n")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for name, configuration in configurations.items():
@@ -611,7 +659,16 @@ def main():
     timed_out = 0
     skipped = 0
     processed = 0
-    progress = tqdm(total=total_runs, desc="Running experiments", unit="run")
+    progress = tqdm(
+        total=total_runs,
+        desc="Experiments",
+        unit="run",
+        dynamic_ncols=True,
+        bar_format=(
+            "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
+            "[{elapsed}<{remaining}, {rate_fmt}] {postfix}"
+        ),
+    )
     adaptive_reports = defaultdict(list)
 
     def run_graph(
@@ -642,15 +699,14 @@ def main():
                     and result_file.is_file()
                     and result_file.stat().st_size > 0
                 ):
-                    print(
-                        f"[{configuration_name}/{link_name}] "
-                        f"Skipping completed {relative_path}"
-                    )
                     skipped += 1
                     processed += 1
                     outcomes[configuration_name].append("completed")
                     progress.set_postfix_str(
-                        f"skipped {configuration_name}/{link_name}/{relative_path}"
+                        compact_label(
+                            f"skip · {configuration_name} · {link_name} · {relative_path}"
+                        ),
+                        refresh=False,
                     )
                     progress.update()
                 else:
@@ -672,7 +728,9 @@ def main():
                 links_dir.mkdir(parents=True, exist_ok=True)
             links_file = links_dir / f"{graph_file.stem}-{link_name}.links"
             if not links_file.is_file() or links_file.stat().st_size == 0:
-                print(f"[{link_name}] Generating links for {relative_path}")
+                progress.set_postfix_str(
+                    compact_label(f"links · {link_name} · {relative_path}")
+                )
                 generator_result = run_command(
                     link_generator_command(
                         link_generator_executable,
@@ -692,20 +750,21 @@ def main():
                     for configuration_name, _, _ in pending:
                         outcomes[configuration_name].append("failed")
                         progress.set_postfix_str(
-                            f"failed {configuration_name}/{link_name}/{relative_path}"
+                            compact_label(
+                                f"failed · {configuration_name} · {link_name} · {relative_path}"
+                            ),
+                            refresh=False,
                         )
                         progress.update()
                     if temporary_links is not None:
                         temporary_links.cleanup()
                     continue
-            else:
-                print(f"[{link_name}] Reusing links for {relative_path}")
-
             for configuration_name, configuration, instance_output in pending:
                 instance_output.mkdir(parents=True, exist_ok=True)
-                print(
-                    f"[{configuration_name}/{link_name}] "
-                    f"Running {relative_path}"
+                progress.set_postfix_str(
+                    compact_label(
+                        f"run · {configuration_name} · {link_name} · {relative_path}"
+                    )
                 )
                 outcome = run_experiment(
                     experiments_executable,
@@ -728,7 +787,10 @@ def main():
                     failed += 1
                     status = "failed"
                 progress.set_postfix_str(
-                    f"{status} {configuration_name}/{link_name}/{relative_path}"
+                    compact_label(
+                        f"{status} · {configuration_name} · {link_name} · {relative_path}"
+                    ),
+                    refresh=False,
                 )
                 progress.update()
             if temporary_links is not None:
@@ -749,16 +811,19 @@ def main():
                 ) as cache_dir:
                     link_cache_dir = Path(cache_dir)
                     for configuration_name in configurations:
-                        print(
-                            f"[{configuration_name}] Discovering frontier for "
-                            f"{dataset_name}/{link_family}"
+                        progress.set_postfix_str(
+                            compact_label(
+                                f"frontier · {configuration_name} · {dataset_name} · {link_family}"
+                            )
                         )
 
                         def run_level(node_count):
                             level_completed = False
-                            print(
-                                f"[{configuration_name}] Testing {dataset_name}/"
-                                f"{link_family} at {node_count} nodes"
+                            progress.set_postfix_str(
+                                compact_label(
+                                    f"probe · {configuration_name} · {dataset_name} · "
+                                    f"{link_family} · n={node_count}"
+                                )
                             )
                             for graph_file, metis_file in instances_by_size[
                                 node_count
@@ -782,14 +847,6 @@ def main():
                         outcomes = run_adaptive_series(
                             size_levels, arguments.adaptive_probes, run_level
                         )
-                        tested_sizes = ", ".join(
-                            f"{size}={outcome}"
-                            for size, outcome in sorted(outcomes.items())
-                        )
-                        print(
-                            f"[{configuration_name}/{dataset_name}/{link_family}] "
-                            f"{tested_sizes}"
-                        )
                         adaptive_reports[configuration_name].append(
                             f"dataset={dataset_name} "
                             f"link_configuration={link_family}"
@@ -808,11 +865,14 @@ def main():
     if censored:
         progress.update(censored)
     progress.close()
-    print(f"Completed: {completed}")
-    print(f"Skipped: {skipped}")
-    print(f"Timed out: {timed_out}")
-    print(f"Failed: {failed}")
-    print(f"Censored: {censored}")
+    print("\nExperiment summary")
+    print(f"  Completed        {completed:,}")
+    print(f"  Skipped          {skipped:,}")
+    print(f"  Timed out        {timed_out:,}")
+    print(f"  Failed           {failed:,}")
+    print(f"  Censored         {censored:,}")
+    print(f"  Elapsed          {format_duration(time.monotonic() - start_time)}")
+    print(f"  Results          {output_dir}")
     return 1 if failed or (arguments.mode == "exhaustive" and timed_out) else 0
 
 

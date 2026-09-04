@@ -16,6 +16,45 @@ RUNNER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNNER)
 
 
+class OutputFormattingTest(unittest.TestCase):
+    def test_compacts_long_labels(self):
+        label = RUNNER.compact_label("abcdefghijklmnopqrstuvwxyz", 9)
+
+        self.assertEqual(len(label), 9)
+        self.assertEqual(label, "abcd…wxyz")
+
+    def test_formats_durations(self):
+        self.assertEqual(RUNNER.format_duration(7), "7s")
+        self.assertEqual(RUNNER.format_duration(67), "1m 07s")
+        self.assertEqual(RUNNER.format_duration(3667), "1h 01m 07s")
+
+
+class DatasetSelectionTest(unittest.TestCase):
+    def test_selects_instances_between_minimum_and_maximum_node_count(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_dir = Path(temp_dir)
+            cycles_dir = input_dir / "cycles"
+            cycles_dir.mkdir()
+            for node_count in (999, 1000, 1001):
+                (cycles_dir / f"cycle_{node_count}.xml").write_text("<graphml/>")
+                (cycles_dir / f"cycle_{node_count}.graph").write_text(
+                    f"{node_count} 0\n"
+                )
+
+            instances, skipped = RUNNER.find_instances(
+                input_dir,
+                {
+                    "include": ["cycles"],
+                    "datasets": {
+                        "cycles": {"min_nodes": 1000, "max_nodes": 1000}
+                    },
+                },
+            )
+
+        self.assertEqual([instance[3] for instance in instances], [1000])
+        self.assertEqual(skipped, 2)
+
+
 class AdaptiveSchedulingTest(unittest.TestCase):
     def test_probes_grow_exponentially_and_include_largest_level(self):
         indices = RUNNER.exponential_probe_indices(10, 4)
