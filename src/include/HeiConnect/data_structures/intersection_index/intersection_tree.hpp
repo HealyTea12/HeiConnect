@@ -31,6 +31,11 @@ public:
         {
             m_initial_min_level.reserve(m_nodes.size());
         }
+        m_initial_levels.reserve(records.size());
+        for (const IntersectionRecord& record : records)
+        {
+            m_initial_levels.push_back(record.level);
+        }
         for (const Node& node : m_nodes)
         {
             m_initial_max_end.push_back(node.max_end);
@@ -45,6 +50,30 @@ public:
     make(const std::vector<IntersectionRecord>& records) const override
     {
         return std::make_unique<IntersectionTreeIdx<RecordStatsLevel, PruneByLevel>>(records);
+    }
+
+    std::unique_ptr<BaseIntersectionIdx<RecordStatsLevel>> makeEmpty(
+        const std::vector<IntersectionRecord>& possible_records) const override
+    {
+        auto result = std::make_unique<IntersectionTreeIdx<RecordStatsLevel, PruneByLevel>>(possible_records);
+        result->clear();
+        return result;
+    }
+
+    Index addInterval(IntersectionRecord record) override
+    {
+        int node = m_root;
+        while (node >= 0)
+        {
+            const Index index = m_nodes[node].interval;
+            if (m_records[index].interval == record.interval)
+            {
+                activateInterval(index, record.level);
+                return index;
+            }
+            node = record.interval < m_records[index].interval ? m_nodes[node].left : m_nodes[node].right;
+        }
+        throw std::invalid_argument("Cannot add an interval that was not preallocated.");
     }
 
     void forEachIntersection(std::function<void(Index, Interval)> callback, Interval query, size_t exclusive_level)
@@ -87,9 +116,39 @@ public:
         }
     }
 
+    void activateInterval(Index index, size_t level) override
+    {
+        if (index >= m_active.size())
+        {
+            return;
+        }
+
+        m_records[index].level = level;
+        m_active[index] = true;
+        int node = m_node_by_interval[index];
+        while (node >= 0)
+        {
+            update(node);
+            node = m_nodes[node].parent;
+        }
+    }
+
+    void clear() override
+    {
+        std::fill(m_active.begin(), m_active.end(), false);
+        for (size_t node = m_nodes.size(); node > 0; --node)
+        {
+            update(static_cast<int>(node - 1));
+        }
+    }
+
     void reset() override
     {
         std::fill(m_active.begin(), m_active.end(), true);
+        for (Index index = 0; index < m_records.size(); ++index)
+        {
+            m_records[index].level = m_initial_levels[index];
+        }
         for (size_t node = 0; node < m_nodes.size(); ++node)
         {
             m_nodes[node].max_end = m_initial_max_end[node];
@@ -174,13 +233,6 @@ private:
         }
     }
 
-    static bool intersects(Interval left, Interval right)
-    {
-        const auto [a, b] = left;
-        const auto [c, d] = right;
-        return a == c || a == d || b == c || b == d || (a < c && c < b && b < d) || (c < a && a < d && d < b);
-    }
-
     void
     queryTree(int node, Interval query, size_t exclusive_level, const std::function<void(Index, Interval)>& callback)
         const
@@ -210,7 +262,7 @@ private:
         const Index index = m_nodes[node].interval;
         const Interval interval = m_records[index].interval;
         if (m_active[index] && (!PruneByLevel || m_records[index].level < exclusive_level) &&
-            std::get<0>(interval) <= std::get<1>(query) && intersects(interval, query))
+            std::get<0>(interval) <= std::get<1>(query) && intervals_touch_or_cross(interval, query))
         {
             if constexpr (RecordStatsLevel > 0)
             {
@@ -230,6 +282,7 @@ private:
     std::vector<int> m_node_by_interval;
     std::vector<size_t> m_initial_max_end;
     std::vector<size_t> m_initial_min_level;
+    std::vector<size_t> m_initial_levels;
     int m_root{-1};
     mutable IntersectionIndexMetrics m_metrics;
 };
