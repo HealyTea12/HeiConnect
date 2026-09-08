@@ -16,7 +16,7 @@ struct SetCoverBit
         m_adjacencyMatrix(std::move(set_cover)),
         m_nSets(n_sets),
         m_nElements(n_elements),
-        m_nCols((n_elements - 1) / WORD_BITS + 1),
+        m_nCols(n_elements / WORD_BITS + (n_elements % WORD_BITS != 0)),
         m_costs(std::move(costs))
     {}
 

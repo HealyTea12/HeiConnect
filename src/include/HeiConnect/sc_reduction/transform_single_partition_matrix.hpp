@@ -84,7 +84,7 @@ namespace HeiConnect_details
     {
         constexpr const size_t B = 8 * sizeof(ull);
         size_t n_vertices = vertices.size() - 1;
-        const size_t N_COLS = (n_min_cuts - 1) / B + 1;
+        const size_t N_COLS = n_min_cuts / B + (n_min_cuts % B != 0);
         std::vector<ull> min_cuts = std::vector<ull>(n_vertices * N_COLS, 0ULL);
         size_t current_min_cut_idx = 0;
         for (node_T u{}; u < vertices.size() - 1; u++)

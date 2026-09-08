@@ -215,6 +215,48 @@ TEST(ConnectivityAugmentationSolvers, CSRILPIncreasesConnectivity)
     }
 }
 
+TEST(ConnectivityAugmentationSolvers, LazyBlockTreeILPSkipsFullyReducedGraph)
+{
+    const auto graph = create_cycle_graph_undirected(4);
+    const auto link_graph = WeightedCRFGraph<>::vec_links_to_csr({{0, 2, 2.0}, {1, 3, 3.0}}, 4);
+    FullSingleDomReducer<> reducer;
+    UnionFind uf(graph.num_vertices());
+    ConnAugLinkRemap link_remap;
+    USSolution forced_solution;
+    auto [reduced_graph, reduced_links, remap, reduced_uf] =
+        reducer.run(graph, link_graph, link_remap, uf, forced_solution);
+    ASSERT_EQ(reduced_graph.num_vertices(), 1);
+    ASSERT_EQ(forced_solution.get_solution_size(), 2);
+
+    USSolution solution;
+    HeiConnect::LazyBlockTreeSolverILP<1> solver;
+    ASSERT_TRUE(solver.solve(reduced_graph, reduced_links, solution));
+    EXPECT_TRUE(solver.is_feasible());
+    EXPECT_TRUE(solution.get_solution().empty());
+    ASSERT_TRUE(solver.emit_metrics().has_value());
+    EXPECT_GT(viecut_min_cut(graph, link_graph, forced_solution.get_solution()), viecut_min_cut(graph, link_graph));
+}
+
+TEST(ConnectivityAugmentationSolvers, ZeroCutSetCoverNeedsNoSolverWork)
+{
+    const WeightedCRFGraph<> graph{{{0, 0}, {}}, {}};
+    const auto set_cover = construct_set_cover(
+        graph.graph.vertices, graph.graph.edges, graph.weights,
+        graph.graph.vertices, graph.graph.edges, graph.weights);
+    EXPECT_EQ(set_cover.get_num_elements(), 0);
+    EXPECT_EQ(set_cover.get_num_sets(), 0);
+    EXPECT_TRUE(solve_with_basic_context(set_cover, GreedySetCoverSolver<>{}).empty());
+    EXPECT_TRUE(solve_with_basic_context(set_cover, SetCoverSolverGreedyCheapest{}).empty());
+    EXPECT_TRUE(solve_with_basic_context(set_cover, SetCoverSolverILP<1>{}).empty());
+
+    const auto bit_set_cover = construct_set_cover_bit_matrix(
+        graph.graph.vertices, graph.graph.edges, graph.weights,
+        graph.graph.vertices, graph.graph.edges, graph.weights);
+    EXPECT_EQ(bit_set_cover.get_num_elements(), 0);
+    EXPECT_EQ(bit_set_cover.get_num_sets(), 0);
+    EXPECT_EQ(bit_set_cover.get_n_cols(), 0);
+}
+
 TEST(ConnectivityAugmentationSolvers, LazyBlockTreeILPIncreasesConnectivity)
 {
     try

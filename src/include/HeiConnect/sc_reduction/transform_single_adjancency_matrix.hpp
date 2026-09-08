@@ -26,7 +26,7 @@ namespace HeiConnect_details
     {
         const unsigned long B = 8 * sizeof(ull);
         const unsigned long N_ROWS = link_edges.size();
-        const unsigned long N_COLS = (n_min_cuts - 1) / B + 1;
+        const unsigned long N_COLS = n_min_cuts / B + (n_min_cuts % B != 0);
         std::vector<ull> set_cover = std::vector<ull>(N_ROWS * N_COLS, 0ULL);
         size_t current_link_idx = 0;
         for (size_t u{}; u < link_vertices.size() - 1; u++)

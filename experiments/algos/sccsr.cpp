@@ -458,26 +458,34 @@ private:
             m_config.reduction_config,
             output_dir / (graph_file.stem().string() + "_before_reductions.dot"),
             output_dir / (graph_file.stem().string() + "_after_reductions.dot")};
-        auto pipeline = Pipeline{
+        auto reduction_pipeline = Pipeline{
             read_stage,
             input_graph_metrics_stage,
             reduction_stage,
-            reduced_graph_metrics_stage,
-            build_stage,
-            build_context_stage,
-            solver,
-            trimmer,
-            optional_local_search};
+            reduced_graph_metrics_stage};
+        auto reduction_result = reduction_pipeline.run(graph_file, link_file);
+        pipeline_metrics = std::move(reduction_result.second);
+        auto& [reduced_graph, reduced_link_graph] = reduction_result.first;
 
-        auto pipeline_result = pipeline.run(graph_file, link_file);
-        pipeline_metrics = std::move(pipeline_result.second);
-
-        auto final_state = std::move(pipeline_result.first);
-        const auto& context = std::get<1>(final_state);
         std::unordered_set<size_t> original_solution = reduction_artifacts->forced_original_links;
-        for (const size_t reduced_id : context.get_solution())
+        if (reduced_graph.num_vertices() > 1)
         {
-            original_solution.insert(reduction_artifacts->reduced_to_original.at(reduced_id));
+            auto solve_pipeline = Pipeline{
+                build_stage,
+                build_context_stage,
+                solver,
+                trimmer,
+                optional_local_search};
+            auto solve_result = solve_pipeline.run(std::move(reduced_graph), std::move(reduced_link_graph));
+            for (auto& stage : solve_result.second.stages)
+            {
+                pipeline_metrics.stages.push_back(std::move(stage));
+            }
+            const auto& context = std::get<1>(solve_result.first);
+            for (const size_t reduced_id : context.get_solution())
+            {
+                original_solution.insert(reduction_artifacts->reduced_to_original.at(reduced_id));
+            }
         }
 
         double solution_cost = 0.0;

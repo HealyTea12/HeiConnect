@@ -116,8 +116,7 @@ public:
     template<typename SetCoverT, typename Context>
     auto operator()(std::shared_ptr<const SetCoverT> set_cover, Context context)
     {
-        auto ilp = build_set_cover_ilp_model(*set_cover);
-        solve(ilp, context);
+        solve(*set_cover, context);
         return std::tuple{std::move(set_cover), std::move(context)};
     }
 
@@ -131,6 +130,19 @@ public:
     template<typename SetCoverType, typename SolutionType>
     bool solve(const SetCoverType& set_cover, SolutionType& solution)
     {
+        if (set_cover.get_num_elements() == 0)
+        {
+            m_feasible = true;
+            if constexpr (RecordMetricsLevel > 0)
+            {
+                m_metrics = StageMetrics{
+                    {"cost", "0"},
+                    {"size", std::to_string(solution.get_solution_size())},
+                    {"status", "OPTIMAL"},
+                };
+            }
+            return true;
+        }
         auto ilp = build_set_cover_ilp_model(set_cover);
         return solve(ilp, solution);
     }

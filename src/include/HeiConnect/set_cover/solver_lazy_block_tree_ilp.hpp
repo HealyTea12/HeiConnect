@@ -160,6 +160,21 @@ public:
     template<typename GraphType, typename LinkGraphType, typename SolutionType>
     bool solve(const GraphType& graph, const LinkGraphType& link_graph, SolutionType& solution)
     {
+        if (graph.num_vertices() <= 1)
+        {
+            m_feasible = true;
+            if constexpr (RecordMetricsLevel > 0)
+            {
+                m_metrics = StageMetrics{
+                    {"cost", "0"},
+                    {"size", std::to_string(solution.get_solution_size())},
+                    {"status", "OPTIMAL"},
+                    {"lazy_constraints", "0"},
+                };
+            }
+            return true;
+        }
+
         auto [block_tree, cycle_positions] = graph.cactus_generate_block_tree(0);
         (void)cycle_positions;
         auto block_tree_link_graph = detail::extend_link_graph_vertices(link_graph, block_tree.num_vertices());
