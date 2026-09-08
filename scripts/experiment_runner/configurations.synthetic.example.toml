@@ -1,0 +1,75 @@
+# No pre-generated graphs or dataset input path are needed for synthetic instances.
+# uv run scripts/experiment_runner/run_configurations.py results/synthetic \
+#   -c scripts/experiment_runner/configurations.synthetic.example.toml
+
+# To also run existing datasets, add their selection to this same file:
+# [dataset_selection]
+# input_dir = "../../datasets"
+# include = ["real_world"]
+# [dataset_selection.datasets.real_world]
+# max_nodes = 10000
+
+[synthetic_datasets.cycles]
+generator = "cycle"
+min_nodes = 10
+samples = 10
+resolution = 1
+# Omit max_nodes for unbounded doubling until a timeout brackets the frontier.
+# max_nodes = 10000
+# Cycles and stars have one graph per size; do not specify multiple graph seeds.
+
+[synthetic_datasets.stars]
+generator = "star"
+min_nodes = 10
+samples = 10
+
+[synthetic_datasets.trees]
+generator = "tree"
+min_nodes = 10
+samples = 10
+seeds = [42, 43, 44, 45, 46]
+
+[synthetic_datasets.cacti]
+generator = "cactus"
+min_nodes = 10
+samples = 10
+seeds = [42, 43, 44, 45, 46]
+cycle_length = 4
+cycle_mass = 0.75
+# These bounds apply to graph/link generation, separately from algorithm limits.
+generation_timeout = 300
+generation_max_memory_mb = 4096
+
+[synthetic_datasets.variable_cacti]
+generator = "cactus_variable"
+min_nodes = 10
+samples = 10
+seeds = [42, 43, 44, 45, 46]
+min_cycle_size = 2
+max_cycle_size = 8
+
+[link_configurations.unit]
+distribution = "constant"
+constant_weight = 1.0
+seed = 42
+
+# Link seeds are independent of graph seeds, including for cycles and stars.
+[link_configurations.float_uniform_0_1]
+distribution = "float_uniform"
+float_uniform_lower = 0.0
+float_uniform_upper = 1.0
+seeds = [42, 43, 44, 45, 46]
+
+[configurations.baseline]
+algorithm = "Set Cover CSR"
+timeout = 120
+max_memory_mb = 4096
+
+[configurations.baseline.params]
+solver = "greedy"
+reduction_type = "csr"
+
+[configurations.mst_connect]
+algorithm = "mst-connect"
+timeout = 120
+max_memory_mb = 4096

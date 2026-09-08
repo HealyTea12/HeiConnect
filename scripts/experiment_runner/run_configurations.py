@@ -9,6 +9,7 @@
 import argparse
 from collections import defaultdict
 from itertools import product
+import json
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,12 @@ import time
 import tomllib
 
 from tqdm import tqdm
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from dataset_generation.generate_graph_datasets import (
+    cactus_cycles,
+    graph_generator_command,
+)
 
 
 VALID_NAME = re.compile(r"[A-Za-z0-9_.-]+")
@@ -54,9 +61,8 @@ def positive_integer(value):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description="Generate links and run named configurations on every graph instance."
+        description="Run existing datasets and search synthetic solvability frontiers."
     )
-    parser.add_argument("input_dir", type=Path)
     parser.add_argument("output_dir", type=Path)
     parser.add_argument(
         "-c", "--configurations", required=True, type=Path, metavar="FILE"
@@ -64,15 +70,14 @@ def parse_arguments():
     parser.add_argument(
         "--no-repeat",
         action="store_true",
-        help="skip runs that already have a non-empty named result file",
+        help="skip runs that already contain a completed named result",
     )
     parser.add_argument(
         "--mode",
         choices=("exhaustive", "adaptive"),
         default="exhaustive",
         help=(
-            "run every instance or use bounded probes to discover each algorithm's "
-            "solvability frontier"
+            "scheduling for existing files; synthetic families always search their frontier"
         ),
     )
     parser.add_argument(
@@ -283,6 +288,14 @@ def load_configurations(path):
     dataset_selection = document.get("dataset_selection", {})
     if not isinstance(dataset_selection, dict):
         raise ValueError("dataset_selection must be a TOML table")
+    if "dataset_selection" in document:
+        input_path = dataset_selection.get("input_dir")
+        if not isinstance(input_path, str) or not input_path.strip():
+            raise ValueError("dataset_selection.input_dir must be a non-empty path string")
+        input_dir = Path(input_path).expanduser()
+        if not input_dir.is_absolute():
+            input_dir = path.resolve().parent / input_dir
+        dataset_selection["input_dir"] = str(input_dir.resolve())
     if dataset_selection.get("default_max_nodes") is not None:
         positive_integer(dataset_selection["default_max_nodes"])
     included_datasets = dataset_selection.get("include", [])
@@ -305,7 +318,160 @@ def load_configurations(path):
                 f"dataset selection {name!r} min_nodes must not exceed max_nodes"
             )
 
-    return configurations, link_configurations, dataset_selection
+    synthetic = validate_synthetic_datasets(document.get("synthetic_datasets", {}))
+    if "dataset_selection" not in document:
+        dataset_selection = None
+    if dataset_selection is None and not synthetic:
+        raise ValueError("configure dataset_selection or synthetic_datasets to select instances")
+    return configurations, link_configurations, dataset_selection, synthetic
+
+
+def validate_synthetic_datasets(datasets):
+    if not isinstance(datasets, dict):
+        raise ValueError("synthetic_datasets must be a TOML table")
+    validated = {}
+    for name, settings in datasets.items():
+        validate_name(name, "synthetic dataset")
+        if name in {".", ".."}:
+            raise ValueError("synthetic dataset names must not be '.' or '..'")
+        if not isinstance(settings, dict):
+            raise ValueError(f"synthetic dataset {name!r} must be a table")
+        settings = dict(settings)
+        allowed = {
+            "generator", "min_nodes", "max_nodes", "samples", "resolution",
+            "seeds", "cycle_length", "cycle_mass", "generation_timeout",
+            "generation_max_memory_mb",
+            "min_cycle_size", "max_cycle_size",
+        }
+        if set(settings) - allowed:
+            raise ValueError(f"unknown synthetic settings for {name!r}: {set(settings) - allowed}")
+        generator = settings.get("generator")
+        if not isinstance(generator, str) or generator not in {"cycle", "star", "tree", "cactus", "cactus_variable"}:
+            raise ValueError(f"unsupported synthetic generator for {name!r}")
+        for key, default in {
+            "min_nodes": 10, "samples": 10, "resolution": 1,
+            "generation_timeout": 300, "generation_max_memory_mb": 4096,
+        }.items():
+            settings.setdefault(key, default)
+            positive_integer(settings[key])
+        minimum_nodes = {"cycle": 3, "star": 2, "tree": 2, "cactus": 1, "cactus_variable": 1}
+        if settings["min_nodes"] < minimum_nodes[generator]:
+            raise ValueError(f"min_nodes is too small for {generator}")
+        if "max_nodes" in settings:
+            positive_integer(settings["max_nodes"])
+            if settings["max_nodes"] < settings["min_nodes"]:
+                raise ValueError("synthetic max_nodes must be at least min_nodes")
+        seeds = settings.setdefault("seeds", [42])
+        if not isinstance(seeds, list) or not seeds or any(
+            not isinstance(seed, int) or isinstance(seed, bool)
+            or not 0 <= seed <= 2**32 - 1 for seed in seeds
+        ):
+            raise ValueError("synthetic seeds must be a non-empty array of unsigned 32-bit integers")
+        if len(set(seeds)) != len(seeds):
+            raise ValueError("synthetic seeds must be unique")
+        if generator in {"cycle", "star"}:
+            if len(seeds) > 1:
+                raise ValueError(f"{generator} has only one graph per size; use at most one graph seed")
+            settings["seeds"] = [42]
+        if generator == "cactus":
+            positive_integer(settings.get("cycle_length"))
+            mass = settings.get("cycle_mass")
+            if not isinstance(mass, (int, float)) or isinstance(mass, bool):
+                raise ValueError("cactus cycle_mass must be a number")
+            cactus_cycles(settings["min_nodes"], settings["cycle_length"], mass)
+        elif "cycle_length" in settings or "cycle_mass" in settings:
+            raise ValueError("cycle_length and cycle_mass apply only to cactus graphs")
+        if generator == "cactus_variable":
+            positive_integer(settings.get("min_cycle_size"))
+            positive_integer(settings.get("max_cycle_size"))
+            if not 2 <= settings["min_cycle_size"] <= settings["max_cycle_size"]:
+                raise ValueError("cycle sizes must satisfy 2 <= min_cycle_size <= max_cycle_size")
+        elif "min_cycle_size" in settings or "max_cycle_size" in settings:
+            raise ValueError("min_cycle_size and max_cycle_size apply only to cactus_variable graphs")
+        validated[name] = settings
+    return validated
+
+
+def evenly_spaced_sizes(lower, upper, count):
+    count = min(count, upper - lower + 1)
+    if count == 1:
+        return [upper]
+    return [lower + (upper - lower) * index // (count - 1) for index in range(count)]
+
+
+def run_synthetic_series(settings, run_level):
+    outcomes = {}
+    lower = None
+    upper = None
+    size = settings["min_nodes"]
+    cap = settings.get("max_nodes")
+    status = "capped"
+
+    def probe(size):
+        if size not in outcomes:
+            outcomes[size] = run_level(size)
+        return outcomes[size]
+
+    while True:
+        outcome = probe(size)
+        if outcome != "solved":
+            status = outcome
+            if outcome == "timeout":
+                upper = size
+            break
+        lower = size
+        if size == cap:
+            break
+        size = size * 2 if cap is None else min(size * 2, cap)
+
+    if lower is not None and upper is not None:
+        while upper - lower > settings["resolution"]:
+            size = (lower + upper) // 2
+            outcome = probe(size)
+            if outcome == "solved":
+                lower = size
+            elif outcome == "timeout":
+                upper = size
+            else:
+                status = outcome
+                break
+        if status == "timeout":
+            status = "bracketed"
+
+    samples = []
+    if lower is not None:
+        samples = evenly_spaced_sizes(settings["min_nodes"], lower, settings["samples"])
+        for size in reversed(samples):
+            probe(size)
+        if any(outcomes[size] != "solved" for size in samples):
+            status = "non_monotone"
+    smallest_timeout = min(
+        (size for size, outcome in outcomes.items() if outcome == "timeout"),
+        default=None,
+    )
+    return {
+        "status": status, "largest_solved": lower, "smallest_timeout": smallest_timeout,
+        "samples": samples, "outcomes": outcomes,
+    }
+
+
+def generate_synthetic_graph(executable, output_dir, node_count, seed, settings):
+    try:
+        return_code = run_command(
+            graph_generator_command(executable, output_dir, node_count, seed, settings),
+            settings["generation_timeout"],
+            settings["generation_max_memory_mb"],
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    graphs = list(output_dir.glob("*.xml"))
+    if return_code != 0 or len(graphs) != 1:
+        return None
+    graph_file = graphs[0]
+    metis_file = graph_file.with_suffix(".graph")
+    if not metis_file.is_file() or read_node_count(metis_file) != node_count:
+        return None
+    return graph_file, metis_file
 
 
 def read_node_count(graph_file):
@@ -425,8 +591,9 @@ def serialize_parameter(value):
 
 
 def write_configuration(
-    path, name, configuration, link_configurations, dataset_selection
+    path, name, configuration, link_configurations, dataset_selection, synthetic=None
 ):
+    dataset_selection = dataset_selection or {}
     lines = [
         f"name={name}",
         f"algorithm={configuration['algorithm']}",
@@ -442,6 +609,8 @@ def write_configuration(
             lines.append(
                 f"link_configuration.{link_name}.{key}={serialize_parameter(value)}"
             )
+    if "input_dir" in dataset_selection:
+        lines.append(f"dataset_selection.input_dir={dataset_selection['input_dir']}")
     for dataset_name in dataset_selection.get("include", []):
         lines.append(f"dataset_selection.include={dataset_name}")
     if dataset_selection.get("default_max_nodes") is not None:
@@ -458,7 +627,17 @@ def write_configuration(
         lines.append(
             f"dataset_selection.{dataset_name}.max_nodes={selection['max_nodes']}"
         )
+    for dataset_name, settings in (synthetic or {}).items():
+        for key, value in settings.items():
+            lines.append(f"synthetic_dataset.{dataset_name}.{key}={serialize_parameter(value)}")
     path.write_text("\n".join(lines) + "\n")
+
+
+def has_complete_result(path):
+    if not path.is_file():
+        return False
+    with path.open() as file:
+        return any(line.startswith("run.total_time_seconds=") for line in file)
 
 
 def memory_limit(max_memory_mb):
@@ -596,7 +775,6 @@ def main():
     start_time = time.monotonic()
     arguments = parse_arguments()
     positive_integer(arguments.adaptive_probes)
-    input_dir = arguments.input_dir.resolve()
     output_dir = arguments.output_dir.resolve()
     project_dir = Path(__file__).resolve().parents[2]
     experiments_executable = Path(
@@ -612,19 +790,31 @@ def main():
         )
     )
 
-    if not input_dir.is_dir():
+    configurations, link_configurations, dataset_selection, synthetic = load_configurations(
+        arguments.configurations
+    )
+    input_dir = Path(dataset_selection["input_dir"]) if dataset_selection is not None else None
+    if input_dir is not None and not input_dir.is_dir():
         raise FileNotFoundError(f"input directory not found: {input_dir}")
+    if synthetic and any(configuration.get("timeout") is None for configuration in configurations.values()):
+        raise ValueError("every algorithm configuration needs a timeout for synthetic frontier search")
     for executable in (experiments_executable, link_generator_executable):
         if not executable.is_file() or not os.access(executable, os.X_OK):
             raise FileNotFoundError(
                 f"required executable not found or not executable: {executable}"
             )
 
-    configurations, link_configurations, dataset_selection = load_configurations(
-        arguments.configurations
+    instances, filtered_instances = (
+        find_instances(input_dir, dataset_selection)
+        if dataset_selection is not None else ([], 0)
     )
-    instances, filtered_instances = find_instances(input_dir, dataset_selection)
-    if not instances:
+    existing_names = {instance[2] for instance in instances}
+    if existing_names & synthetic.keys():
+        raise ValueError(
+            "existing and synthetic dataset names overlap; use distinct names: "
+            + ", ".join(sorted(existing_names & synthetic.keys()))
+        )
+    if not instances and not synthetic:
         raise ValueError("no .xml files with matching .graph files were found")
     total_runs = len(instances) * len(link_configurations) * len(configurations)
     instances_by_dataset = defaultdict(int)
@@ -640,6 +830,8 @@ def main():
     print(f"  Instances        {len(instances):,} ({dataset_summary})")
     print(f"  Filtered         {filtered_instances:,}")
     print(f"  Matrix size      {total_runs:,} runs")
+    if synthetic:
+        print(f"  Synthetic        {', '.join(synthetic)} (run count discovered during search)")
     print(f"  Output           {output_dir}\n")
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -652,6 +844,7 @@ def main():
             configuration,
             link_configurations,
             dataset_selection,
+            synthetic,
         )
 
     completed = 0
@@ -660,11 +853,11 @@ def main():
     skipped = 0
     processed = 0
     progress = tqdm(
-        total=total_runs,
+        total=None if synthetic else total_runs,
         desc="Experiments",
         unit="run",
         dynamic_ncols=True,
-        bar_format=(
+        bar_format=None if synthetic else (
             "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
             "[{elapsed}<{remaining}, {rate_fmt}] {postfix}"
         ),
@@ -677,9 +870,12 @@ def main():
         selected_configurations,
         selected_link_configurations=None,
         link_cache_dir=None,
+        relative_path=None,
+        generation_settings=None,
     ):
         nonlocal completed, failed, timed_out, skipped, processed
-        relative_path = graph_file.relative_to(input_dir).with_suffix("")
+        if relative_path is None:
+            relative_path = graph_file.relative_to(input_dir).with_suffix("")
         outcomes = {name: [] for name in selected_configurations}
         selected_link_configurations = (
             link_configurations
@@ -696,8 +892,7 @@ def main():
                 result_file = instance_output / result_file_name
                 if (
                     arguments.no_repeat
-                    and result_file.is_file()
-                    and result_file.stat().st_size > 0
+                    and has_complete_result(result_file)
                 ):
                     skipped += 1
                     processed += 1
@@ -731,14 +926,20 @@ def main():
                 progress.set_postfix_str(
                     compact_label(f"links · {link_name} · {relative_path}")
                 )
-                generator_result = run_command(
-                    link_generator_command(
-                        link_generator_executable,
-                        metis_file,
-                        links_file,
-                        link_configuration,
+                generation_settings = generation_settings or {}
+                try:
+                    generator_result = run_command(
+                        link_generator_command(
+                            link_generator_executable,
+                            metis_file,
+                            links_file,
+                            link_configuration,
+                        ),
+                        generation_settings.get("generation_timeout"),
+                        generation_settings.get("generation_max_memory_mb"),
                     )
-                )
+                except subprocess.TimeoutExpired:
+                    generator_result = -1
                 if generator_result != 0:
                     print(
                         f"[{link_name}] Link generation failed for {graph_file}",
@@ -748,7 +949,9 @@ def main():
                     failed += len(pending)
                     processed += len(pending)
                     for configuration_name, _, _ in pending:
-                        outcomes[configuration_name].append("failed")
+                        outcomes[configuration_name].append(
+                            "generation_failed" if generation_settings else "failed"
+                        )
                         progress.set_postfix_str(
                             compact_label(
                                 f"failed · {configuration_name} · {link_name} · {relative_path}"
@@ -862,8 +1065,51 @@ def main():
             report_path.write_text("\n".join(report) + "\n")
 
     censored = total_runs - processed
-    if censored:
+    existing_timed_out = timed_out
+    if censored and not synthetic:
         progress.update(censored)
+
+    synthetic_reports = defaultdict(list)
+    for dataset_name, settings in synthetic.items():
+        for link_family, link_names in group_link_configurations(link_configurations).items():
+            for configuration_name in configurations:
+                def run_level(node_count):
+                    nonlocal failed
+                    progress.set_postfix_str(compact_label(
+                        f"synthetic · {configuration_name} · {dataset_name} · n={node_count}"
+                    ))
+                    for seed in settings["seeds"]:
+                        with tempfile.TemporaryDirectory(prefix="heiconnect-graph-") as directory:
+                            graph = generate_synthetic_graph(
+                                link_generator_executable, Path(directory),
+                                node_count, seed, settings,
+                            )
+                            if graph is None:
+                                failed += 1
+                                print(f"Graph generation failed: {dataset_name}, n={node_count}, seed={seed}", file=sys.stderr)
+                                return "generation_failed"
+                            graph_file, metis_file = graph
+                            for link_name in link_names:
+                                outcomes = run_graph(
+                                    graph_file, metis_file, [configuration_name], [link_name],
+                                    relative_path=Path(dataset_name) / graph_file.stem,
+                                    generation_settings=settings,
+                                )
+                                outcome = outcomes[configuration_name][0]
+                                if outcome != "completed":
+                                    return outcome
+                    return "solved"
+
+                report = run_synthetic_series(settings, run_level)
+                report.update(dataset=dataset_name, link_configuration=link_family)
+                synthetic_reports[configuration_name].append(report)
+                report_path = output_dir / configuration_name / "synthetic-frontier.json"
+                report_path.write_text(json.dumps(synthetic_reports[configuration_name], indent=2) + "\n")
+                tqdm.write(
+                    f"[{configuration_name}] {dataset_name}/{link_family}: "
+                    f"{report['status']}, largest solved={report['largest_solved']}, "
+                    f"smallest timeout={report['smallest_timeout']}"
+                )
     progress.close()
     print("\nExperiment summary")
     print(f"  Completed        {completed:,}")
@@ -873,7 +1119,7 @@ def main():
     print(f"  Censored         {censored:,}")
     print(f"  Elapsed          {format_duration(time.monotonic() - start_time)}")
     print(f"  Results          {output_dir}")
-    return 1 if failed or (arguments.mode == "exhaustive" and timed_out) else 0
+    return 1 if failed or (arguments.mode == "exhaustive" and existing_timed_out) else 0
 
 
 if __name__ == "__main__":

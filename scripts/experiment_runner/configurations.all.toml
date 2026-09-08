@@ -1,10 +1,11 @@
 # Generate graphs with:
 # uv run scripts/dataset_generation/generate_graph_datasets.py
 # Run this matrix with:
-# uv run scripts/experiment_runner/run_configurations.py datasets results/all \
+# uv run scripts/experiment_runner/run_configurations.py results/all \
 #   --configurations scripts/experiment_runner/configurations.all.toml --mode adaptive
 
 [dataset_selection]
+input_dir = "../../datasets"
 include = ["cycles", "stars", "trees", "cacti"]
 default_max_nodes = 500
 
@@ -77,3 +78,4 @@ max_memory_mb = 4096
 depth = 0
 cache = false
 trees = 0
+time_limit_seconds = 100

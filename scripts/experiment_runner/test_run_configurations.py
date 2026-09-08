@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -30,6 +31,33 @@ class OutputFormattingTest(unittest.TestCase):
 
 
 class DatasetSelectionTest(unittest.TestCase):
+    def test_configured_input_paths_and_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            base = '''
+[configurations.test]
+algorithm = "test"
+[link_configurations.unit]
+distribution = "constant"
+seed = 42
+[dataset_selection]
+'''
+            for value, expected in (
+                ("inputs", root / "inputs"),
+                (str(root / "absolute"), root / "absolute"),
+                ("~/datasets", Path.home() / "datasets"),
+            ):
+                with self.subTest(value=value):
+                    config.write_text(base + f"input_dir = {json.dumps(value)}\n")
+                    _, _, selection, _ = RUNNER.load_configurations(config)
+                    self.assertEqual(selection["input_dir"], str(expected.resolve()))
+            for setting in ('', 'input_dir = ""', 'input_dir = " "', 'input_dir = 42'):
+                with self.subTest(setting=setting):
+                    config.write_text(base + setting)
+                    with self.assertRaisesRegex(ValueError, "dataset_selection.input_dir"):
+                        RUNNER.load_configurations(config)
+
     def test_selects_instances_between_minimum_and_maximum_node_count(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             input_dir = Path(temp_dir)
@@ -53,6 +81,17 @@ class DatasetSelectionTest(unittest.TestCase):
 
         self.assertEqual([instance[3] for instance in instances], [1000])
         self.assertEqual(skipped, 2)
+
+
+class ArgumentsTest(unittest.TestCase):
+    def test_only_output_directory_is_positional(self):
+        with mock.patch.object(sys, "argv", [
+            "run_configurations.py", "results", "-c", "config.toml",
+        ]):
+            arguments = RUNNER.parse_arguments()
+        self.assertEqual(arguments.output_dir, Path("results"))
+        self.assertEqual(arguments.configurations, Path("config.toml"))
+        self.assertFalse(hasattr(arguments, "input_dir"))
 
 
 class AdaptiveSchedulingTest(unittest.TestCase):
@@ -124,11 +163,12 @@ class LinkConfigurationTest(unittest.TestCase):
     def test_all_algorithms_configuration_loads(self):
         configuration_path = MODULE_PATH.with_name("configurations.all.toml")
 
-        configurations, links, datasets = RUNNER.load_configurations(
+        configurations, links, datasets, synthetic = RUNNER.load_configurations(
             configuration_path
         )
 
         self.assertEqual(len(configurations), 76)
+        self.assertEqual(synthetic, {})
         self.assertEqual(len(links), 10)
         self.assertIn("cacti", datasets["include"])
         algorithms = {
@@ -222,6 +262,15 @@ class ConfigurationMatrixTest(unittest.TestCase):
 
 
 class ExperimentResultTest(unittest.TestCase):
+    def test_resume_requires_a_complete_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = Path(directory) / "res.txt"
+            self.assertFalse(RUNNER.has_complete_result(result))
+            result.write_text("run.peak_memory_pages=100\n")
+            self.assertFalse(RUNNER.has_complete_result(result))
+            result.write_text("run.total_time_seconds=0.5\n")
+            self.assertTrue(RUNNER.has_complete_result(result))
+
     def test_partial_child_output_is_not_treated_as_completed(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
@@ -245,6 +294,236 @@ class ExperimentResultTest(unittest.TestCase):
                 )
 
             self.assertEqual(outcome, "failed")
+
+
+class SyntheticSchedulingTest(unittest.TestCase):
+    def test_variable_cactus_requires_valid_bounds(self):
+        settings = self.settings(generator="cactus_variable", min_cycle_size=2, max_cycle_size=8)
+        self.assertEqual(settings["min_cycle_size"], 2)
+        self.assertEqual(settings["max_cycle_size"], 8)
+        self.settings(generator="cactus_variable", min_cycle_size=2, max_cycle_size=2)
+        for bounds in (
+            {}, {"min_cycle_size": 3}, {"min_cycle_size": 1, "max_cycle_size": 5},
+            {"min_cycle_size": 5, "max_cycle_size": 3},
+            {"min_cycle_size": 3.5, "max_cycle_size": 8},
+            {"min_cycle_size": 3, "max_cycle_size": 8, "cycle_mass": 0.5},
+        ):
+            with self.subTest(bounds=bounds), self.assertRaises(ValueError):
+                self.settings(generator="cactus_variable", **bounds)
+        with self.assertRaises(ValueError):
+            self.settings(generator="tree", min_cycle_size=3, max_cycle_size=8)
+
+    def settings(self, **overrides):
+        return RUNNER.validate_synthetic_datasets({
+            "test": {"generator": "tree", "min_nodes": 10, "samples": 5, **overrides}
+        })["test"]
+
+    def test_searches_beyond_initial_size_then_bisects_and_samples(self):
+        calls = []
+
+        def run(size):
+            calls.append(size)
+            return "solved" if size <= 73 else "timeout"
+
+        report = RUNNER.run_synthetic_series(self.settings(), run)
+        self.assertEqual(calls[:4], [10, 20, 40, 80])
+        self.assertEqual(report["largest_solved"], 73)
+        self.assertEqual(report["smallest_timeout"], 74)
+        self.assertEqual(report["status"], "bracketed")
+        self.assertEqual(report["samples"], [10, 25, 41, 57, 73])
+        self.assertEqual(len(calls), len(set(calls)))
+        self.assertEqual(calls[-3:], [57, 41, 25])
+
+    def test_timeout_at_minimum_has_no_solved_frontier(self):
+        run = mock.Mock(return_value="timeout")
+        report = RUNNER.run_synthetic_series(self.settings(), run)
+        run.assert_called_once_with(10)
+        self.assertIsNone(report["largest_solved"])
+        self.assertEqual(report["samples"], [])
+
+    def test_cap_is_reported_as_a_lower_bound(self):
+        report = RUNNER.run_synthetic_series(
+            self.settings(max_nodes=35), lambda size: "solved"
+        )
+        self.assertEqual(report["status"], "capped")
+        self.assertEqual(report["largest_solved"], 35)
+        self.assertIsNone(report["smallest_timeout"])
+        self.assertLessEqual(max(report["outcomes"]), 35)
+
+    def test_resolution_bounds_the_bracket(self):
+        report = RUNNER.run_synthetic_series(
+            self.settings(resolution=8),
+            lambda size: "solved" if size <= 73 else "timeout",
+        )
+        self.assertLessEqual(report["smallest_timeout"] - report["largest_solved"], 8)
+
+    def test_generation_failure_is_not_a_timeout_boundary(self):
+        report = RUNNER.run_synthetic_series(
+            self.settings(), lambda size: "solved" if size <= 40 else "generation_failed"
+        )
+        self.assertEqual(report["status"], "generation_failed")
+        self.assertEqual(report["largest_solved"], 40)
+        self.assertIsNone(report["smallest_timeout"])
+
+    def test_failure_during_bisection_leaves_search_incomplete(self):
+        def run(size):
+            if size == 60:
+                return "failed"
+            return "solved" if size <= 73 else "timeout"
+
+        report = RUNNER.run_synthetic_series(self.settings(), run)
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["largest_solved"], 40)
+        self.assertEqual(report["smallest_timeout"], 80)
+
+    def test_backfill_detects_non_monotone_outcomes_and_keeps_sampling(self):
+        report = RUNNER.run_synthetic_series(
+            self.settings(max_nodes=50),
+            lambda size: "timeout" if size == 30 else "solved",
+        )
+        self.assertEqual(report["status"], "non_monotone")
+        self.assertEqual(report["smallest_timeout"], 30)
+        self.assertTrue(set(report["samples"]).issubset(report["outcomes"]))
+
+    def test_small_ranges_and_single_sample_do_not_duplicate_sizes(self):
+        self.assertEqual(RUNNER.evenly_spaced_sizes(10, 12, 10), [10, 11, 12])
+        self.assertEqual(RUNNER.evenly_spaced_sizes(10, 12, 1), [12])
+        self.assertEqual(RUNNER.evenly_spaced_sizes(10, 10, 10), [10])
+
+    def test_seed_rules_and_invalid_settings(self):
+        for generator in ("cycle", "star"):
+            self.assertEqual(self.settings(generator=generator)["seeds"], [42])
+            with self.assertRaises(ValueError):
+                self.settings(generator=generator, seeds=[42, 43])
+        self.assertEqual(self.settings(seeds=[42, 43])["seeds"], [42, 43])
+        for settings in (
+            {"seeds": []}, {"seeds": [42, 42]}, {"seeds": [True]},
+            {"seeds": [2**32]}, {"samples": 0}, {"resolution": 0},
+            {"max_nodes": 5}, {"generator": "cycle", "min_nodes": 2},
+            {"generator": "cactus", "cycle_length": 2, "cycle_mass": 0.5},
+            {"cycle_mass": 0.5}, {"typo": 1},
+        ):
+            with self.subTest(settings=settings), self.assertRaises(ValueError):
+                self.settings(**settings)
+
+
+class SyntheticIntegrationTest(unittest.TestCase):
+    def test_tables_select_existing_synthetic_or_both(self):
+        for existing, synthetic in ((True, False), (False, True), (True, True)):
+            with self.subTest(existing=existing, synthetic=synthetic), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                input_dir = root / "inputs"
+                if existing:
+                    input_dir.mkdir()
+                config = root / "config.toml"
+                config.write_text('''
+[link_configurations.unit]
+distribution = "constant"
+seed = 42
+[configurations.test]
+algorithm = "test"
+timeout = 1
+''' + ('\n[dataset_selection]\ninput_dir = "inputs"\n' if existing else "") + ('''
+[synthetic_datasets.trees]
+generator = "tree"
+max_nodes = 10
+''' if synthetic else ""))
+                arguments = types.SimpleNamespace(
+                    output_dir=root / "results",
+                    configurations=config, mode="exhaustive",
+                    adaptive_probes=6, no_repeat=False,
+                )
+                graph = input_dir / "real_world" / "instance.xml"
+                report = {"status": "capped", "largest_solved": 10, "smallest_timeout": None}
+                with mock.patch.object(RUNNER, "parse_arguments", return_value=arguments), \
+                     mock.patch.dict(RUNNER.os.environ, {
+                         "EXPERIMENTS_BINARY": sys.executable,
+                         "DATASET_GENERATOR_BINARY": sys.executable,
+                     }), \
+                     mock.patch.object(RUNNER, "find_instances", return_value=(
+                         [(graph, graph.with_suffix(".graph"), "real_world", 10)], 0,
+                     )) as find, \
+                     mock.patch.object(RUNNER, "run_synthetic_series", return_value=report) as search, \
+                     mock.patch.object(RUNNER, "run_command", return_value=0), \
+                     mock.patch.object(RUNNER, "run_experiment", return_value="completed") as experiment, \
+                     mock.patch.object(RUNNER, "tqdm"), \
+                     mock.patch("builtins.print"):
+                    self.assertEqual(RUNNER.main(), 0)
+                    self.assertEqual(find.call_count, int(existing))
+                    if existing:
+                        self.assertEqual(find.call_args.args[0], input_dir)
+                        metadata = (root / "results" / "test" / "configuration.txt").read_text()
+                        self.assertIn(f"dataset_selection.input_dir={input_dir}\n", metadata)
+                    self.assertEqual(experiment.call_count, int(existing))
+                    self.assertEqual(search.call_count, int(synthetic))
+
+    def test_separate_frontiers_require_all_graph_and_link_seeds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            config.write_text('''
+[synthetic_datasets.trees]
+generator = "tree"
+min_nodes = 4
+max_nodes = 16
+samples = 3
+seeds = [42, 43]
+[link_configurations.uniform]
+distribution = "float_uniform"
+seeds = [42, 43]
+[configurations.small]
+algorithm = "small"
+timeout = 1
+[configurations.large]
+algorithm = "large"
+timeout = 1
+''')
+            arguments = types.SimpleNamespace(
+                output_dir=root / "results",
+                configurations=config, mode="exhaustive",
+                adaptive_probes=6, no_repeat=True,
+            )
+            calls = []
+
+            def generate(executable, output, size, seed, settings):
+                graph = output / f"tree_{size}_seed_{seed}.xml"
+                graph.write_text("<graphml/>")
+                graph.with_suffix(".graph").write_text(f"{size} 0\n")
+                return graph, graph.with_suffix(".graph")
+
+            def experiment(executable, name, settings, graph, links, output, result_name):
+                size = RUNNER.read_node_count(graph.with_suffix(".graph"))
+                seed = int(graph.stem.split("_")[-1])
+                calls.append((name, size, seed, result_name))
+                if size > {"small": 7, "large": 11}[name] and seed == 43 and "43" in result_name:
+                    return "timeout"
+                (output / result_name).write_text("run.total_time_seconds=0.01\n")
+                return "completed"
+
+            with mock.patch.object(RUNNER, "parse_arguments", return_value=arguments), \
+                 mock.patch.dict(RUNNER.os.environ, {
+                     "EXPERIMENTS_BINARY": sys.executable,
+                     "DATASET_GENERATOR_BINARY": sys.executable,
+                 }), \
+                 mock.patch.object(RUNNER, "generate_synthetic_graph", side_effect=generate), \
+                 mock.patch.object(RUNNER, "run_command", return_value=0), \
+                 mock.patch.object(RUNNER, "run_experiment", side_effect=experiment), \
+                 mock.patch.object(RUNNER, "tqdm"), \
+                 mock.patch("builtins.print"):
+                self.assertEqual(RUNNER.main(), 0)
+                for name, frontier in (("small", 7), ("large", 11)):
+                    report = json.loads((root / "results" / name / "synthetic-frontier.json").read_text())[0]
+                    self.assertEqual(report["largest_solved"], frontier)
+                    self.assertEqual(report["smallest_timeout"], frontier + 1)
+                    self.assertEqual(report["status"], "bracketed")
+                    self.assertEqual(
+                        {(seed, link) for algorithm, size, seed, link in calls if algorithm == name and size == frontier},
+                        {(seed, f"res-uniform_seed_{link}.txt") for seed in (42, 43) for link in (42, 43)},
+                    )
+                calls.clear()
+                self.assertEqual(RUNNER.main(), 0)
+                self.assertTrue(calls)
+                self.assertTrue(all(seed == 43 and "43" in link for _, _, seed, link in calls))
 
 
 if __name__ == "__main__":

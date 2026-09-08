@@ -1,4 +1,5 @@
 [dataset_selection]
+input_dir = "../../datasets"
 include = ["cycles", "stars", "trees", "cacti"]
 default_max_nodes = 500
 

@@ -30,6 +30,8 @@ struct Config
     std::size_t nodes = 0;
     std::size_t cycles = 0;
     std::size_t cycle_length = 0;
+    std::size_t min_cycle_size = 0;
+    std::size_t max_cycle_size = 0;
 
     DistributionType distribution = DistributionType::constant;
     double constant_weight = 1.0;

@@ -73,6 +73,11 @@ def graph_generator_command(executable, output_dir, node_count, seed, settings):
         command.extend(
             ["--cycles", str(cycles), "--cycle-length", str(cycle_length)]
         )
+    elif settings["generator"] == "cactus_variable":
+        command.extend([
+            "--min-cycle-size", str(settings["min_cycle_size"]),
+            "--max-cycle-size", str(settings["max_cycle_size"]),
+        ])
     return command
 
 

@@ -136,6 +136,29 @@ void generate_graph(const Config &config)
                     "tree_" + std::to_string(config.nodes) + "_seed_" +
                         std::to_string(config.seed));
     }
+    else if (config.generator == "cactus_variable")
+    {
+        const auto graph = create_random_cactus_with_cycle_sizes(
+            config.nodes, config.min_cycle_size, config.max_cycle_size, config.seed);
+        const size_t edge_count = graph.num_edges() / 2;
+        const size_t cycle_count = edge_count - (config.nodes - 1);
+        const size_t bridge_count = std::count(graph.weights.begin(), graph.weights.end(), 2.0) / 2;
+        const std::string name =
+            "cactus_variable_n" + std::to_string(config.nodes) +
+            "_min" + std::to_string(config.min_cycle_size) +
+            "_max" + std::to_string(config.max_cycle_size) +
+            "_seed" + std::to_string(config.seed);
+        write_graph_with_metadata(graph, config.output, name, {
+            {"generator", "string", "cactus_variable"},
+            {"nodes", "long", std::to_string(config.nodes)},
+            {"edges", "long", std::to_string(edge_count)},
+            {"cycles", "long", std::to_string(cycle_count)},
+            {"bridges", "long", std::to_string(bridge_count)},
+            {"min_cycle_size", "long", std::to_string(config.min_cycle_size)},
+            {"max_cycle_size", "long", std::to_string(config.max_cycle_size)},
+            {"seed", "long", std::to_string(config.seed)},
+        });
+    }
     else
     {
         const size_t cycle_node_count = config.cycles * (config.cycle_length - 1);
