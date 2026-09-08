@@ -1,0 +1,79 @@
+# Provisional real-world finalists: freeze after the synthetic pilot/main results.
+# Run on the experiment machine; set input_dir and max_nodes for its datasets/budget.
+# Existing .links files are not used: the runner generates complete weighted links.
+[dataset_selection]
+input_dir = "../../datasets"
+include = ["real_world"]
+default_max_nodes = 1000
+
+[link_configurations.float_uniform_0_1]
+distribution = "float_uniform"
+float_uniform_lower = 0.0
+float_uniform_upper = 1.0
+seeds = [301, 302, 303]
+
+[link_configurations.int_uniform_1_5]
+distribution = "integer_uniform"
+integer_uniform_lower = 1
+integer_uniform_upper = 5
+seeds = [301, 302, 303]
+
+[configurations.gwc]
+algorithm = "gwc"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.gwc.params]
+sampling = 0
+
+[configurations.mst_connect]
+algorithm = "mst-connect"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.mst_connect_local_search]
+algorithm = "mst-connect-ls"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.mst_connect_local_search.params]
+depth = 0
+cache = false
+trees = 0
+time_limit_seconds = 50
+
+[configurations.sc_double]
+algorithm = "Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.sc_double.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "double_csr_cyc"
+solver = "greedy"
+reductions = false
+trimming = false
+
+[configurations.sc_greedy]
+algorithm = "Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.sc_greedy.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "greedy"
+reductions = true
+trimming = false
+
+[configurations.lazy_block_tree_ilp]
+algorithm = "Lazy Block Tree ILP"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.lazy_block_tree_ilp.params]
+reductions = true
+compute_shortest_paths = false
+intersection_index = "baseline"

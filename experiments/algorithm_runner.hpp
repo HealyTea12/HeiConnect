@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <ostream>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -27,6 +28,8 @@ public:
         std::optional<double> time_ls;
         std::optional<double> time_total;
         std::optional<double> time_data_reduction;
+        std::optional<std::string> solver_status;
+        std::optional<bool> solution_optimal;
     } result;
     Pipeline<>::PipelineMetrics pipeline_metrics;
 
@@ -37,6 +40,14 @@ public:
         const std::filesystem::path& output_dir) = 0;
     virtual void print_results(std::ostream& os)
     {
+        if (result.solver_status.has_value())
+        {
+            os << "solver.status=" << *result.solver_status << "\n";
+        }
+        if (result.solution_optimal.has_value())
+        {
+            os << "solution.optimal=" << (*result.solution_optimal ? "true" : "false") << "\n";
+        }
         // If pipeline metrics exist, use the pipeline printer. Otherwise, print the results in a simple format.
         if (!pipeline_metrics.stages.empty())
         {

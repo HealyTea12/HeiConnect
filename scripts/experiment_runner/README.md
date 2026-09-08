@@ -1,5 +1,30 @@
 # Experiment configurations
 
+For the bounded thesis pilot and main comparison, see
+[THESIS_EXPERIMENTS.md](THESIS_EXPERIMENTS.md). These use cycles, stars, trees,
+and variable cacti with cycle-size bounds 2 and 16.
+The claim-driven main setup reuses 15 configurations across representation,
+reduction, and Supernova comparisons. Calibrate it on the experiment machine;
+`configurations.thesis.real_world.toml` provides a separate finalist comparison.
+
+Lazy Block Tree ILP results include `solver.status` and `solution.optimal`.
+Only an optimal solver status (or a fully reduced trivial instance) sets optimality
+to true. False means optimality was not established; consult the status and whether
+a solution cost exists. The CSV collector includes `solver_status` and
+`solution_optimal`; missing fields in older or interrupted runs remain unknown.
+
+Synthetic datasets can set `sizes = [20, 40, 80, 160, 320]` to run a fixed grid
+instead of frontier search. Do not combine `sizes` with `min_nodes`, `max_nodes`,
+`samples`, or `resolution`. Every selected repetition is attempted even after a
+timeout. Outcomes and execution order are recorded in `synthetic-fixed.json`.
+
+With explicit sizes, `seed_mode = "paired"` pairs tree/cactus graph seeds with
+link seeds by array position within each distribution. The counts must match.
+Stars and cycles use their single graph with all link seeds. The default
+`seed_mode = "cross"` retains the full cross-product. Fixed-grid execution shares
+generated graphs and links across algorithms and shuffles algorithm order with
+scheduling seed 42. Without `sizes`, the frontier workflow below applies.
+
 For synthetic graphs, start with `configurations.synthetic.example.toml`:
 
 ```sh
@@ -91,7 +116,7 @@ uv run scripts/experiment_runner/run_configurations.py results/existing \
 
 `--mode exhaustive` (the default) runs all selected existing files; `--mode adaptive`
 uses the previous bounded probes and backfill, with `--adaptive-probes` controlling
-the probe budget. Synthetic families always use the new frontier search.
+the probe budget. Synthetic families without explicit sizes use the new frontier search.
 Include both table types in the same configuration file to run both sources:
 
 ```toml

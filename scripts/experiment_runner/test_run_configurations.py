@@ -408,6 +408,150 @@ class SyntheticSchedulingTest(unittest.TestCase):
 
 
 class SyntheticIntegrationTest(unittest.TestCase):
+    def test_fixed_sizes_pair_seeds_and_continue_after_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            config.write_text('''
+[synthetic_datasets.trees]
+generator = "tree"
+sizes = [4, 8]
+seeds = [101, 102]
+seed_mode = "paired"
+[synthetic_datasets.stars]
+generator = "star"
+sizes = [4, 8]
+seed_mode = "paired"
+[link_configurations.uniform]
+distribution = "float_uniform"
+seeds = [201, 202]
+[configurations.a]
+algorithm = "a"
+timeout = 1
+[configurations.b]
+algorithm = "b"
+timeout = 1
+''')
+            arguments = types.SimpleNamespace(
+                output_dir=root / "results", configurations=config,
+                mode="exhaustive", adaptive_probes=6, no_repeat=True,
+            )
+
+            def generate(executable, output, size, seed, settings):
+                graph = output / f'{settings["generator"]}_{size}_seed_{seed}.xml'
+                graph.write_text("<graphml/>")
+                return graph, graph.with_suffix(".graph")
+
+            def experiment(executable, name, settings, graph, links, output, result_name):
+                if name == "a":
+                    return "timeout"
+                (output / result_name).write_text("run.total_time_seconds=0.01\n")
+                return "completed"
+
+            with mock.patch.object(RUNNER, "parse_arguments", return_value=arguments), \
+                 mock.patch.dict(RUNNER.os.environ, {
+                     "EXPERIMENTS_BINARY": sys.executable,
+                     "DATASET_GENERATOR_BINARY": sys.executable,
+                 }), \
+                 mock.patch.object(RUNNER, "generate_synthetic_graph", side_effect=generate) as generation, \
+                 mock.patch.object(RUNNER, "run_command", return_value=0) as links, \
+                 mock.patch.object(RUNNER, "run_experiment", side_effect=experiment) as run, \
+                 mock.patch.object(RUNNER, "run_synthetic_series") as frontier, \
+                 mock.patch.object(RUNNER, "tqdm"), mock.patch("builtins.print"):
+                self.assertEqual(RUNNER.main(), 0)
+                self.assertEqual(run.call_count, 16)
+                self.assertEqual(generation.call_count, 6)
+                self.assertEqual(links.call_count, 8)
+                frontier.assert_not_called()
+                for name, status in (("a", "timeout"), ("b", "completed")):
+                    report = json.loads((root / "results" / name / "synthetic-fixed.json").read_text())
+                    self.assertEqual(len(report), 8)
+                    self.assertEqual({row["status"] for row in report}, {status})
+                    self.assertEqual({row["size"] for row in report}, {4, 8})
+                    self.assertEqual(
+                        {(row["graph_seed"], row["link_seed"]) for row in report if row["dataset"] == "trees"},
+                        {(101, 201), (102, 202)},
+                    )
+                run.reset_mock()
+                self.assertEqual(RUNNER.main(), 0)
+                self.assertEqual(run.call_count, 8)
+                self.assertTrue(all(call.args[1] == "a" for call in run.call_args_list))
+
+    def test_thesis_budgets_and_variable_cacti(self):
+        for stage, expected in (("preflight", 120), ("pilot", 480), ("main", 1800)):
+            configurations, links, _, datasets = RUNNER.load_configurations(
+                MODULE_PATH.with_name(f"configurations.thesis.{stage}.toml")
+            )
+            count = sum(
+                len(settings["sizes"]) * sum(map(len, RUNNER.synthetic_seed_groups(settings, links).values()))
+                for settings in datasets.values()
+            ) * len(configurations)
+            self.assertEqual(count, expected)
+            self.assertEqual(set(datasets), {"cycles", "stars", "trees", "variable_cacti"})
+            self.assertEqual(datasets["variable_cacti"]["generator"], "cactus_variable")
+            self.assertEqual(datasets["variable_cacti"]["min_cycle_size"], 2)
+            self.assertEqual(datasets["variable_cacti"]["max_cycle_size"], 16)
+
+    def test_thesis_claims_have_matched_controls(self):
+        for stage in ("preflight", "pilot", "main"):
+            configurations, _, _, _ = RUNNER.load_configurations(
+                MODULE_PATH.with_name(f"configurations.thesis.{stage}.toml")
+            )
+            self.assertEqual(len(configurations), 15)
+            self.assertEqual(configurations["gwc"]["algorithm"], "gwc")
+            self.assertEqual(configurations["gwc"]["params"]["sampling"], 0)
+            for without, with_reductions in (
+                ("sc_no_reductions", "sc_greedy"),
+                ("bt_no_reductions", "bt_greedy"),
+                ("sc_ilp_no_reductions", "sc_ilp"),
+                ("bt_ilp_no_reductions", "bt_ilp"),
+                ("lazy_block_tree_ilp_no_reductions", "lazy_block_tree_ilp"),
+            ):
+                control = configurations[without]
+                reduced = configurations[with_reductions]
+                self.assertFalse(control["params"]["reductions"])
+                self.assertTrue(reduced["params"]["reductions"])
+                self.assertEqual(
+                    control | {"params": control["params"] | {"reductions": True}},
+                    reduced,
+                )
+            csr = configurations["sc_no_reductions"]
+            self.assertEqual(
+                configurations["sc_double"],
+                csr | {"params": csr["params"] | {"reduction_type": "double_csr_cyc"}},
+            )
+            self.assertEqual(
+                configurations["sc_cheapest"],
+                csr | {"params": csr["params"] | {"solver": "greedy_cheapest"}},
+            )
+
+    def test_thesis_real_world_selection_keeps_baselines(self):
+        configurations, links, datasets, synthetic = RUNNER.load_configurations(
+            MODULE_PATH.with_name("configurations.thesis.real_world.toml")
+        )
+        self.assertEqual(synthetic, {})
+        self.assertEqual(datasets["include"], ["real_world"])
+        self.assertEqual(len(configurations) * len(links), 36)
+        self.assertTrue({"gwc", "mst_connect", "mst_connect_local_search"} <= configurations.keys())
+
+    def test_invalid_fixed_designs(self):
+        for changes in (
+            {"sizes": []}, {"sizes": [4, 4]}, {"sizes": [8, 4]},
+            {"sizes": [True]}, {"sizes": [1]}, {"min_nodes": 4},
+            {"seed_mode": "zip"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                RUNNER.validate_synthetic_datasets({
+                    "trees": dict(generator="tree", sizes=[4, 8]) | changes,
+                })
+        settings = RUNNER.validate_synthetic_datasets({
+            "trees": dict(generator="tree", sizes=[4], seed_mode="paired", seeds=[1, 2]),
+        })["trees"]
+        with self.assertRaisesRegex(ValueError, "equal graph and link seed counts"):
+            RUNNER.synthetic_seed_groups(settings, RUNNER.expand_link_configurations({
+                "uniform": dict(distribution="float_uniform", seed=3),
+            }))
+
     def test_tables_select_existing_synthetic_or_both(self):
         for existing, synthetic in ((True, False), (False, True), (True, True)):
             with self.subTest(existing=existing, synthetic=synthetic), tempfile.TemporaryDirectory() as directory:

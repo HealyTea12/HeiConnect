@@ -12,6 +12,7 @@ from itertools import product
 import json
 import os
 from pathlib import Path
+import random
 import re
 import resource
 import signal
@@ -77,7 +78,7 @@ def parse_arguments():
         choices=("exhaustive", "adaptive"),
         default="exhaustive",
         help=(
-            "scheduling for existing files; synthetic families always search their frontier"
+            "scheduling for existing files; synthetic families use sizes when supplied, otherwise frontier search"
         ),
     )
     parser.add_argument(
@@ -319,6 +320,8 @@ def load_configurations(path):
             )
 
     synthetic = validate_synthetic_datasets(document.get("synthetic_datasets", {}))
+    for settings in synthetic.values():
+        synthetic_seed_groups(settings, link_configurations)
     if "dataset_selection" not in document:
         dataset_selection = None
     if dataset_selection is None and not synthetic:
@@ -342,6 +345,7 @@ def validate_synthetic_datasets(datasets):
             "seeds", "cycle_length", "cycle_mass", "generation_timeout",
             "generation_max_memory_mb",
             "min_cycle_size", "max_cycle_size",
+            "sizes", "seed_mode",
         }
         if set(settings) - allowed:
             raise ValueError(f"unknown synthetic settings for {name!r}: {set(settings) - allowed}")
@@ -355,6 +359,23 @@ def validate_synthetic_datasets(datasets):
             settings.setdefault(key, default)
             positive_integer(settings[key])
         minimum_nodes = {"cycle": 3, "star": 2, "tree": 2, "cactus": 1, "cactus_variable": 1}
+        if "sizes" in settings:
+            sizes = settings["sizes"]
+            if not isinstance(sizes, list) or not sizes:
+                raise ValueError("synthetic sizes must be a non-empty array")
+            for size in sizes:
+                positive_integer(size)
+                if size < minimum_nodes[generator]:
+                    raise ValueError(f"size is too small for {generator}")
+            if sizes != sorted(set(sizes)):
+                raise ValueError("synthetic sizes must be unique and increasing")
+            if any(key in datasets[name] for key in ("min_nodes", "max_nodes", "samples", "resolution")):
+                raise ValueError("sizes cannot be combined with frontier settings")
+        settings.setdefault("seed_mode", "cross")
+        if settings["seed_mode"] not in {"cross", "paired"}:
+            raise ValueError("seed_mode must be cross or paired")
+        if settings["seed_mode"] == "paired" and "sizes" not in settings:
+            raise ValueError("paired seeds require explicit sizes")
         if settings["min_nodes"] < minimum_nodes[generator]:
             raise ValueError(f"min_nodes is too small for {generator}")
         if "max_nodes" in settings:
@@ -390,6 +411,20 @@ def validate_synthetic_datasets(datasets):
             raise ValueError("min_cycle_size and max_cycle_size apply only to cactus_variable graphs")
         validated[name] = settings
     return validated
+
+
+def synthetic_seed_groups(settings, link_configurations):
+    groups = {seed: [] for seed in settings["seeds"]}
+    for link_names in group_link_configurations(link_configurations).values():
+        if settings["seed_mode"] == "paired" and settings["generator"] not in {"cycle", "star"}:
+            if len(link_names) != len(groups):
+                raise ValueError("paired seeds require equal graph and link seed counts in every distribution")
+            for seed, link_name in zip(groups, link_names):
+                groups[seed].append(link_name)
+        else:
+            for names in groups.values():
+                names.extend(link_names)
+    return groups
 
 
 def evenly_spaced_sizes(lower, upper, count):
@@ -831,7 +866,11 @@ def main():
     print(f"  Filtered         {filtered_instances:,}")
     print(f"  Matrix size      {total_runs:,} runs")
     if synthetic:
-        print(f"  Synthetic        {', '.join(synthetic)} (run count discovered during search)")
+        fixed_runs = sum(
+            len(settings["sizes"]) * sum(map(len, synthetic_seed_groups(settings, link_configurations).values())) * len(configurations)
+            for settings in synthetic.values() if "sizes" in settings
+        )
+        print(f"  Synthetic        {', '.join(synthetic)} ({fixed_runs:,} fixed runs; additional frontier runs discovered during search)")
     print(f"  Output           {output_dir}\n")
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1070,7 +1109,40 @@ def main():
         progress.update(censored)
 
     synthetic_reports = defaultdict(list)
+    fixed_reports = defaultdict(list)
+    execution_order = random.Random(42)
     for dataset_name, settings in synthetic.items():
+        if "sizes" in settings:
+            for node_count in settings["sizes"]:
+                for seed, link_names in synthetic_seed_groups(settings, link_configurations).items():
+                    with tempfile.TemporaryDirectory(prefix="heiconnect-graph-") as directory:
+                        graph = generate_synthetic_graph(
+                            link_generator_executable, Path(directory), node_count, seed, settings,
+                        )
+                        for link_name in link_names:
+                            order = list(configurations)
+                            execution_order.shuffle(order)
+                            if graph is None:
+                                failed += len(order)
+                                outcomes = {name: ["generation_failed"] for name in order}
+                                tqdm.write(f"Graph generation failed: {dataset_name}, n={node_count}, seed={seed}")
+                            else:
+                                graph_file, metis_file = graph
+                                outcomes = run_graph(
+                                    graph_file, metis_file, order, [link_name],
+                                    relative_path=Path(dataset_name) / graph_file.stem,
+                                    generation_settings=settings,
+                                )
+                            for name, outcome in outcomes.items():
+                                fixed_reports[name].append({
+                                    "dataset": dataset_name, "size": node_count,
+                                    "graph_seed": seed, "link_configuration": link_name,
+                                    "link_seed": link_configurations[link_name]["seed"],
+                                    "status": outcome[0], "execution_order": order,
+                                })
+                                report_path = output_dir / name / "synthetic-fixed.json"
+                                report_path.write_text(json.dumps(fixed_reports[name], indent=2) + "\n")
+            continue
         for link_family, link_names in group_link_configurations(link_configurations).items():
             for configuration_name in configurations:
                 def run_level(node_count):

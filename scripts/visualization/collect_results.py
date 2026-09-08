@@ -99,6 +99,8 @@ def load_results(results_dir):
                     "links": run.get("input_graph.num_links"),
                     "runtime_seconds": run.get("run.total_time_seconds"),
                     "solution_cost": run.get("solution.cost"),
+                    "solver_status": run.get("solver.status"),
+                    "solution_optimal": run.get("solution.optimal"),
                     "solution_size": run.get("solution.size"),
                     "peak_memory_mb": (
                         memory_pages * PAGE_SIZE_BYTES / (1024 * 1024)

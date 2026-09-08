@@ -1,0 +1,213 @@
+# See THESIS_EXPERIMENTS.md for the protocol and run budget.
+# Provisional defaults: review pilot results and freeze this file before the main run.
+# Claim-driven comparisons: representation, reductions, and Supernova baselines.
+
+[synthetic_datasets.cycles]
+generator = "cycle"
+sizes = [20, 80, 320]
+seed_mode = "paired"
+
+[synthetic_datasets.stars]
+generator = "star"
+sizes = [20, 80, 320]
+seed_mode = "paired"
+
+[synthetic_datasets.trees]
+generator = "tree"
+sizes = [20, 80, 320]
+seed_mode = "paired"
+seeds = [101, 102, 103, 104, 105]
+
+[synthetic_datasets.variable_cacti]
+generator = "cactus_variable"
+sizes = [20, 80, 320]
+seed_mode = "paired"
+seeds = [101, 102, 103, 104, 105]
+min_cycle_size = 2
+max_cycle_size = 16
+
+[link_configurations.float_uniform_0_1]
+distribution = "float_uniform"
+float_uniform_lower = 0.0
+float_uniform_upper = 1.0
+seeds = [201, 202, 203, 204, 205]
+
+[link_configurations.int_uniform_1_5]
+distribution = "integer_uniform"
+integer_uniform_lower = 1
+integer_uniform_upper = 5
+seeds = [201, 202, 203, 204, 205]
+
+[configurations.sc_greedy]
+algorithm = "Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.sc_greedy.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "greedy"
+reductions = true
+trimming = false
+
+[configurations.sc_no_reductions]
+algorithm = "Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.sc_no_reductions.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "greedy"
+reductions = false
+trimming = false
+
+[configurations.sc_ilp]
+algorithm = "Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.sc_ilp.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "ilp"
+reductions = true
+trimming = false
+
+[configurations.sc_ilp_no_reductions]
+algorithm = "Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.sc_ilp_no_reductions.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "ilp"
+reductions = false
+trimming = false
+
+[configurations.bt_greedy]
+algorithm = "Block Tree Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.bt_greedy.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "greedy"
+reductions = true
+trimming = false
+
+[configurations.bt_no_reductions]
+algorithm = "Block Tree Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.bt_no_reductions.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "greedy"
+reductions = false
+trimming = false
+
+[configurations.bt_ilp]
+algorithm = "Block Tree Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.bt_ilp.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "ilp"
+reductions = true
+trimming = false
+
+[configurations.bt_ilp_no_reductions]
+algorithm = "Block Tree Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.bt_ilp_no_reductions.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "ilp"
+reductions = false
+trimming = false
+
+[configurations.sc_double]
+algorithm = "Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.sc_double.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "double_csr_cyc"
+solver = "greedy"
+reductions = false
+trimming = false
+
+[configurations.sc_cheapest]
+algorithm = "Set Cover CSR"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.sc_cheapest.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "greedy_cheapest"
+reductions = false
+trimming = false
+
+[configurations.lazy_block_tree_ilp]
+algorithm = "Lazy Block Tree ILP"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.lazy_block_tree_ilp.params]
+reductions = true
+compute_shortest_paths = false
+intersection_index = "baseline"
+
+[configurations.lazy_block_tree_ilp_no_reductions]
+algorithm = "Lazy Block Tree ILP"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.lazy_block_tree_ilp_no_reductions.params]
+reductions = false
+compute_shortest_paths = false
+intersection_index = "baseline"
+
+[configurations.gwc]
+algorithm = "gwc"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.gwc.params]
+sampling = 0
+
+[configurations.mst_connect]
+algorithm = "mst-connect"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.mst_connect_local_search]
+algorithm = "mst-connect-ls"
+timeout = 60
+max_memory_mb = 4096
+
+[configurations.mst_connect_local_search.params]
+depth = 0
+cache = false
+trees = 0
+time_limit_seconds = 50

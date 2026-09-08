@@ -101,7 +101,11 @@ public:
         // TODO: add all
         switch (status)
         {
+            case GRB_LOADED: return "LOADED";
             case GRB_OPTIMAL: return "OPTIMAL";
+            case GRB_SUBOPTIMAL: return "SUBOPTIMAL";
+            case GRB_INTERRUPTED: return "INTERRUPTED";
+            case GRB_NUMERIC: return "NUMERIC";
             case GRB_INFEASIBLE: return "INFEASIBLE";
             case GRB_UNBOUNDED: return "UNBOUNDED";
             case GRB_INF_OR_UNBD: return "INF_OR_UNBD";

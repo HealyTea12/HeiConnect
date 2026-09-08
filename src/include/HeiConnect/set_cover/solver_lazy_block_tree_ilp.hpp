@@ -160,9 +160,13 @@ public:
     template<typename GraphType, typename LinkGraphType, typename SolutionType>
     bool solve(const GraphType& graph, const LinkGraphType& link_graph, SolutionType& solution)
     {
+        m_feasible = false;
+        m_status = GRB_LOADED;
+        m_metrics.reset();
         if (graph.num_vertices() <= 1)
         {
             m_feasible = true;
+            m_status = GRB_OPTIMAL;
             if constexpr (RecordMetricsLevel > 0)
             {
                 m_metrics = StageMetrics{
@@ -186,14 +190,14 @@ public:
         ilp.model->setCallback(&callback);
         m_feasible = solve_set_cover_ilp_model(ilp, solution);
         callback.rethrow_if_failed();
+        m_status = ilp.model->get(GRB_IntAttr_Status);
 
         if constexpr (RecordMetricsLevel > 0)
         {
-            const int status = ilp.model->get(GRB_IntAttr_Status);
             m_metrics = StageMetrics{
                 {"cost", m_feasible ? std::to_string(ilp.model->get(GRB_DoubleAttr_ObjVal)) : ""},
                 {"size", std::to_string(solution.get_solution_size())},
-                {"status", SetCoverSolverILP<>::grb_get_status_string(status)},
+                {"status", SetCoverSolverILP<>::grb_get_status_string(m_status)},
                 {"lazy_constraints", std::to_string(callback.num_lazy_constraints())},
             };
         }
@@ -217,8 +221,19 @@ public:
         return m_feasible;
     }
 
+    int get_status() const noexcept
+    {
+        return m_status;
+    }
+
+    bool is_optimal() const noexcept
+    {
+        return m_status == GRB_OPTIMAL;
+    }
+
 private:
     bool m_feasible = false;
+    int m_status = GRB_LOADED;
     std::optional<StageMetrics> m_metrics;
 };
 

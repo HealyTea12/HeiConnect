@@ -168,7 +168,10 @@ namespace
             HeiConnect::LazyBlockTreeSolverILP<> solver;
             USSolution solution;
             const auto start = std::chrono::steady_clock::now();
-            if (!solver.solve(graph, link_graph, solution))
+            const bool solved = solver.solve(graph, link_graph, solution);
+            result.solver_status = SetCoverSolverILP<>::grb_get_status_string(solver.get_status());
+            result.solution_optimal = solver.is_optimal();
+            if (!solved)
             {
                 return;
             }
