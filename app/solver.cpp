@@ -100,8 +100,10 @@ int main(int argc, char **argv)
     solution = solver::greedy_2mst_localsearch(g, params.depth);
     break;
   case config::Algorithm::MST_CONNECT_LS_FLOW:
-    solution = solver::greedy_2mst_localsearch_flow(g, params.depth,
-                                                    params.cache, params.trees);
+    solution = std::move(
+        solver::greedy_2mst_localsearch_flow(g, params.depth,
+                                             params.cache, params.trees)
+            .solution);
     break;
   case config::Algorithm::MST_ILP:
     convert_links = false;

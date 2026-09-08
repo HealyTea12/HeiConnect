@@ -765,17 +765,27 @@ namespace solver
     return mst_solution;
   }
 
-  std::list<graph::Edge> greedy_2mst_localsearch_flow(graph::GraphPair &g,
-                                                      int depth_limit, bool cache,
-                                                      int trees)
+  LocalSearchResult greedy_2mst_localsearch_flow(graph::GraphPair &g,
+                                                 int depth_limit, bool cache,
+                                                 int trees,
+                                                 int time_limit_seconds)
   {
+    const auto begin = std::chrono::steady_clock::now();
+    const auto time_limit_reached = [&]() {
+      return time_limit_seconds > 0 &&
+             std::chrono::steady_clock::now() - begin >=
+                 std::chrono::seconds(time_limit_seconds);
+    };
+
     if (!trees)
       trees = 2;
     DEBUG("Using " << trees << " MSTs");
     // Compute greedy removal solution
     auto [mst_solution, mst_rest] = greedy_mst_max_flow(g);
 
-    auto begin = std::chrono::steady_clock::now();
+    if (time_limit_reached())
+      return {std::move(mst_solution), true};
+
     double solution_weight =
         std::accumulate(mst_solution.begin(), mst_solution.end(), 0.,
                         [](double v, graph::Edge &e)
@@ -825,6 +835,9 @@ namespace solver
     bool one_path_valid = true;
     while (one_path_valid)
     {
+      if (time_limit_reached())
+        return {std::move(mst_solution), true};
+
       auto paths = alternating_graph.find_alternating_path();
       DEBUG("Found " << paths.size() << " paths");
       one_path_valid = false;
@@ -832,6 +845,9 @@ namespace solver
                  { return a.second < b.second; });
       for (auto &[path, pot] : paths)
       {
+        if (time_limit_reached())
+          return {std::move(mst_solution), true};
+
         std::list<graph::Edge> removed_links;
         std::list<graph::Edge> added_links;
         for (auto &e : path)
@@ -852,6 +868,9 @@ namespace solver
                         added_links);
         for (auto &e : removed_links)
         {
+          if (time_limit_reached())
+            return {std::move(mst_solution), true};
+
           int flow =
               //  flow_graph.max_flow(e.first, e.second);
               max_flow::max_flow(g.cactus.num_nodes(), e.first, e.second,
@@ -895,7 +914,7 @@ namespace solver
 
     auto now = std::chrono::steady_clock::now();
 
-    return mst_solution;
+    return {std::move(mst_solution), false};
   }
 
   std::list<graph::Edge>

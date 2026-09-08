@@ -115,11 +115,11 @@ void print_algorithm_parameters(std::ostream& os, const std::string_view algorit
         return;
     }
 
-    os << "  Name              Default            Description\n";
-    os << "  -------------------------------------------------------------\n";
+    os << "  Name                Default            Description\n";
+    os << "  ---------------------------------------------------------------\n";
     for (const auto& parameter : entry->parameters)
     {
-        os << "  " << std::left << std::setw(18) << parameter.name << std::left << std::setw(18)
+        os << "  " << std::left << std::setw(20) << parameter.name << std::left << std::setw(18)
            << parameter.default_value << " " << parameter.description << "\n";
     }
     os << "\n";

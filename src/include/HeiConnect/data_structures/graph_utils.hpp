@@ -193,3 +193,75 @@ inline WeightedCRFGraph<> create_random_cactus(
 
     return WeightedCRFGraph<>{{vertices, edges}, weights};
 }
+
+// Attaches cycles whose sizes are sampled uniformly from the inclusive bounds.
+// A cycle uses one existing vertex, so it introduces cycle_size - 1 vertices.
+// The last addition is truncated to fit; a single remaining vertex gets a bridge.
+// A sampled cycle size of two also adds a bridge with one new vertex.
+// Cycle edges have weight 1 and bridges have weight 2, as above.
+inline WeightedCRFGraph<> create_random_cactus_with_cycle_sizes(
+    size_t node_count,
+    size_t min_cycle_size,
+    size_t max_cycle_size,
+    unsigned int seed = 42)
+{
+    if (node_count == 0)
+        throw std::invalid_argument("a cactus must contain at least one node");
+    if (min_cycle_size < 2 || max_cycle_size < min_cycle_size)
+        throw std::invalid_argument("cycle sizes must satisfy 2 <= min_cycle_size <= max_cycle_size");
+
+    auto random_engine = std::mt19937(seed);
+    auto cycle_size_distribution = std::uniform_int_distribution<size_t>(min_cycle_size, max_cycle_size);
+    auto adjacency_lists = std::vector<std::vector<std::pair<size_t, double>>>(node_count);
+    auto add_edge = [&](size_t u, size_t v, double weight)
+    {
+        adjacency_lists[u].emplace_back(v, weight);
+        adjacency_lists[v].emplace_back(u, weight);
+    };
+
+    size_t next_node = 1;
+    while (next_node < node_count)
+    {
+        auto attachment_distribution = std::uniform_int_distribution<size_t>(0, next_node - 1);
+        const size_t attachment_node = attachment_distribution(random_engine);
+        const size_t new_nodes = std::min(
+            cycle_size_distribution(random_engine) - 1, node_count - next_node);
+        if (new_nodes == 1)
+        {
+            add_edge(attachment_node, next_node++, 2.0);
+            continue;
+        }
+
+        size_t previous_node = attachment_node;
+        for (size_t i = 0; i < new_nodes; ++i)
+        {
+            const size_t new_node = next_node++;
+            add_edge(previous_node, new_node, 1.0);
+            previous_node = new_node;
+        }
+        add_edge(previous_node, attachment_node, 1.0);
+    }
+
+    // Hide the construction order by randomly permuting vertex labels.
+    auto labels = std::vector<size_t>(node_count);
+    std::iota(labels.begin(), labels.end(), 0);
+    std::shuffle(labels.begin(), labels.end(), random_engine);
+    auto relabeled = std::vector<std::vector<std::pair<size_t, double>>>(node_count);
+    for (size_t node = 0; node < node_count; ++node)
+        for (const auto &[neighbor, weight] : adjacency_lists[node])
+            relabeled[labels[node]].emplace_back(labels[neighbor], weight);
+
+    auto vertices = std::vector<size_t>(node_count + 1, 0);
+    auto edges = std::vector<size_t>();
+    auto weights = std::vector<double>();
+    for (size_t node = 0; node < node_count; ++node)
+    {
+        for (const auto &[neighbor, weight] : relabeled[node])
+        {
+            edges.push_back(neighbor);
+            weights.push_back(weight);
+        }
+        vertices[node + 1] = edges.size();
+    }
+    return WeightedCRFGraph<>{{vertices, edges}, weights};
+}

@@ -87,9 +87,19 @@ namespace
     class MSTConnectLocalSearchRunner : public AlgorithmRunner
     {
     public:
-        MSTConnectLocalSearchRunner(int depth, bool cache, int trees)
-            : m_depth(depth), m_cache(cache), m_trees(trees)
+        MSTConnectLocalSearchRunner(int depth, bool cache, int trees, int time_limit_seconds)
+            : m_depth(depth),
+              m_cache(cache),
+              m_trees(trees),
+              m_time_limit_seconds(time_limit_seconds)
         {}
+
+        void print_results(std::ostream& os) override
+        {
+            AlgorithmRunner::print_results(os);
+            os << "algorithm.time_limit_reached="
+               << (m_time_limit_reached ? "true" : "false") << "\n";
+        }
 
         void run(
             const std::filesystem::path& graph_file,
@@ -99,17 +109,24 @@ namespace
             auto graph_pair = load_graph_pair(graph_file, link_file);
 
             const auto start = std::chrono::steady_clock::now();
-            const auto solution =
-                solver::greedy_2mst_localsearch_flow(graph_pair, m_depth, m_cache, m_trees);
+            auto local_search_result = solver::greedy_2mst_localsearch_flow(
+                graph_pair,
+                m_depth,
+                m_cache,
+                m_trees,
+                m_time_limit_seconds);
             result.time_total = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-            result.solution_cost = calculate_solution_cost(solution);
-            result.solution_size = solution.size();
+            result.solution_cost = calculate_solution_cost(local_search_result.solution);
+            result.solution_size = local_search_result.solution.size();
+            m_time_limit_reached = local_search_result.time_limit_reached;
         }
 
     private:
         int m_depth;
         bool m_cache;
         int m_trees;
+        int m_time_limit_seconds;
+        bool m_time_limit_reached{false};
     };
 
     [[maybe_unused]] const bool registered_mst_connect = [] {
@@ -121,7 +138,8 @@ namespace
         const std::vector<AlgorithmParameter> local_search_parameters{
             {"depth", "0", "Maximum alternating-path search depth."},
             {"cache", "false", "Cache invalid alternating paths."},
-            {"trees", "0", "Number of MSTs; 0 uses the algorithm default of 2."}};
+            {"trees", "0", "Number of MSTs; 0 uses the algorithm default of 2."},
+            {"time_limit_seconds", "0", "Total algorithm budget; return the current solution when reached, 0 means unlimited."}};
         global_registry.add(
             "mst-connect-ls",
             "Local search on an MST-Connect solution",
@@ -130,7 +148,8 @@ namespace
                 return std::make_unique<MSTConnectLocalSearchRunner>(
                     parse_nonnegative_int_param(params, "depth", 0),
                     parse_bool_param(params, "cache", false),
-                    parse_nonnegative_int_param(params, "trees", 0));
+                    parse_nonnegative_int_param(params, "trees", 0),
+                    parse_nonnegative_int_param(params, "time_limit_seconds", 0));
             });
         return true;
     }();

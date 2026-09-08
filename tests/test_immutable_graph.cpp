@@ -179,3 +179,120 @@ TEST(RandomCactus, RejectsInvalidParameters)
     EXPECT_THROW(create_random_cactus(5, 1, 2), std::invalid_argument);
     EXPECT_THROW(create_random_cactus(5, 3, 3), std::invalid_argument);
 }
+
+TEST(VariableCycleCactus, RespectsBudgetAndCactusStructure)
+{
+    for (size_t node_count = 1; node_count <= 60; ++node_count)
+    {
+        for (unsigned int seed = 0; seed < 5; ++seed)
+        {
+            SCOPED_TRACE(::testing::Message() << "nodes=" << node_count << " seed=" << seed);
+            const auto cactus = create_random_cactus_with_cycle_sizes(node_count, 5, 9, seed);
+            ASSERT_EQ(cactus.num_vertices(), node_count);
+            ASSERT_EQ(cactus.weights.size(), cactus.num_edges());
+            EXPECT_EQ(cactus.graph.vertices.front(), 0);
+            EXPECT_EQ(cactus.graph.vertices.back(), cactus.num_edges());
+            EXPECT_TRUE(std::is_sorted(cactus.graph.vertices.begin(), cactus.graph.vertices.end()));
+            for (size_t u = 0; u < node_count; ++u)
+            {
+                std::set<size_t> neighbors;
+                for (size_t edge = cactus.graph.vertices[u]; edge < cactus.graph.vertices[u + 1]; ++edge)
+                {
+                    const size_t v = cactus.graph.edges[edge];
+                    ASSERT_LT(v, node_count);
+                    EXPECT_NE(u, v);
+                    EXPECT_TRUE(neighbors.insert(v).second);
+                    EXPECT_TRUE(cactus.is_edge(v, u));
+                    EXPECT_TRUE(cactus.weights[edge] == 1.0 || cactus.weights[edge] == 2.0);
+                }
+            }
+            const auto [parent, depth] = cactus.graph.rooted_parent_depth();
+            EXPECT_EQ(std::count(parent.begin(), parent.end(), node_count), 0);
+
+            const auto [block_tree, positions] = cactus.cactus_generate_block_tree(0);
+            EXPECT_EQ(block_tree.num_edges() / 2, block_tree.num_vertices() - 1);
+            EXPECT_EQ(block_tree.num_vertices(), node_count + positions.size());
+            size_t cycle_edges = 0;
+            size_t short_cycles = 0;
+            for (const auto &cycle : positions)
+            {
+                const size_t size = std::count_if(cycle.begin(), cycle.end(), [](int position)
+                                                 { return position >= 0; });
+                EXPECT_GE(size, 3);
+                EXPECT_LE(size, 9);
+                short_cycles += size < 5;
+                cycle_edges += size;
+            }
+            EXPECT_LE(short_cycles, 1);
+            const size_t directed_bridges = std::count(cactus.weights.begin(), cactus.weights.end(), 2.0);
+            EXPECT_TRUE(directed_bridges == 0 || directed_bridges == 2);
+            EXPECT_EQ(cactus.num_edges(), 2 * cycle_edges + directed_bridges);
+            EXPECT_EQ(cactus.num_edges() / 2, node_count - 1 + positions.size());
+        }
+    }
+}
+
+TEST(VariableCycleCactus, TruncatesLastCycleAndHandlesSingleRemainingVertex)
+{
+    const auto truncated = create_random_cactus_with_cycle_sizes(8, 5, 5);
+    const auto [block_tree, positions] = truncated.cactus_generate_block_tree(0);
+    std::multiset<size_t> sizes;
+    for (const auto &cycle : positions)
+        sizes.insert(std::count_if(cycle.begin(), cycle.end(), [](int position)
+                                   { return position >= 0; }));
+    EXPECT_EQ(sizes, (std::multiset<size_t>{4, 5}));
+    EXPECT_EQ(std::count(truncated.weights.begin(), truncated.weights.end(), 2.0), 0);
+
+    const auto with_bridge = create_random_cactus_with_cycle_sizes(6, 5, 5);
+    EXPECT_EQ(with_bridge.num_vertices(), 6);
+    EXPECT_EQ(std::count(with_bridge.weights.begin(), with_bridge.weights.end(), 2.0), 2);
+
+    const auto tiny = create_random_cactus_with_cycle_sizes(2, 5, 9);
+    EXPECT_EQ(tiny.num_vertices(), 2);
+    EXPECT_EQ(tiny.weights, (std::vector<double>{2.0, 2.0}));
+}
+
+TEST(VariableCycleCactus, ReproducesSeedsAndProducesDifferentCycleSizes)
+{
+    const auto first = create_random_cactus_with_cycle_sizes(400, 3, 7, 42);
+    const auto repeated = create_random_cactus_with_cycle_sizes(400, 3, 7, 42);
+    const auto other = create_random_cactus_with_cycle_sizes(400, 3, 7, 43);
+    EXPECT_EQ(first.graph.vertices, repeated.graph.vertices);
+    EXPECT_EQ(first.graph.edges, repeated.graph.edges);
+    EXPECT_EQ(first.weights, repeated.weights);
+    EXPECT_NE(first.graph.edges, other.graph.edges);
+    const auto [block_tree, positions] = first.cactus_generate_block_tree(0);
+    std::set<size_t> sizes;
+    for (const auto &cycle : positions)
+        sizes.insert(std::count_if(cycle.begin(), cycle.end(), [](int position)
+                                   { return position >= 0; }));
+    EXPECT_EQ(sizes, (std::set<size_t>{3, 4, 5, 6, 7}));
+}
+
+TEST(VariableCycleCactus, RejectsInvalidParameters)
+{
+    EXPECT_THROW(create_random_cactus_with_cycle_sizes(0, 3, 5), std::invalid_argument);
+    EXPECT_THROW(create_random_cactus_with_cycle_sizes(10, 1, 5), std::invalid_argument);
+    EXPECT_THROW(create_random_cactus_with_cycle_sizes(10, 5, 3), std::invalid_argument);
+}
+
+TEST(VariableCycleCactus, SizeTwoProducesBridges)
+{
+    const auto tree = create_random_cactus_with_cycle_sizes(40, 2, 2);
+    EXPECT_EQ(tree.num_vertices(), 40);
+    EXPECT_EQ(tree.num_edges(), 2 * 39);
+    EXPECT_TRUE(std::all_of(tree.weights.begin(), tree.weights.end(), [](double weight)
+                            { return weight == 2.0; }));
+    const auto [parent, depth] = tree.graph.rooted_parent_depth();
+    EXPECT_EQ(std::count(parent.begin(), parent.end(), 40), 0);
+    const auto [tree_blocks, tree_cycles] = tree.cactus_generate_block_tree(0);
+    EXPECT_TRUE(tree_cycles.empty());
+
+    const auto mixed = create_random_cactus_with_cycle_sizes(400, 2, 7);
+    EXPECT_EQ(mixed.num_vertices(), 400);
+    EXPECT_GT(std::count(mixed.weights.begin(), mixed.weights.end(), 2.0), 2);
+    EXPECT_GT(std::count(mixed.weights.begin(), mixed.weights.end(), 1.0), 0);
+    const auto [block_tree, cycles] = mixed.cactus_generate_block_tree(0);
+    EXPECT_EQ(block_tree.num_edges() / 2, block_tree.num_vertices() - 1);
+    EXPECT_EQ(mixed.num_edges() / 2, 399 + cycles.size());
+}

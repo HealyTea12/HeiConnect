@@ -28,9 +28,15 @@ greedy_mst_max_flow_order_heuristic(graph::GraphPair &g,
     std::list<graph::Edge> full_mst(graph::GraphPair &g);
 std::list<graph::Edge> greedy_2mst_localsearch(graph::GraphPair &g,
                                                int depth_limit);
-std::list<graph::Edge> greedy_2mst_localsearch_flow(graph::GraphPair &g,
-                                                    int depth_limit, bool cache,
-                                                    int trees = 2);
+struct LocalSearchResult
+{
+  std::list<graph::Edge> solution;
+  bool time_limit_reached;
+};
+LocalSearchResult greedy_2mst_localsearch_flow(graph::GraphPair &g,
+                                               int depth_limit, bool cache,
+                                               int trees = 2,
+                                               int time_limit_seconds = 0);
 } // namespace solver
 
 #endif // GREEDY_HPP
