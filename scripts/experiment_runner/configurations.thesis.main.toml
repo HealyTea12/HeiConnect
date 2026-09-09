@@ -1,3 +1,6 @@
+[runner]
+no_repeat = true
+
 # See THESIS_EXPERIMENTS.md for the protocol and run budget.
 # Provisional defaults: review pilot results and freeze this file before the main run.
 # Claim-driven comparisons: representation, reductions, and Supernova baselines.

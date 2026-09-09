@@ -1,7 +1,10 @@
+[runner]
+no_repeat = true
+
 # Server-ready synthetic thesis comparison. No input datasets are required.
 # Run from the repository root after building experiments and generate_datasets:
 # uv run scripts/experiment_runner/run_configurations.py results/thesis-server \
-#   -c scripts/experiment_runner/configurations.thesis.server.toml --no-repeat
+#   -c scripts/experiment_runner/configurations.thesis.server.toml
 # 4 families x 2 distributions x 3 sizes x 5 instances x 15 algorithms = 1800 runs.
 # Graph/link seeds are paired by position; every algorithm receives the same inputs.
 # 60 s and 4096 MiB per algorithm process; generation has separate limits.

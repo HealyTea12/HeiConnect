@@ -1,8 +1,9 @@
+# For adaptive scheduling of existing inputs, add [runner] with mode = "adaptive".
 # Generate graphs with:
 # uv run scripts/dataset_generation/generate_graph_datasets.py
 # Run this matrix with:
 # uv run scripts/experiment_runner/run_configurations.py results/all \
-#   --configurations scripts/experiment_runner/configurations.all.toml --mode adaptive
+#   --configurations scripts/experiment_runner/configurations.all.toml
 
 [dataset_selection]
 input_dir = "../../datasets"

@@ -10,6 +10,7 @@ import argparse
 from collections import defaultdict
 from itertools import product
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -62,33 +63,45 @@ def positive_integer(value):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description="Run existing datasets and search synthetic solvability frontiers."
+        description="Run experiments using a TOML configuration and a results directory."
     )
     parser.add_argument("output_dir", type=Path)
     parser.add_argument(
         "-c", "--configurations", required=True, type=Path, metavar="FILE"
     )
-    parser.add_argument(
-        "--no-repeat",
-        action="store_true",
-        help="skip runs that already contain a completed named result",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=("exhaustive", "adaptive"),
-        default="exhaustive",
-        help=(
-            "scheduling for existing files; synthetic families use sizes when supplied, otherwise frontier search"
-        ),
-    )
-    parser.add_argument(
-        "--adaptive-probes",
-        type=int,
-        default=6,
-        metavar="COUNT",
-        help="maximum frontier probes before adaptive mode fills lower levels",
-    )
     return parser.parse_args()
+
+
+def load_runner_settings(path):
+    with path.open("rb") as file:
+        settings = tomllib.load(file).get("runner", {})
+    if not isinstance(settings, dict):
+        raise ValueError("runner must be a TOML table")
+    project_dir = Path(__file__).resolve().parents[2]
+    defaults = {
+        "mode": "exhaustive", "adaptive_probes": 6, "no_repeat": False,
+        "scheduling_seed": 42,
+        "experiments_binary": str(project_dir / "build/experiments/experiments"),
+        "dataset_generator_binary": str(project_dir / "build/experiments/generate_datasets"),
+    }
+    if set(settings) - defaults.keys():
+        raise ValueError(f"unknown runner settings: {set(settings) - defaults.keys()}")
+    settings = defaults | settings
+    if settings["mode"] not in ("exhaustive", "adaptive"):
+        raise ValueError("runner.mode must be exhaustive or adaptive")
+    positive_integer(settings["adaptive_probes"])
+    if not isinstance(settings["no_repeat"], bool):
+        raise ValueError("runner.no_repeat must be a boolean")
+    if not isinstance(settings["scheduling_seed"], int) or isinstance(settings["scheduling_seed"], bool):
+        raise ValueError("runner.scheduling_seed must be an integer")
+    for key in ("experiments_binary", "dataset_generator_binary"):
+        if not isinstance(settings[key], str) or not settings[key]:
+            raise ValueError(f"runner.{key} must be a non-empty path")
+        executable = Path(settings[key]).expanduser()
+        if not executable.is_absolute():
+            executable = path.resolve().parent / executable
+        settings[key] = str(executable.resolve())
+    return settings
 
 
 def validate_name(name, kind):
@@ -359,9 +372,27 @@ def validate_synthetic_datasets(datasets):
             "generation_max_memory_mb",
             "min_cycle_size", "max_cycle_size", "cycles",
             "sizes", "seed_mode",
+            "mode", "growth_factor", "fill_intermediate",
         }
         if set(settings) - allowed:
             raise ValueError(f"unknown synthetic settings for {name!r}: {set(settings) - allowed}")
+        settings.setdefault("mode", "fixed" if "sizes" in settings else "frontier")
+        if settings["mode"] not in ("fixed", "frontier", "scalability"):
+            raise ValueError("synthetic mode must be fixed, frontier, or scalability")
+        if (settings["mode"] == "fixed") != ("sizes" in settings):
+            raise ValueError("only fixed mode requires sizes")
+        if settings["mode"] == "scalability":
+            factor = settings.setdefault("growth_factor", 2)
+            if (not isinstance(factor, (int, float)) or isinstance(factor, bool)
+                    or not math.isfinite(factor) or factor <= 1):
+                raise ValueError("growth_factor must be a finite number greater than 1")
+            settings.setdefault("fill_intermediate", False)
+            if not isinstance(settings["fill_intermediate"], bool):
+                raise ValueError("fill_intermediate must be a boolean")
+            if "resolution" in settings:
+                raise ValueError("resolution applies only to frontier search")
+        elif "growth_factor" in settings or "fill_intermediate" in settings:
+            raise ValueError("growth_factor and fill_intermediate require scalability mode")
         generator = settings.get("generator")
         if not isinstance(generator, str) or generator not in {"cycle", "star", "tree", "cactus", "cactus_variable", "cactus_cycles"}:
             raise ValueError(f"unsupported synthetic generator for {name!r}")
@@ -387,8 +418,8 @@ def validate_synthetic_datasets(datasets):
         settings.setdefault("seed_mode", "cross")
         if settings["seed_mode"] not in {"cross", "paired"}:
             raise ValueError("seed_mode must be cross or paired")
-        if settings["seed_mode"] == "paired" and "sizes" not in settings:
-            raise ValueError("paired seeds require explicit sizes")
+        if settings["seed_mode"] == "paired" and settings["mode"] == "frontier":
+            raise ValueError("paired seeds require explicit sizes or scalability mode")
         if settings["min_nodes"] < minimum_nodes[generator]:
             raise ValueError(f"min_nodes is too small for {generator}")
         if "max_nodes" in settings:
@@ -457,6 +488,62 @@ def evenly_spaced_sizes(lower, upper, count):
     if count == 1:
         return [upper]
     return [lower + (upper - lower) * index // (count - 1) for index in range(count)]
+
+
+def run_scalability_series(settings, configuration_names, run_level, checkpoint):
+    reports = {
+        name: {"status": "running", "largest_successful_size": None,
+               "stop_size": None, "samples": [], "levels": []}
+        for name in configuration_names
+    }
+
+    def measure(size, names, phase):
+        outcomes = run_level(size, names)
+        for name in names:
+            instances = outcomes[name]
+            succeeded = sum(row["status"] == "completed" for row in instances)
+            reports[name]["levels"].append({
+                "size": size, "phase": phase, "succeeded": succeeded,
+                "total": len(instances), "instances": instances,
+            })
+            if phase == "growth":
+                if succeeded:
+                    reports[name]["largest_successful_size"] = size
+                    if size == settings.get("max_nodes"):
+                        reports[name]["status"] = "capped"
+                else:
+                    reports[name]["stop_size"] = size
+                    reports[name]["status"] = (
+                        "generation_failed" if any(row["status"] == "generation_failed" for row in instances)
+                        else "all_failed"
+                    )
+        checkpoint(reports)
+
+    size = settings["min_nodes"]
+    active = list(reports)
+    while active:
+        measure(size, active, "growth")
+        active = [name for name in active if reports[name]["status"] == "running"]
+        if active:
+            size = max(size + 1, math.ceil(size * settings["growth_factor"]))
+            if "max_nodes" in settings:
+                size = min(size, settings["max_nodes"])
+
+    if settings["fill_intermediate"]:
+        pending = defaultdict(list)
+        for name, report in reports.items():
+            upper = report["largest_successful_size"]
+            if upper is None:
+                continue
+            report["samples"] = evenly_spaced_sizes(settings["min_nodes"], upper, settings["samples"])
+            measured = {level["size"] for level in report["levels"]}
+            for size in report["samples"]:
+                if size not in measured:
+                    pending[size].append(name)
+        for size, names in sorted(pending.items()):
+            measure(size, names, "intermediate")
+        checkpoint(reports)
+    return reports
 
 
 def run_synthetic_series(settings, run_level):
@@ -834,21 +921,10 @@ def run_experiment(
 def main():
     start_time = time.monotonic()
     arguments = parse_arguments()
-    positive_integer(arguments.adaptive_probes)
     output_dir = arguments.output_dir.resolve()
-    project_dir = Path(__file__).resolve().parents[2]
-    experiments_executable = Path(
-        os.environ.get(
-            "EXPERIMENTS_BINARY",
-            project_dir / "build" / "experiments" / "experiments",
-        )
-    )
-    link_generator_executable = Path(
-        os.environ.get(
-            "DATASET_GENERATOR_BINARY",
-            project_dir / "build" / "experiments" / "generate_datasets",
-        )
-    )
+    runner = load_runner_settings(arguments.configurations)
+    experiments_executable = Path(runner["experiments_binary"])
+    link_generator_executable = Path(runner["dataset_generator_binary"])
 
     configurations, link_configurations, dataset_selection, synthetic = load_configurations(
         arguments.configurations
@@ -857,7 +933,9 @@ def main():
     if input_dir is not None and not input_dir.is_dir():
         raise FileNotFoundError(f"input directory not found: {input_dir}")
     if synthetic and any(configuration.get("timeout") is None for configuration in configurations.values()):
-        raise ValueError("every algorithm configuration needs a timeout for synthetic frontier search")
+        raise ValueError("every algorithm configuration needs a timeout for synthetic experiments")
+    for settings in synthetic.values():
+        synthetic_seed_groups(settings, link_configurations)
     for executable in (experiments_executable, link_generator_executable):
         if not executable.is_file() or not os.access(executable, os.X_OK):
             raise FileNotFoundError(
@@ -884,7 +962,7 @@ def main():
         f"{name}: {count:,}" for name, count in sorted(instances_by_dataset.items())
     )
     print("\nExperiment plan")
-    print(f"  Mode             {arguments.mode}")
+    print(f"  Mode             {runner['mode']}")
     print(f"  Configurations   {len(configurations):,}")
     print(f"  Link variants    {len(link_configurations):,}")
     print(f"  Instances        {len(instances):,} ({dataset_summary})")
@@ -895,9 +973,22 @@ def main():
             len(settings["sizes"]) * sum(map(len, synthetic_seed_groups(settings, link_configurations).values())) * len(configurations)
             for settings in synthetic.values() if "sizes" in settings
         )
-        print(f"  Synthetic        {', '.join(synthetic)} ({fixed_runs:,} fixed runs; additional frontier runs discovered during search)")
+        print(f"  Synthetic        {', '.join(synthetic)} ({fixed_runs:,} fixed runs; additional sizes discovered during search)")
     print(f"  Output           {output_dir}\n")
     output_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "runner": runner, "configurations": configurations,
+        "link_configurations": link_configurations,
+        "dataset_selection": dataset_selection, "synthetic_datasets": synthetic,
+    }
+    manifest_path = output_dir / "run-settings.json"
+    if manifest_path.exists():
+        previous = json.loads(manifest_path.read_text())
+        previous.get("runner", {})["no_repeat"] = runner["no_repeat"]
+        if previous != manifest:
+            raise ValueError("output directory contains different experiment settings; use a new directory")
+    (output_dir / "configuration.source.toml").write_text(arguments.configurations.read_text())
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
     for name, configuration in configurations.items():
         configuration_dir = output_dir / name
@@ -955,7 +1046,7 @@ def main():
                 instance_output = output_dir / configuration_name / relative_path
                 result_file = instance_output / result_file_name
                 if (
-                    arguments.no_repeat
+                    runner["no_repeat"]
                     and has_complete_result(result_file)
                 ):
                     skipped += 1
@@ -1064,7 +1155,7 @@ def main():
                 temporary_links.cleanup()
         return outcomes
 
-    if arguments.mode == "exhaustive":
+    if runner["mode"] == "exhaustive":
         for graph_file, metis_file, _, _ in instances:
             run_graph(graph_file, metis_file, configurations)
     else:
@@ -1112,7 +1203,7 @@ def main():
                             return "solved" if level_completed else "failed"
 
                         outcomes = run_adaptive_series(
-                            size_levels, arguments.adaptive_probes, run_level
+                            size_levels, runner["adaptive_probes"], run_level
                         )
                         adaptive_reports[configuration_name].append(
                             f"dataset={dataset_name} "
@@ -1135,8 +1226,61 @@ def main():
 
     synthetic_reports = defaultdict(list)
     fixed_reports = defaultdict(list)
-    execution_order = random.Random(42)
+    scalability_reports = defaultdict(list)
+    execution_order = random.Random(runner["scheduling_seed"])
     for dataset_name, settings in synthetic.items():
+        if settings["mode"] == "scalability":
+            for link_family, link_names in group_link_configurations(link_configurations).items():
+                seed_groups = synthetic_seed_groups(
+                    settings, {name: link_configurations[name] for name in link_names},
+                )
+
+                def run_scalability_level(node_count, names):
+                    nonlocal failed, processed
+                    records = {name: [] for name in names}
+                    for seed, selected_links in seed_groups.items():
+                        with tempfile.TemporaryDirectory(prefix="heiconnect-graph-") as directory:
+                            graph = generate_synthetic_graph(
+                                link_generator_executable, Path(directory), node_count, seed, settings,
+                            )
+                            for link_name in selected_links:
+                                order = list(names)
+                                execution_order.shuffle(order)
+                                if graph is None:
+                                    outcomes = {name: ["generation_failed"] for name in order}
+                                    failed += len(order)
+                                    processed += len(order)
+                                    progress.update(len(order))
+                                    tqdm.write(f"Graph generation failed: {dataset_name}, n={node_count}, seed={seed}")
+                                else:
+                                    graph_file, metis_file = graph
+                                    outcomes = run_graph(
+                                        graph_file, metis_file, order, [link_name],
+                                        relative_path=Path(dataset_name) / graph_file.stem,
+                                        generation_settings=settings,
+                                    )
+                                for name in order:
+                                    records[name].append({
+                                        "graph_seed": seed, "link_configuration": link_name,
+                                        "link_seed": link_configurations[link_name]["seed"],
+                                        "status": outcomes[name][0], "execution_order": order,
+                                    })
+                    return records
+
+                def checkpoint(reports):
+                    for name, report in reports.items():
+                        report.update(dataset=dataset_name, link_configuration=link_family)
+                        path = output_dir / name / "synthetic-scalability.json"
+                        path.write_text(json.dumps(scalability_reports[name] + [report], indent=2) + "\n")
+
+                reports = run_scalability_series(settings, configurations, run_scalability_level, checkpoint)
+                for name, report in reports.items():
+                    scalability_reports[name].append(report)
+                    tqdm.write(
+                        f"[{name}] {dataset_name}/{link_family}: {report['status']}, "
+                        f"largest successful size={report['largest_successful_size']}, stop size={report['stop_size']}"
+                    )
+            continue
         if "sizes" in settings:
             for node_count in settings["sizes"]:
                 for seed, link_names in synthetic_seed_groups(settings, link_configurations).items():
@@ -1216,7 +1360,7 @@ def main():
     print(f"  Censored         {censored:,}")
     print(f"  Elapsed          {format_duration(time.monotonic() - start_time)}")
     print(f"  Results          {output_dir}")
-    return 1 if failed or (arguments.mode == "exhaustive" and existing_timed_out) else 0
+    return 1 if failed or (runner["mode"] == "exhaustive" and existing_timed_out) else 0
 
 
 if __name__ == "__main__":

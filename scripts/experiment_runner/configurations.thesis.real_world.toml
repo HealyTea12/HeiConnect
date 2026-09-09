@@ -1,3 +1,6 @@
+[runner]
+no_repeat = true
+
 # Provisional real-world finalists: freeze after the synthetic pilot/main results.
 # Run on the experiment machine; set input_dir and max_nodes for its datasets/budget.
 # Existing .links files are not used: the runner generates complete weighted links.

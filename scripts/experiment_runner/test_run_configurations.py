@@ -147,7 +147,29 @@ class ArgumentsTest(unittest.TestCase):
             arguments = RUNNER.parse_arguments()
         self.assertEqual(arguments.output_dir, Path("results"))
         self.assertEqual(arguments.configurations, Path("config.toml"))
-        self.assertFalse(hasattr(arguments, "input_dir"))
+        self.assertEqual(set(vars(arguments)), {"output_dir", "configurations"})
+
+    def test_runner_settings_are_configured_and_validate_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.toml"
+            config.write_text('''[runner]
+mode = "adaptive"
+adaptive_probes = 3
+no_repeat = true
+scheduling_seed = 7
+experiments_binary = "bin/experiments"
+''')
+            settings = RUNNER.load_runner_settings(config)
+            self.assertEqual(settings["mode"], "adaptive")
+            self.assertEqual(settings["adaptive_probes"], 3)
+            self.assertTrue(settings["no_repeat"])
+            self.assertEqual(settings["scheduling_seed"], 7)
+            self.assertEqual(settings["experiments_binary"], str(config.parent / "bin/experiments"))
+            for invalid in ('mode = "other"', 'no_repeat = "yes"', 'adaptive_probes = 0',
+                            'scheduling_seed = true', 'experiments_binary = 4', 'typo = 1'):
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    config.write_text('[runner]\n' + invalid)
+                    RUNNER.load_runner_settings(config)
 
 
 class AdaptiveSchedulingTest(unittest.TestCase):
@@ -493,7 +515,207 @@ class SyntheticSchedulingTest(unittest.TestCase):
                 self.settings(**settings)
 
 
+class ScalabilitySchedulingTest(unittest.TestCase):
+    def settings(self, **changes):
+        return RUNNER.validate_synthetic_datasets({
+            "trees": dict(generator="tree", mode="scalability", min_nodes=4) | changes,
+        })["trees"]
+
+    def test_mixed_failures_continue_and_algorithms_stop_independently(self):
+        calls = []
+
+        def run(size, names):
+            calls.append((size, list(names)))
+            return {name: [
+                {"status": "timeout"},
+                {"status": "completed" if size < {"a": 8, "b": 32}[name] else "failed"},
+            ] for name in names}
+
+        checkpoint = mock.Mock()
+        reports = RUNNER.run_scalability_series(self.settings(), ["a", "b"], run, checkpoint)
+        self.assertEqual(calls, [(4, ["a", "b"]), (8, ["a", "b"]), (16, ["b"]), (32, ["b"])])
+        self.assertEqual(checkpoint.call_count, 4)
+        for name, last, stop in (("a", 4, 8), ("b", 16, 32)):
+            self.assertEqual(reports[name]["status"], "all_failed")
+            self.assertEqual(reports[name]["largest_successful_size"], last)
+            self.assertEqual(reports[name]["stop_size"], stop)
+            self.assertEqual(reports[name]["samples"], [])
+            self.assertEqual(reports[name]["levels"][0]["succeeded"], 1)
+
+    def test_fractional_growth_and_cap(self):
+        run = mock.Mock(side_effect=lambda size, names: {name: [{"status": "completed"}] for name in names})
+        report = RUNNER.run_scalability_series(
+            self.settings(growth_factor=1.5, max_nodes=11), ["a"], run, mock.Mock(),
+        )["a"]
+        self.assertEqual([call.args[0] for call in run.call_args_list], [4, 6, 9, 11])
+        self.assertEqual(report["status"], "capped")
+        self.assertIsNone(report["stop_size"])
+
+    def test_optional_intermediate_sizes_are_measured_once_even_if_they_fail(self):
+        run = mock.Mock(side_effect=lambda size, names: {
+            name: [{"status": "completed" if size in (4, 8, 16) else "timeout"}]
+            for name in names
+        })
+        report = RUNNER.run_scalability_series(
+            self.settings(fill_intermediate=True, samples=5), ["a"], run, mock.Mock(),
+        )["a"]
+        self.assertEqual([call.args[0] for call in run.call_args_list], [4, 8, 16, 32, 7, 10, 13])
+        self.assertEqual(report["samples"], [4, 7, 10, 13, 16])
+        self.assertEqual([level["phase"] for level in report["levels"]], ["growth"] * 4 + ["intermediate"] * 3)
+
+    def test_generation_failure_and_failure_at_start(self):
+        for status, expected in (("generation_failed", "generation_failed"), ("timeout", "all_failed")):
+            run = mock.Mock(return_value={"a": [{"status": status}]})
+            report = RUNNER.run_scalability_series(
+                self.settings(fill_intermediate=True), ["a"], run, mock.Mock(),
+            )["a"]
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(report["status"], expected)
+            self.assertIsNone(report["largest_successful_size"])
+            self.assertEqual(report["stop_size"], 4)
+            self.assertEqual(report["samples"], [])
+
+    def test_invalid_settings_and_paired_seeds(self):
+        for changes in (
+            {"growth_factor": 1}, {"growth_factor": True}, {"growth_factor": float("inf")},
+            {"growth_factor": float("nan")}, {"growth_factor": "2"}, {"fill_intermediate": 1},
+            {"resolution": 2}, {"sizes": [4, 8]}, {"mode": "unknown"},
+            {"mode": "frontier", "growth_factor": 2},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.settings(**changes)
+        settings = self.settings(seed_mode="paired", seeds=[101, 102])
+        links = RUNNER.expand_link_configurations({"unit": dict(distribution="constant", seeds=[201, 202])})
+        self.assertEqual(RUNNER.synthetic_seed_groups(settings, links), {
+            101: ["unit_seed_201"], 102: ["unit_seed_202"],
+        })
+
+
 class SyntheticIntegrationTest(unittest.TestCase):
+    def test_scalability_attempts_remaining_seeds_after_generation_failures(self):
+        for stage in ("graph", "links"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / "config.toml"
+                config.write_text(f'''[runner]
+experiments_binary = {json.dumps(sys.executable)}
+dataset_generator_binary = {json.dumps(sys.executable)}
+[synthetic_datasets.trees]
+generator = "tree"
+mode = "scalability"
+min_nodes = 4
+seed_mode = "paired"
+seeds = [101, 102]
+[link_configurations.uniform]
+distribution = "float_uniform"
+seeds = [201, 202]
+[configurations.a]
+algorithm = "a"
+timeout = 1
+''')
+
+                def generate(executable, output, size, seed, settings):
+                    if stage == "graph" and (size == 8 or seed == 101):
+                        return None
+                    graph = output / f"tree_{size}_seed_{seed}.xml"
+                    graph.write_text("<graphml/>")
+                    return graph, graph.with_suffix(".graph")
+
+                def generate_links(command, *args):
+                    graph = command[command.index("--input_graph") + 1]
+                    return int(stage == "links" and ("tree_8_" in graph.stem or graph.stem.endswith("101")))
+
+                arguments = types.SimpleNamespace(output_dir=root / "results", configurations=config)
+                with mock.patch.object(RUNNER, "parse_arguments", return_value=arguments), \
+                     mock.patch.object(RUNNER, "generate_synthetic_graph", side_effect=generate) as generation, \
+                     mock.patch.object(RUNNER, "run_command", side_effect=generate_links), \
+                     mock.patch.object(RUNNER, "run_experiment", return_value="completed") as run, \
+                     mock.patch.object(RUNNER, "tqdm"), mock.patch("builtins.print"):
+                    self.assertEqual(RUNNER.main(), 1)
+                    self.assertEqual(generation.call_count, 4)
+                    self.assertEqual(run.call_count, 1)
+                    report = json.loads((root / "results/a/synthetic-scalability.json").read_text())[0]
+                    self.assertEqual(report["status"], "generation_failed")
+                    self.assertEqual(report["stop_size"], 8)
+                    self.assertEqual([(level["succeeded"], level["total"]) for level in report["levels"]], [(1, 2), (0, 2)])
+
+    def test_scalability_shares_inputs_records_all_attempts_and_resumes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            config.write_text(f'''[runner]
+no_repeat = true
+experiments_binary = {json.dumps(sys.executable)}
+dataset_generator_binary = {json.dumps(sys.executable)}
+[synthetic_datasets.trees]
+generator = "tree"
+mode = "scalability"
+min_nodes = 4
+seed_mode = "paired"
+seeds = [101, 102]
+[link_configurations.uniform]
+distribution = "float_uniform"
+seeds = [201, 202]
+[link_configurations.integer]
+distribution = "integer_uniform"
+seeds = [201, 202]
+[configurations.a]
+algorithm = "a"
+timeout = 1
+[configurations.b]
+algorithm = "b"
+timeout = 1
+''')
+            arguments = types.SimpleNamespace(output_dir=root / "results", configurations=config)
+
+            def generate(executable, output, size, seed, settings):
+                graph = output / f"tree_{size}_seed_{seed}.xml"
+                graph.write_text("<graphml/>")
+                return graph, graph.with_suffix(".graph")
+
+            def experiment(executable, name, settings, graph, links, output, result_name):
+                size = int(graph.stem.split("_")[1])
+                threshold = 8 if name == "a" or "integer" in result_name else 16
+                if graph.stem.endswith("101"):
+                    return "timeout"
+                if size >= threshold:
+                    return "failed"
+                (output / result_name).write_text("run.total_time_seconds=0.01\n")
+                return "completed"
+
+            with mock.patch.object(RUNNER, "parse_arguments", return_value=arguments), \
+                 mock.patch.object(RUNNER, "generate_synthetic_graph", side_effect=generate) as generation, \
+                 mock.patch.object(RUNNER, "run_command", return_value=0) as links, \
+                 mock.patch.object(RUNNER, "run_experiment", side_effect=experiment) as run, \
+                 mock.patch.object(RUNNER, "tqdm"), mock.patch("builtins.print"):
+                self.assertEqual(RUNNER.main(), 1)
+                self.assertEqual(run.call_count, 18)
+                self.assertEqual(generation.call_count, 10)
+                self.assertEqual(links.call_count, 10)
+                for name in ("a", "b"):
+                    reports = json.loads((root / "results" / name / "synthetic-scalability.json").read_text())
+                    self.assertEqual(len(reports), 2)
+                    for report in reports:
+                        stop = 16 if name == "b" and report["link_configuration"] == "uniform" else 8
+                        self.assertEqual(report["status"], "all_failed")
+                        self.assertEqual(report["stop_size"], stop)
+                        self.assertEqual(report["levels"][0]["succeeded"], 1)
+                        for level in report["levels"]:
+                            self.assertEqual(level["total"], 2)
+                            self.assertEqual({(row["graph_seed"], row["link_seed"]) for row in level["instances"]},
+                                             {(101, 201), (102, 202)})
+                self.assertEqual((root / "results/configuration.source.toml").read_text(), config.read_text())
+                manifest = json.loads((root / "results/run-settings.json").read_text())
+                self.assertEqual(manifest["synthetic_datasets"]["trees"]["growth_factor"], 2)
+                run.reset_mock()
+                self.assertEqual(RUNNER.main(), 1)
+                self.assertEqual(run.call_count, 13)
+                config.write_text(config.read_text().replace("min_nodes = 4", "min_nodes = 5"))
+                run.reset_mock()
+                with self.assertRaisesRegex(ValueError, "different experiment settings"):
+                    RUNNER.main()
+                run.assert_not_called()
+
     def test_fixed_sizes_pair_seeds_and_continue_after_timeout(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -518,6 +740,12 @@ timeout = 1
 algorithm = "b"
 timeout = 1
 ''')
+            config.write_text(
+                "[runner]\nno_repeat = true\n"
+                + f"experiments_binary = {json.dumps(sys.executable)}\n"
+                + f"dataset_generator_binary = {json.dumps(sys.executable)}\n"
+                + config.read_text()
+            )
             arguments = types.SimpleNamespace(
                 output_dir=root / "results", configurations=config,
                 mode="exhaustive", adaptive_probes=6, no_repeat=True,
@@ -535,10 +763,6 @@ timeout = 1
                 return "completed"
 
             with mock.patch.object(RUNNER, "parse_arguments", return_value=arguments), \
-                 mock.patch.dict(RUNNER.os.environ, {
-                     "EXPERIMENTS_BINARY": sys.executable,
-                     "DATASET_GENERATOR_BINARY": sys.executable,
-                 }), \
                  mock.patch.object(RUNNER, "generate_synthetic_graph", side_effect=generate) as generation, \
                  mock.patch.object(RUNNER, "run_command", return_value=0) as links, \
                  mock.patch.object(RUNNER, "run_experiment", side_effect=experiment) as run, \
@@ -658,6 +882,12 @@ timeout = 1
 generator = "tree"
 max_nodes = 10
 ''' if synthetic else ""))
+                config.write_text(
+                    "[runner]\nno_repeat = true\n"
+                    + f"experiments_binary = {json.dumps(sys.executable)}\n"
+                    + f"dataset_generator_binary = {json.dumps(sys.executable)}\n"
+                    + config.read_text()
+                )
                 arguments = types.SimpleNamespace(
                     output_dir=root / "results",
                     configurations=config, mode="exhaustive",
@@ -666,10 +896,6 @@ max_nodes = 10
                 graph = input_dir / "real_world" / "instance.xml"
                 report = {"status": "capped", "largest_solved": 10, "smallest_timeout": None}
                 with mock.patch.object(RUNNER, "parse_arguments", return_value=arguments), \
-                     mock.patch.dict(RUNNER.os.environ, {
-                         "EXPERIMENTS_BINARY": sys.executable,
-                         "DATASET_GENERATOR_BINARY": sys.executable,
-                     }), \
                      mock.patch.object(RUNNER, "find_instances", return_value=(
                          [(graph, graph.with_suffix(".graph"), "real_world", 10)], 0,
                      )) as find, \
@@ -708,6 +934,12 @@ timeout = 1
 algorithm = "large"
 timeout = 1
 ''')
+            config.write_text(
+                "[runner]\nno_repeat = true\n"
+                + f"experiments_binary = {json.dumps(sys.executable)}\n"
+                + f"dataset_generator_binary = {json.dumps(sys.executable)}\n"
+                + config.read_text()
+            )
             arguments = types.SimpleNamespace(
                 output_dir=root / "results",
                 configurations=config, mode="exhaustive",
@@ -731,10 +963,6 @@ timeout = 1
                 return "completed"
 
             with mock.patch.object(RUNNER, "parse_arguments", return_value=arguments), \
-                 mock.patch.dict(RUNNER.os.environ, {
-                     "EXPERIMENTS_BINARY": sys.executable,
-                     "DATASET_GENERATOR_BINARY": sys.executable,
-                 }), \
                  mock.patch.object(RUNNER, "generate_synthetic_graph", side_effect=generate), \
                  mock.patch.object(RUNNER, "run_command", return_value=0), \
                  mock.patch.object(RUNNER, "run_experiment", side_effect=experiment), \

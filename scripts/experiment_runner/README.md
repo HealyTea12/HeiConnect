@@ -1,10 +1,90 @@
 # Experiment configurations
 
+The command accepts only the results directory and the configuration file:
+
+```sh
+uv run scripts/experiment_runner/run_configurations.py results/greedy-scalability \
+  -c configurations/greedy_comparison.toml
+```
+
+The four files in `configurations/` use scalability mode, starting at 20 nodes
+and doubling. All experiment options live in TOML. Optional runner settings are:
+
+```toml
+[runner]
+no_repeat = true         # Default false; reuse completed result files.
+mode = "exhaustive"      # Existing input files only: exhaustive or adaptive.
+adaptive_probes = 6      # Probe budget for existing-input adaptive scheduling.
+scheduling_seed = 42     # Reproducible algorithm shuffling for fixed/scalability runs.
+# experiments_binary = "../build/experiments/experiments"
+# dataset_generator_binary = "../build/experiments/generate_datasets"
+```
+
+Binary paths default to the repository's `build/experiments/` directory.
+Configured paths are relative to the TOML file, or may be absolute.
+The former CLI options `--no-repeat`, `--mode`, and `--adaptive-probes`, and binary
+environment overrides, have been replaced by these settings.
+Each output directory receives `configuration.source.toml` and `run-settings.json`
+with expanded algorithms, seeds, defaults, and resolved paths. An output directory
+with a saved manifest cannot be reused with different settings, except changing
+`no_repeat`. Use a fresh directory after changing binaries or existing input files;
+the manifest records paths and settings, not their contents or the machine environment.
+
+## Scalability experiments
+
+```toml
+[synthetic_datasets.trees]
+generator = "tree"
+mode = "scalability"
+min_nodes = 20
+growth_factor = 2
+fill_intermediate = false
+seed_mode = "paired"
+seeds = [101, 102, 103, 104, 105]
+# max_nodes = 10240      # Optional cap; reaching it does not establish a failure limit.
+# samples = 10          # Used only when fill_intermediate = true.
+```
+
+The runner attempts every selected instance at each size. Independently for each
+algorithm configuration, graph family, and link distribution, it grows to
+`ceil(n * growth_factor)` while at least one instance completes. The factor must
+be finite and greater than 1; the default is 2. Growth stops at the first level
+with no completions, or at `max_nodes` if configured. A cap is included even when
+it is not on the geometric sequence. Paired and cross-product seeds are supported;
+all active algorithms share generated inputs, with a seeded shuffle of execution order.
+Existing real-world inputs still follow `runner.mode`; scalability generates synthetic inputs.
+
+By default only the geometric levels are measured, with no bisection or extra
+sampling. `fill_intermediate = true` adds `samples` evenly spaced integer sizes
+from `min_nodes` through each algorithm's largest tested size with a completion
+(default 10 samples). Already measured levels are reused. Every instance at an
+intermediate size is attempted even after failures; those results do not restart
+growth or change its stopping size.
+
+`synthetic-scalability.json` in each algorithm directory is saved after every
+level. It records the dataset/distribution, stopping reason and size, largest
+successful size, success counts, individual outcomes/seeds, and execution order.
+`all_failed` means no instance completed; `generation_failed` means a level with
+no completions included graph/link generation failures, so an algorithm limit
+was not established. `capped` means at least one instance completed at the cap.
+Individual outcomes are `completed`, `timeout`, `failed` (nonzero exit or missing
+completion marker), and `generation_failed`. Memory exhaustion usually appears
+as `failed`; the runner does not infer OOM from a generic process failure.
+Completion means the process produced its completion marker, not necessarily
+that an exact solver proved optimality; inspect solver status separately.
+
+Generation has separate timeout and memory limits. Complete candidate links grow
+quadratically with node count, so input generation can limit the experiment.
+With `runner.no_repeat = true`, completed runs are reused and failures retried;
+the stopping size can change on resume if a previously failing instance completes.
+
+## Existing thesis configurations
+
 For a single server-ready thesis configuration, run:
 
 ```sh
 uv run scripts/experiment_runner/run_configurations.py results/thesis-server \
-  -c scripts/experiment_runner/configurations.thesis.server.toml --no-repeat
+  -c scripts/experiment_runner/configurations.thesis.server.toml
 ```
 
 This generates all synthetic inputs and runs 1,800 comparisons. Build the current
@@ -25,7 +105,7 @@ a solution cost exists. The CSV collector includes `solver_status` and
 `solution_optimal`; missing fields in older or interrupted runs remain unknown.
 
 Synthetic datasets can set `sizes = [20, 40, 80, 160, 320]` to run a fixed grid
-instead of frontier search. Do not combine `sizes` with `min_nodes`, `max_nodes`,
+instead of frontier search or scalability mode. Do not combine `sizes` with `min_nodes`, `max_nodes`,
 `samples`, or `resolution`. Every selected repetition is attempted even after a
 timeout. Outcomes and execution order are recorded in `synthetic-fixed.json`.
 
@@ -34,7 +114,8 @@ link seeds by array position within each distribution. The counts must match.
 Stars and cycles use their single graph with all link seeds. The default
 `seed_mode = "cross"` retains the full cross-product. Fixed-grid execution shares
 generated graphs and links across algorithms and shuffles algorithm order with
-scheduling seed 42. Without `sizes`, the frontier workflow below applies.
+scheduling seed 42 by default. Without `sizes`, the frontier workflow below applies
+unless `mode = "scalability"` is selected.
 
 For synthetic graphs, start with `configurations.synthetic.example.toml`:
 
@@ -129,7 +210,7 @@ configured separately with `generation_timeout` and `generation_max_memory_mb`.
 Generation failures are reported separately from algorithm timeouts and do not
 establish an algorithm frontier.
 
-For each algorithm configuration, dataset, and link distribution family, the
+In frontier mode, for each algorithm configuration, dataset, and link distribution family, the
 runner doubles the node count until a timeout, then bisects between the last
 solved size and the timeout. A size is solved only if every graph seed and every
 link seed completes. The first unsuccessful repetition ends a probe. Stars and
@@ -152,7 +233,7 @@ that assumption: a backfill failure is marked `non_monotone`, and the observatio
 are retained. The report describes an empirical boundary for the configured seeds
 and resource limits, rather than a guaranteed largest solvable graph.
 
-`--no-repeat` reuses result files containing a completion marker. Failed and timed
+`runner.no_repeat = true` reuses result files containing a completion marker. Failed and timed
 out probes are retried when resuming. Use a fresh output directory when changing
 generation parameters, seeds, algorithm parameters, or resource limits.
 
@@ -160,12 +241,13 @@ Existing files retain their previous workflow and `[dataset_selection]` settings
 
 ```sh
 uv run scripts/experiment_runner/run_configurations.py results/existing \
-  -c scripts/experiment_runner/configurations.all.toml --mode adaptive
+  -c scripts/experiment_runner/configurations.all.toml
 ```
 
-`--mode exhaustive` (the default) runs all selected existing files; `--mode adaptive`
-uses the previous bounded probes and backfill, with `--adaptive-probes` controlling
-the probe budget. Synthetic families without explicit sizes use the new frontier search.
+`runner.mode = "exhaustive"` (the default) runs all selected existing files; `runner.mode = "adaptive"`
+uses the previous bounded probes and backfill, with `runner.adaptive_probes` controlling
+the probe budget. Set these options in a `[runner]` table. Synthetic families without
+explicit sizes use frontier search unless `mode = "scalability"` is selected.
 Include both table types in the same configuration file to run both sources:
 
 ```toml

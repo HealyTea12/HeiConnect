@@ -1,5 +1,48 @@
 # Thesis experiment protocol
 
+The initial revised pilot completed 474 of 480 runs, with six timeouts. It exposed
+a bug in element domination: equivalent constraints could all be removed. The
+reducer now retains one representative, and all four exact configurations agree
+on the previously failing tree. Rebuild before running the server configuration
+and use fresh result directories; pre-fix reduced results are not reliable.
+See [THESIS_REPRODUCTION.md](THESIS_REPRODUCTION.md) for the diagnosis and validation.
+
+## Run this on the server
+
+Use **`scripts/experiment_runner/configurations.thesis.server.toml`** for the
+complete synthetic comparison. It is self-contained: no pre-generated datasets,
+configuration merging, or pilot-dependent algorithm selection is needed. It fixes
+the main design below at 1,800 executions. The pilot is a separate calibration and
+validation run; it is not a prerequisite built into the server configuration.
+
+From the repository root, with the project's C++ dependencies and a working
+Gurobi license installed on the server:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DHEICONNECT_BUILD_TESTS=OFF -DHEICONNECT_BUILD_EXPERIMENTS=ON
+cmake --build build --target experiments generate_datasets -j 2
+
+uv run scripts/experiment_runner/run_configurations.py results/thesis-server \
+  -c scripts/experiment_runner/configurations.thesis.server.toml
+
+uv run scripts/visualization/collect_results.py results/thesis-server results/thesis-server.csv
+```
+
+Run this in a persistent server session or scheduled job so disconnecting SSH does
+not interrupt the experiment. Use the same runner command to resume: completed
+results are reused; failed and timed-out attempts are retried. Do not repeatedly
+resume a finished run just to remove its timeouts. Record the revision, machine,
+and actual solver thread count alongside the results. The configuration limits
+each execution to 60 seconds and 4 GiB of address space. Generation is separately
+limited to 300 seconds and 4 GiB; its overhead is outside the execution budget.
+Algorithms run sequentially, but Gurobi can use multiple threads internally.
+The configuration does not pin its thread count; keep the server's CPU allocation
+fixed and report that setting when interpreting runtimes.
+
+The real-world comparison remains separate because it needs a dataset directory
+on the server. Its ready-to-edit configuration and input semantics are below.
+
 This design follows `../report/chapters/plan/exp-results.txt` (relative to the
 repository root). Its purpose is to measure the planned claims, including negative
 results, rather than screen every available option. Run the preflight, pilot,
@@ -49,7 +92,7 @@ Both stages use cycles, stars, trees, and **variable cacti only**, with
 bounds fixed; conclusions describe this generator, not every cactus topology.
 Links are complete, with float-uniform [0,1] and integer-uniform [1,5] weights.
 
-| Factor | Pilot | Main (provisional) |
+| Factor | Pilot | Main / server |
 | --- | --- | --- |
 | Node counts in every family | 20, 80 | 20, 80, 320 |
 | Graph seeds for trees and variable cacti | 11, 12 | 101, 102, 103, 104, 105 |
@@ -132,23 +175,23 @@ design: some configuration names were reused with changed parameters.
 
 ```sh
 uv run scripts/experiment_runner/run_configurations.py results/thesis-v2-preflight \
-  -c scripts/experiment_runner/configurations.thesis.preflight.toml --no-repeat
+  -c scripts/experiment_runner/configurations.thesis.preflight.toml
 
 uv run scripts/experiment_runner/run_configurations.py results/thesis-v2-pilot \
-  -c scripts/experiment_runner/configurations.thesis.pilot.toml --no-repeat
+  -c scripts/experiment_runner/configurations.thesis.pilot.toml
 
 # After calibrating and freezing the main setup on the experiment machine:
 uv run scripts/experiment_runner/run_configurations.py results/thesis-v2-main \
-  -c scripts/experiment_runner/configurations.thesis.main.toml --no-repeat
+  -c scripts/experiment_runner/configurations.thesis.main.toml
 
 # After selecting real-world finalists and input graphs:
 uv run scripts/experiment_runner/run_configurations.py results/thesis-v2-real-world \
-  -c scripts/experiment_runner/configurations.thesis.real_world.toml --no-repeat
+  -c scripts/experiment_runner/configurations.thesis.real_world.toml
 
 uv run scripts/visualization/collect_results.py results/thesis-v2-main results/thesis-v2-main.csv
 ```
 
-`--no-repeat` skips completed results but retries timeouts and failures. Use a fresh
+`runner.no_repeat = true` skips completed results but retries timeouts and failures. Use a fresh
 output directory whenever seeds, sizes, parameters, limits, or selected methods
 change. Fixed synthetic outcomes, including failures and timeouts, are recorded in
 each algorithm's `synthetic-fixed.json`. The grid continues after timeouts. The
