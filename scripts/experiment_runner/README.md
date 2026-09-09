@@ -26,8 +26,9 @@ The former CLI options `--no-repeat`, `--mode`, and `--adaptive-probes`, and bin
 environment overrides, have been replaced by these settings.
 Each output directory receives `configuration.source.toml` and `run-settings.json`
 with expanded algorithms, seeds, defaults, and resolved paths. An output directory
-with a saved manifest cannot be reused with different settings, except changing
-`no_repeat`. Use a fresh directory after changing binaries or existing input files;
+with a saved manifest can be reused after increasing external time/memory limits
+or changing `no_repeat`. Other changes, including decreased limits and internal
+algorithm time limits, require a new directory. Use a fresh directory after changing binaries or existing input files;
 the manifest records paths and settings, not their contents or the machine environment.
 
 ## Scalability experiments
@@ -77,6 +78,18 @@ Generation has separate timeout and memory limits. Complete candidate links grow
 quadratically with node count, so input generation can limit the experiment.
 With `runner.no_repeat = true`, completed runs are reused and failures retried;
 the stopping size can change on resume if a previously failing instance completes.
+
+To resume with a larger budget, increase `[budget].timeout` and/or
+`[budget].max_memory_mb` and run the same command with the same output directory.
+Per-configuration and matrix limit increases are also supported, as are increases
+to `generation_timeout` and `generation_max_memory_mb`. The runner checks each
+algorithm's effective limits after applying overrides. Removing an optional limit
+also counts as an increase (unlimited); adding a finite limit to an unlimited run
+counts as a decrease. Keep `runner.no_repeat = true` to reuse completed results.
+Saved configuration snapshots and settings are replaced with the current values;
+no budget history is stored. Successful retries allow growth past the previous
+stopping size. Changes inside algorithm `params`, such as `time_limit_seconds`,
+remain incompatible because they can change the solution produced.
 
 ## Existing thesis configurations
 
@@ -235,7 +248,8 @@ and resource limits, rather than a guaranteed largest solvable graph.
 
 `runner.no_repeat = true` reuses result files containing a completion marker. Failed and timed
 out probes are retried when resuming. Use a fresh output directory when changing
-generation parameters, seeds, algorithm parameters, or resource limits.
+generation parameters, seeds, algorithm parameters, or decreasing resource limits.
+Increasing external resource limits is supported in the same output directory.
 
 Existing files retain their previous workflow and `[dataset_selection]` settings:
 

@@ -1,4 +1,5 @@
 import importlib.util
+from copy import deepcopy
 import json
 from pathlib import Path
 import sys
@@ -84,6 +85,61 @@ max_memory_mb = 2048
             with self.subTest(budget=budget):
                 with self.assertRaisesRegex(ValueError, "budget"):
                     self.load(budget)
+
+
+class ResumeSettingsTest(unittest.TestCase):
+    def setUp(self):
+        self.previous = {
+            "runner": {"no_repeat": True, "scheduling_seed": 42},
+            "configurations": {"a": {
+                "algorithm": "test", "timeout": 60, "max_memory_mb": 4096,
+                "params": {"time_limit_seconds": 50},
+            }},
+            "synthetic_datasets": {"trees": {
+                "seeds": [42], "generation_timeout": 300, "generation_max_memory_mb": 4096,
+            }},
+        }
+
+    def test_only_external_budget_increases_are_allowed(self):
+        for section, key in (
+            ("configurations", "timeout"), ("configurations", "max_memory_mb"),
+            ("synthetic_datasets", "generation_timeout"),
+            ("synthetic_datasets", "generation_max_memory_mb"),
+        ):
+            for factor in (0.5, 1, 2):
+                with self.subTest(section=section, key=key, factor=factor):
+                    current = deepcopy(self.previous)
+                    settings = next(iter(current[section].values()))
+                    settings[key] = int(settings[key] * factor)
+                    original = deepcopy(self.previous)
+                    self.assertEqual(RUNNER.compatible_resume_settings(self.previous, current), factor >= 1)
+                    self.assertEqual(self.previous, original)
+
+    def test_removing_a_limit_is_an_increase_but_adding_one_is_a_decrease(self):
+        unlimited = deepcopy(self.previous)
+        del unlimited["configurations"]["a"]["max_memory_mb"]
+        self.assertTrue(RUNNER.compatible_resume_settings(self.previous, unlimited))
+        self.assertFalse(RUNNER.compatible_resume_settings(unlimited, self.previous))
+
+    def test_other_changes_are_rejected_even_with_a_larger_budget(self):
+        for change in ("internal_limit", "seeds", "new_algorithm", "removed_algorithm", "scheduling"):
+            with self.subTest(change=change):
+                current = deepcopy(self.previous)
+                current["configurations"]["a"]["timeout"] = 120
+                if change == "internal_limit":
+                    current["configurations"]["a"]["params"]["time_limit_seconds"] = 100
+                elif change == "seeds":
+                    current["synthetic_datasets"]["trees"]["seeds"] = [43]
+                elif change == "new_algorithm":
+                    current["configurations"]["b"] = deepcopy(current["configurations"]["a"])
+                elif change == "removed_algorithm":
+                    del current["configurations"]["a"]
+                else:
+                    current["runner"]["scheduling_seed"] = 43
+                self.assertFalse(RUNNER.compatible_resume_settings(self.previous, current))
+        current = deepcopy(self.previous)
+        current["runner"]["no_repeat"] = False
+        self.assertTrue(RUNNER.compatible_resume_settings(self.previous, current))
 
 
 class DatasetSelectionTest(unittest.TestCase):
@@ -592,6 +648,78 @@ class ScalabilitySchedulingTest(unittest.TestCase):
 
 
 class SyntheticIntegrationTest(unittest.TestCase):
+    def test_increased_budget_resumes_successes_retries_failures_and_grows_further(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            config.write_text(f'''[runner]
+no_repeat = true
+experiments_binary = {json.dumps(sys.executable)}
+dataset_generator_binary = {json.dumps(sys.executable)}
+[budget]
+timeout = 1
+max_memory_mb = 128
+[synthetic_datasets.trees]
+generator = "tree"
+mode = "scalability"
+min_nodes = 4
+seed_mode = "paired"
+seeds = [101, 102]
+[link_configurations.uniform]
+distribution = "float_uniform"
+seeds = [201, 202]
+[configurations.a]
+algorithm = "a"
+''')
+            arguments = types.SimpleNamespace(output_dir=root / "results", configurations=config)
+
+            def generate(executable, output, size, seed, settings):
+                graph = output / f"tree_{size}_seed_{seed}.xml"
+                graph.write_text("<graphml/>")
+                return graph, graph.with_suffix(".graph")
+
+            def experiment(executable, name, settings, graph, links, output, result_name):
+                size = int(graph.stem.split("_")[1])
+                threshold = 16 if settings["timeout"] == 2 and settings["max_memory_mb"] == 256 else 8
+                if graph.stem.endswith("101") or size >= threshold:
+                    return "timeout"
+                (output / result_name).write_text("run.total_time_seconds=0.01\n")
+                return "completed"
+
+            with mock.patch.object(RUNNER, "parse_arguments", return_value=arguments), \
+                 mock.patch.object(RUNNER, "generate_synthetic_graph", side_effect=generate), \
+                 mock.patch.object(RUNNER, "run_command", return_value=0), \
+                 mock.patch.object(RUNNER, "run_experiment", side_effect=experiment) as run, \
+                 mock.patch.object(RUNNER, "tqdm"), mock.patch("builtins.print"):
+                self.assertEqual(RUNNER.main(), 0)
+                self.assertEqual(run.call_count, 4)
+                result = root / "results/a/trees/tree_4_seed_102/res-uniform_seed_202.txt"
+                original_result = result.read_bytes()
+                config.write_text(config.read_text().replace("timeout = 1", "timeout = 2")
+                                  .replace("max_memory_mb = 128", "max_memory_mb = 256"))
+                run.reset_mock()
+                self.assertEqual(RUNNER.main(), 0)
+                self.assertEqual(run.call_count, 5)
+                self.assertNotIn("tree_4_seed_102", [call.args[3].stem for call in run.call_args_list])
+                self.assertEqual(result.read_bytes(), original_result)
+                report = json.loads((root / "results/a/synthetic-scalability.json").read_text())[0]
+                self.assertEqual(report["stop_size"], 16)
+                self.assertEqual(report["largest_successful_size"], 8)
+                manifest_path = root / "results/run-settings.json"
+                saved_manifest = manifest_path.read_text()
+                settings = json.loads(saved_manifest)["configurations"]["a"]
+                self.assertEqual((settings["timeout"], settings["max_memory_mb"]), (2, 256))
+                self.assertEqual((root / "results/configuration.source.toml").read_text(), config.read_text())
+                metadata = (root / "results/a/configuration.txt").read_text()
+                self.assertIn("timeout=2\n", metadata)
+                self.assertIn("max_memory_mb=256\n", metadata)
+                config.write_text(config.read_text().replace("timeout = 2", "timeout = 1"))
+                run.reset_mock()
+                with self.assertRaisesRegex(ValueError, "only increased external"):
+                    RUNNER.main()
+                run.assert_not_called()
+                self.assertEqual(manifest_path.read_text(), saved_manifest)
+
     def test_scalability_attempts_remaining_seeds_after_generation_failures(self):
         for stage in ("graph", "links"):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:

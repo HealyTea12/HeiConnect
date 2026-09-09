@@ -8,6 +8,7 @@
 
 import argparse
 from collections import defaultdict
+from copy import deepcopy
 from itertools import product
 import json
 import math
@@ -918,6 +919,31 @@ def run_experiment(
     return "failed"
 
 
+def compatible_resume_settings(previous, current):
+    previous = deepcopy(previous)
+    previous.get("runner", {})["no_repeat"] = current["runner"]["no_repeat"]
+    for section, limits in (
+        ("configurations", ("timeout", "max_memory_mb")),
+        ("synthetic_datasets", ("generation_timeout", "generation_max_memory_mb")),
+    ):
+        for name, old_settings in previous.get(section, {}).items():
+            if name not in current.get(section, {}):
+                return False
+            new_settings = current[section][name]
+            for key in limits:
+                old_limit = old_settings.get(key)
+                new_limit = new_settings.get(key)
+                if old_limit == new_limit:
+                    continue
+                if old_limit is None or (new_limit is not None and new_limit < old_limit):
+                    return False
+                if key in new_settings:
+                    old_settings[key] = new_limit
+                else:
+                    old_settings.pop(key, None)
+    return previous == current
+
+
 def main():
     start_time = time.monotonic()
     arguments = parse_arguments()
@@ -984,9 +1010,11 @@ def main():
     manifest_path = output_dir / "run-settings.json"
     if manifest_path.exists():
         previous = json.loads(manifest_path.read_text())
-        previous.get("runner", {})["no_repeat"] = runner["no_repeat"]
-        if previous != manifest:
-            raise ValueError("output directory contains different experiment settings; use a new directory")
+        if not compatible_resume_settings(previous, manifest):
+            raise ValueError(
+                "output directory contains different experiment settings; only increased external "
+                "time/memory limits and changes to runner.no_repeat are allowed; use a new directory"
+            )
     (output_dir / "configuration.source.toml").write_text(arguments.configurations.read_text())
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
