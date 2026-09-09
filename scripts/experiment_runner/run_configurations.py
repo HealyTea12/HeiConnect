@@ -129,7 +129,7 @@ def expand_configuration_matrices(matrices):
         if not isinstance(matrix, dict):
             raise ValueError(f"configuration matrix {matrix_name!r} must be a table")
 
-        allowed_keys = {"algorithms", "timeout", "max_memory_mb", "params"}
+        allowed_keys = {"algorithms", "timeout", "max_memory_mb", "infinite", "params"}
         unknown_keys = set(matrix) - allowed_keys
         if unknown_keys:
             raise ValueError(
@@ -200,7 +200,7 @@ def expand_configuration_matrices(matrices):
                     "algorithm": algorithm,
                     "params": configuration_params,
                 }
-                for key in ("timeout", "max_memory_mb"):
+                for key in ("timeout", "max_memory_mb", "infinite"):
                     if key in matrix:
                         configuration[key] = matrix[key]
                 expanded[configuration_name] = configuration
@@ -293,6 +293,8 @@ def load_configurations(path):
             positive_integer(configuration["timeout"])
         if configuration.get("max_memory_mb") is not None:
             positive_integer(configuration["max_memory_mb"])
+        if not isinstance(configuration.get("infinite", False), bool):
+            raise ValueError(f"configuration {name!r} infinite must be a boolean")
         if not isinstance(configuration.get("params", {}), dict):
             raise ValueError(f"configuration {name!r} params must be a TOML table")
 
@@ -347,6 +349,9 @@ def load_configurations(path):
             )
 
     synthetic = validate_synthetic_datasets(document.get("synthetic_datasets", {}))
+    if (any(settings["mode"] == "scalability" for settings in synthetic.values())
+            and all(configuration.get("infinite", False) for configuration in configurations.values())):
+        raise ValueError("scalability requires at least one configuration with infinite = false")
     for settings in synthetic.values():
         synthetic_seed_groups(settings, link_configurations)
     if "dataset_selection" not in document:
@@ -491,7 +496,10 @@ def evenly_spaced_sizes(lower, upper, count):
     return [lower + (upper - lower) * index // (count - 1) for index in range(count)]
 
 
-def run_scalability_series(settings, configuration_names, run_level, checkpoint):
+def run_scalability_series(settings, configuration_names, run_level, checkpoint, infinite_names=()):
+    infinite_names = set(infinite_names)
+    if not set(configuration_names) - infinite_names:
+        raise ValueError("scalability requires at least one configuration with infinite = false")
     reports = {
         name: {"status": "running", "largest_successful_size": None,
                "stop_size": None, "samples": [], "levels": []}
@@ -525,6 +533,12 @@ def run_scalability_series(settings, configuration_names, run_level, checkpoint)
     while active:
         measure(size, active, "growth")
         active = [name for name in active if reports[name]["status"] == "running"]
+        if active and all(name in infinite_names for name in active):
+            for name in active:
+                reports[name]["status"] = "peers_stopped"
+                reports[name]["stop_size"] = size
+            checkpoint(reports)
+            break
         if active:
             size = max(size + 1, math.ceil(size * settings["growth_factor"]))
             if "max_nodes" in settings:
@@ -747,6 +761,7 @@ def write_configuration(
         f"algorithm={configuration['algorithm']}",
         f"timeout={configuration.get('timeout', '')}",
         f"max_memory_mb={configuration.get('max_memory_mb', '')}",
+        f"infinite={serialize_parameter(configuration.get('infinite', False))}",
     ]
     for key, value in configuration.get("params", {}).items():
         lines.append(f"param.{key}={serialize_parameter(value)}")
@@ -930,6 +945,11 @@ def compatible_resume_settings(previous, current):
             if name not in current.get(section, {}):
                 return False
             new_settings = current[section][name]
+            if section == "configurations":
+                if "infinite" in new_settings:
+                    old_settings["infinite"] = new_settings["infinite"]
+                else:
+                    old_settings.pop("infinite", None)
             for key in limits:
                 old_limit = old_settings.get(key)
                 new_limit = new_settings.get(key)
@@ -1013,7 +1033,7 @@ def main():
         if not compatible_resume_settings(previous, manifest):
             raise ValueError(
                 "output directory contains different experiment settings; only increased external "
-                "time/memory limits and changes to runner.no_repeat are allowed; use a new directory"
+                "time/memory limits and changes to runner.no_repeat or infinite are allowed; use a new directory"
             )
     (output_dir / "configuration.source.toml").write_text(arguments.configurations.read_text())
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
@@ -1301,7 +1321,10 @@ def main():
                         path = output_dir / name / "synthetic-scalability.json"
                         path.write_text(json.dumps(scalability_reports[name] + [report], indent=2) + "\n")
 
-                reports = run_scalability_series(settings, configurations, run_scalability_level, checkpoint)
+                reports = run_scalability_series(
+                    settings, configurations, run_scalability_level, checkpoint,
+                    infinite_names=[name for name, config in configurations.items() if config.get("infinite", False)],
+                )
                 for name, report in reports.items():
                     scalability_reports[name].append(report)
                     tqdm.write(

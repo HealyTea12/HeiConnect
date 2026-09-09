@@ -121,6 +121,12 @@ class ResumeSettingsTest(unittest.TestCase):
         self.assertTrue(RUNNER.compatible_resume_settings(self.previous, unlimited))
         self.assertFalse(RUNNER.compatible_resume_settings(unlimited, self.previous))
 
+    def test_infinite_flag_can_change_on_resume(self):
+        current = deepcopy(self.previous)
+        current["configurations"]["a"]["infinite"] = True
+        self.assertTrue(RUNNER.compatible_resume_settings(self.previous, current))
+        self.assertTrue(RUNNER.compatible_resume_settings(current, self.previous))
+
     def test_other_changes_are_rejected_even_with_a_larger_budget(self):
         for change in ("internal_limit", "seeds", "new_algorithm", "removed_algorithm", "scheduling"):
             with self.subTest(change=change):
@@ -572,6 +578,79 @@ class SyntheticSchedulingTest(unittest.TestCase):
 
 
 class ScalabilitySchedulingTest(unittest.TestCase):
+    def test_infinite_algorithms_follow_the_last_non_infinite_algorithm(self):
+        run = mock.Mock(side_effect=lambda size, names: {
+            name: [{"status": "completed" if name == "infinite" or size < {"a": 8, "b": 16}[name]
+                    else "timeout"}] for name in names
+        })
+        checkpoint = mock.Mock()
+        reports = RUNNER.run_scalability_series(
+            self.settings(fill_intermediate=True, samples=3), ["a", "b", "infinite"], run, checkpoint,
+            infinite_names=["infinite"],
+        )
+        self.assertEqual([call.args for call in run.call_args_list], [
+            (4, ["a", "b", "infinite"]), (8, ["a", "b", "infinite"]),
+            (16, ["b", "infinite"]), (6, ["b"]), (10, ["infinite"]),
+        ])
+        self.assertEqual(reports["a"]["stop_size"], 8)
+        self.assertEqual(reports["b"]["stop_size"], 16)
+        follower = reports["infinite"]
+        self.assertEqual(follower["status"], "peers_stopped")
+        self.assertEqual(follower["stop_size"], 16)
+        self.assertEqual(follower["largest_successful_size"], 16)
+        self.assertEqual(checkpoint.call_args.args[0]["infinite"]["status"], "peers_stopped")
+
+    def test_infinite_algorithms_still_stop_on_their_own_failures_or_the_cap(self):
+        for cap in (None, 8):
+            with self.subTest(cap=cap):
+                settings = self.settings(**({"max_nodes": cap} if cap else {}))
+                run = mock.Mock(side_effect=lambda size, names: {
+                    name: [{"status": "completed" if cap or (name == "a" and size < 16) else "failed"}]
+                    for name in names
+                })
+                reports = RUNNER.run_scalability_series(
+                    settings, ["a", "infinite"], run, mock.Mock(), infinite_names=["infinite"],
+                )
+                self.assertEqual(reports["infinite"]["status"], "capped" if cap else "all_failed")
+                self.assertEqual([level["size"] for level in reports["infinite"]["levels"]], [4, 8] if cap else [4])
+
+    def test_all_infinite_is_rejected_before_running(self):
+        run = mock.Mock()
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            RUNNER.run_scalability_series(self.settings(), ["a"], run, mock.Mock(), infinite_names=["a"])
+        run.assert_not_called()
+
+    def test_infinite_configuration_validation_and_matrix_expansion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            base = '''
+[synthetic_datasets.trees]
+generator = "tree"
+mode = "scalability"
+[link_configurations.unit]
+distribution = "constant"
+seed = 42
+[configurations.finite]
+algorithm = "test"
+[configuration_matrices.followers]
+algorithms = ["test"]
+infinite = true
+[configuration_matrices.followers.params]
+variant = [1, 2]
+'''
+            path.write_text(base)
+            configs = RUNNER.load_configurations(path)[0]
+            self.assertTrue(configs["followers_test_variant_1"]["infinite"])
+            self.assertTrue(configs["followers_test_variant_2"]["infinite"])
+            for invalid in ('1', '"true"', '[]'):
+                path.write_text(base.replace("infinite = true", f"infinite = {invalid}"))
+                with self.assertRaisesRegex(ValueError, "infinite must be a boolean"):
+                    RUNNER.load_configurations(path)
+            path.write_text(base.replace('[configurations.finite]\nalgorithm = "test"',
+                                         '[configurations.finite]\nalgorithm = "test"\ninfinite = true'))
+            with self.assertRaisesRegex(ValueError, "at least one"):
+                RUNNER.load_configurations(path)
+
     def settings(self, **changes):
         return RUNNER.validate_synthetic_datasets({
             "trees": dict(generator="tree", mode="scalability", min_nodes=4) | changes,
@@ -838,6 +917,17 @@ timeout = 1
                 run.reset_mock()
                 self.assertEqual(RUNNER.main(), 1)
                 self.assertEqual(run.call_count, 13)
+                config.write_text(config.read_text().replace(
+                    '[configurations.b]\nalgorithm = "b"',
+                    '[configurations.b]\nalgorithm = "b"\ninfinite = true',
+                ))
+                run.reset_mock()
+                self.assertEqual(RUNNER.main(), 1)
+                self.assertTrue(all(int(call.args[3].stem.split("_")[1]) <= 8 for call in run.call_args_list))
+                reports = json.loads((root / "results/b/synthetic-scalability.json").read_text())
+                uniform = next(report for report in reports if report["link_configuration"] == "uniform")
+                self.assertEqual(uniform["status"], "peers_stopped")
+                self.assertEqual(uniform["stop_size"], 8)
                 config.write_text(config.read_text().replace("min_nodes = 4", "min_nodes = 5"))
                 run.reset_mock()
                 with self.assertRaisesRegex(ValueError, "different experiment settings"):

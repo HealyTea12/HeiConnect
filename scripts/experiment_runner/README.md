@@ -27,7 +27,7 @@ environment overrides, have been replaced by these settings.
 Each output directory receives `configuration.source.toml` and `run-settings.json`
 with expanded algorithms, seeds, defaults, and resolved paths. An output directory
 with a saved manifest can be reused after increasing external time/memory limits
-or changing `no_repeat`. Other changes, including decreased limits and internal
+or changing `no_repeat` or an algorithm's `infinite` flag. Other changes, including decreased limits and internal
 algorithm time limits, require a new directory. Use a fresh directory after changing binaries or existing input files;
 the manifest records paths and settings, not their contents or the machine environment.
 
@@ -54,6 +54,30 @@ with no completions, or at `max_nodes` if configured. A cap is included even whe
 it is not on the geometric sequence. Paired and cross-product seeds are supported;
 all active algorithms share generated inputs, with a seeded shuffle of execution order.
 Existing real-world inputs still follow `runner.mode`; scalability generates synthetic inputs.
+
+Algorithms that can keep returning solutions at increasing sizes can be marked
+as `infinite` at the configuration level (outside `params`):
+
+```toml
+[configurations.mst_connect_local_search]
+algorithm = "mst-connect-ls"
+infinite = true
+```
+
+The default is false. In scalability mode, flagged algorithms run through the
+same level where the last non-infinite algorithm stops, but do not advance to
+larger sizes on their own. This is decided separately for each graph family and
+link distribution. They still stop earlier if all their instances fail, and
+retain their normal timeout/memory limits. At least one configuration must be
+non-infinite. Configuration matrices also accept `infinite = true`, applying it
+to every expanded variant. Fixed-size and existing-input scheduling are unaffected.
+
+The report status `peers_stopped` identifies a successful flagged algorithm that
+stopped because no non-infinite algorithms remained active; `stop_size` is the
+last growth level it attempted, not a failure boundary. Optional intermediate
+sampling still applies within the measured range. You can change the flag and
+resume in the same results directory. Previously saved results above a revised
+stopping size remain on disk, but are not included in the new scalability report.
 
 By default only the geometric levels are measured, with no bisection or extra
 sampling. `fill_intermediate = true` adds `samples` evenly spaced integer sizes
