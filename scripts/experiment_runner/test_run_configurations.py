@@ -30,6 +30,62 @@ class OutputFormattingTest(unittest.TestCase):
         self.assertEqual(RUNNER.format_duration(3667), "1h 01m 07s")
 
 
+class BudgetTest(unittest.TestCase):
+    def load(self, budget):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text(budget + '''
+[dataset_selection]
+input_dir = "inputs"
+[link_configurations.unit]
+distribution = "constant"
+seed = 42
+[configurations.inherited]
+algorithm = "test"
+[configurations.override]
+algorithm = "test"
+timeout = 120
+[configuration_matrices.inherited]
+algorithms = ["test"]
+[configuration_matrices.override]
+algorithms = ["test"]
+max_memory_mb = 2048
+''')
+            return RUNNER.load_configurations(path)[0]
+
+    def test_shared_limits_and_individual_overrides(self):
+        configs = self.load("[budget]\ntimeout = 60\nmax_memory_mb = 4096\n")
+        for name in ("inherited", "inherited_test"):
+            self.assertEqual(configs[name]["timeout"], 60)
+            self.assertEqual(configs[name]["max_memory_mb"], 4096)
+        self.assertEqual(configs["override"]["timeout"], 120)
+        self.assertEqual(configs["override"]["max_memory_mb"], 4096)
+        self.assertEqual(configs["override_test"]["timeout"], 60)
+        self.assertEqual(configs["override_test"]["max_memory_mb"], 2048)
+
+    def test_optional_and_partial_budget(self):
+        for budget in ("", "[budget]\n", "[budget]\ntimeout = 60\n"):
+            with self.subTest(budget=budget):
+                configs = self.load(budget)
+                self.assertNotIn("max_memory_mb", configs["inherited"])
+                self.assertEqual(configs["override"]["timeout"], 120)
+                self.assertEqual(configs["override_test"]["max_memory_mb"], 2048)
+                if "timeout" in budget:
+                    self.assertEqual(configs["inherited"]["timeout"], 60)
+                else:
+                    self.assertNotIn("timeout", configs["inherited"])
+
+    def test_rejects_invalid_budget(self):
+        invalid = ['budget = 60\n', '[budget]\ntimeot = 60\n']
+        for key in ("timeout", "max_memory_mb"):
+            for value in ('0', '-1', 'true', '1.5', '"60"', '[]', '{}'):
+                invalid.append(f"[budget]\n{key} = {value}\n")
+        for budget in invalid:
+            with self.subTest(budget=budget):
+                with self.assertRaisesRegex(ValueError, "budget"):
+                    self.load(budget)
+
+
 class DatasetSelectionTest(unittest.TestCase):
     def test_configured_input_paths_and_validation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -297,6 +353,36 @@ class ExperimentResultTest(unittest.TestCase):
 
 
 class SyntheticSchedulingTest(unittest.TestCase):
+    def test_exact_cycle_count_requires_a_feasible_integer(self):
+        for cycles in (1, 4, 9):
+            settings = self.settings(generator="cactus_cycles", cycles=cycles)
+            self.assertEqual(settings["cycles"], cycles)
+        for cycles in (None, -1, True, 1.5, 0, 10):
+            with self.subTest(cycles=cycles), self.assertRaises(ValueError):
+                self.settings(generator="cactus_cycles", cycles=cycles)
+        with self.assertRaises(ValueError):
+            self.settings(generator="tree", cycles=1)
+        settings = RUNNER.validate_synthetic_datasets({
+            "test": {"generator": "cactus_cycles", "sizes": [21, 30], "cycles": 10}
+        })["test"]
+        self.assertEqual(settings["cycles"], 10)
+        with self.assertRaises(ValueError):
+            RUNNER.validate_synthetic_datasets({
+                "test": {"generator": "cactus_cycles", "sizes": [2, 30], "cycles": 2}
+            })
+
+    def test_zero_count_allows_only_single_node_datasets(self):
+        for sizes in ([1], [1, 2]):
+            document = {"test": {"generator": "cactus_cycles", "sizes": sizes, "cycles": 0}}
+            if sizes == [1]:
+                self.assertEqual(RUNNER.validate_synthetic_datasets(document)["test"]["cycles"], 0)
+            else:
+                with self.assertRaises(ValueError):
+                    RUNNER.validate_synthetic_datasets(document)
+        self.settings(generator="cactus_cycles", min_nodes=1, max_nodes=1, cycles=0)
+        with self.assertRaises(ValueError):
+            self.settings(generator="cactus_cycles", min_nodes=1, cycles=0)
+
     def test_variable_cactus_requires_valid_bounds(self):
         settings = self.settings(generator="cactus_variable", min_cycle_size=2, max_cycle_size=8)
         self.assertEqual(settings["min_cycle_size"], 2)
@@ -478,7 +564,7 @@ timeout = 1
                 self.assertTrue(all(call.args[1] == "a" for call in run.call_args_list))
 
     def test_thesis_budgets_and_variable_cacti(self):
-        for stage, expected in (("preflight", 120), ("pilot", 480), ("main", 1800)):
+        for stage, expected in (("preflight", 120), ("pilot", 480), ("main", 1800), ("server", 1800)):
             configurations, links, _, datasets = RUNNER.load_configurations(
                 MODULE_PATH.with_name(f"configurations.thesis.{stage}.toml")
             )
@@ -493,7 +579,7 @@ timeout = 1
             self.assertEqual(datasets["variable_cacti"]["max_cycle_size"], 16)
 
     def test_thesis_claims_have_matched_controls(self):
-        for stage in ("preflight", "pilot", "main"):
+        for stage in ("preflight", "pilot", "main", "server"):
             configurations, _, _, _ = RUNNER.load_configurations(
                 MODULE_PATH.with_name(f"configurations.thesis.{stage}.toml")
             )

@@ -2,12 +2,48 @@
 
 #include "HeiConnect/conn_aug/reducers/common.hpp"
 #include "HeiConnect/conn_aug/reducers/cycle_reducer.hpp"
+#include "HeiConnect/conn_aug/reducers/full_mincut_dom_reducer.hpp"
 #include "HeiConnect/data_structures/intersection_index/intersection_tree.hpp"
 #include "HeiConnect/data_structures/graph_utils.hpp"
 
 #include <array>
 #include <limits>
 #include <random>
+
+TEST(ElementDomination, KeepsOneOfEquivalentConstraints)
+{
+    const auto graph = WeightedCRFGraph<>::vec_links_to_csr(
+        {{0, 1, 2}, {1, 0, 2}, {1, 2, 2}, {2, 1, 2}}, 3);
+    const auto links = WeightedCRFGraph<>::vec_links_to_csr({{0, 2, 1}}, 3);
+    FullMinCutDomReducer reducer;
+    auto remap = make_identity_link_remap(links);
+    UnionFind uf(3);
+    auto [unused_graph, reduced_links, origins, reduced_uf] = reducer.run(graph, links, remap, uf);
+    auto [reduced_graph, final_links, nodes] =
+        materialize_contractions(graph, reduced_links, reduced_uf, origins);
+
+    // The link is necessary in the original problem and must remain necessary after reduction.
+    EXPECT_EQ(reduced_graph.num_vertices(), 2);
+    ASSERT_EQ(final_links.num_edges(), 1);
+    EXPECT_DOUBLE_EQ(final_links.weights.front(), 1);
+    ASSERT_EQ(origins.size(), 1);
+    EXPECT_EQ(origins.begin()->second.original_id, 0);
+}
+
+TEST(ElementDomination, StillRemovesStrictlyDominatedConstraints)
+{
+    const auto graph = WeightedCRFGraph<>::vec_links_to_csr(
+        {{0, 1, 2}, {1, 0, 2}, {1, 2, 2}, {2, 1, 2}, {2, 3, 2}, {3, 2, 2}}, 4);
+    const auto links = WeightedCRFGraph<>::vec_links_to_csr({{0, 2, 1}, {1, 3, 1}}, 4);
+    FullMinCutDomReducer reducer;
+    UnionFind uf(4);
+    reducer(graph, links, uf);
+
+    // Covering either outside edge covers the middle edge; the outside constraints remain.
+    EXPECT_EQ(uf.find(1), uf.find(2));
+    EXPECT_NE(uf.find(0), uf.find(1));
+    EXPECT_NE(uf.find(2), uf.find(3));
+}
 
 static std::vector<std::vector<int>> naive_cycle_distance_closure(std::vector<std::vector<int>> distance)
 {

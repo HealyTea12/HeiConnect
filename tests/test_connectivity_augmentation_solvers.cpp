@@ -2,6 +2,7 @@
 #include <concepts>
 #include <filesystem>
 #include <memory>
+#include <sstream>
 #include <unordered_set>
 
 #include <gtest/gtest.h>
@@ -20,6 +21,7 @@
 #include "HeiConnect/set_cover/solver_ilp.hpp"
 #include "HeiConnect/set_cover/solver_lazy_block_tree_ilp.hpp"
 #include "HeiConnect/set_cover/trimmer.hpp"
+#include "../experiments/algorithm_runner.hpp"
 
 namespace
 {
@@ -230,8 +232,12 @@ TEST(ConnectivityAugmentationSolvers, LazyBlockTreeILPSkipsFullyReducedGraph)
 
     USSolution solution;
     HeiConnect::LazyBlockTreeSolverILP<1> solver;
+    EXPECT_FALSE(solver.is_optimal());
+    EXPECT_EQ(solver.get_status(), GRB_LOADED);
     ASSERT_TRUE(solver.solve(reduced_graph, reduced_links, solution));
     EXPECT_TRUE(solver.is_feasible());
+    EXPECT_TRUE(solver.is_optimal());
+    EXPECT_EQ(solver.get_status(), GRB_OPTIMAL);
     EXPECT_TRUE(solution.get_solution().empty());
     ASSERT_TRUE(solver.emit_metrics().has_value());
     EXPECT_GT(viecut_min_cut(graph, link_graph, forced_solution.get_solution()), viecut_min_cut(graph, link_graph));
@@ -267,10 +273,18 @@ TEST(ConnectivityAugmentationSolvers, LazyBlockTreeILPIncreasesConnectivity)
         HeiConnect::LazyBlockTreeSolverILP<> solver;
 
         ASSERT_TRUE(solver.solve(graph, link_graph, solution));
+        EXPECT_TRUE(solver.is_optimal());
+        EXPECT_EQ(solver.get_status(), GRB_OPTIMAL);
         ASSERT_FALSE(solution.get_solution().empty());
         EXPECT_GT(
             viecut_min_cut(graph, link_graph, solution.get_solution()),
             viecut_min_cut(graph, link_graph));
+
+        const auto no_links = WeightedCRFGraph<>::vec_links_to_csr({}, graph.num_vertices());
+        USSolution infeasible_solution;
+        EXPECT_FALSE(solver.solve(graph, no_links, infeasible_solution));
+        EXPECT_FALSE(solver.is_optimal());
+        EXPECT_EQ(solver.get_status(), GRB_INFEASIBLE);
     }
     catch (const GRBException& error)
     {
@@ -280,6 +294,30 @@ TEST(ConnectivityAugmentationSolvers, LazyBlockTreeILPIncreasesConnectivity)
         }
         throw;
     }
+}
+
+TEST(ConnectivityAugmentationSolvers, PrintsOptimalityWithoutRequiringASolution)
+{
+    class ResultRunner : public AlgorithmRunner
+    {
+        void run(const std::filesystem::path&, const std::filesystem::path&, const std::filesystem::path&) override {}
+    } runner;
+
+    std::ostringstream missing;
+    runner.print_results(missing);
+    EXPECT_EQ(missing.str(), "");
+
+    for (const int status : {GRB_OPTIMAL, GRB_SUBOPTIMAL, GRB_INFEASIBLE})
+    {
+        runner.result.solver_status = SetCoverSolverILP<>::grb_get_status_string(status);
+        runner.result.solution_optimal = status == GRB_OPTIMAL;
+        std::ostringstream output;
+        runner.print_results(output);
+        const std::string optimal = status == GRB_OPTIMAL ? "true" : "false";
+        EXPECT_EQ(output.str(), "solver.status=" + *runner.result.solver_status + "\nsolution.optimal=" + optimal + "\n");
+        EXPECT_EQ(output.str().find("solution.cost="), std::string::npos);
+    }
+    EXPECT_EQ(SetCoverSolverILP<>::grb_get_status_string(GRB_SUBOPTIMAL), "SUBOPTIMAL");
 }
 
 TEST(ConnectivityAugmentationSolvers, ReconstructedReducedCycleSolutionIncreasesOriginalConnectivity)

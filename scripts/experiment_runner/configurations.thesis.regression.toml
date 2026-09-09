@@ -1,0 +1,59 @@
+# Reproduces the reductions-on/off cost discrepancy found in the pilot.
+# After the element-domination fix, all four costs should be 0.454976 (rounded).
+[synthetic_datasets.trees]
+generator = "tree"
+sizes = [80]
+seeds = [12]
+seed_mode = "paired"
+
+[link_configurations.float_uniform_0_1]
+distribution = "float_uniform"
+float_uniform_lower = 0.0
+float_uniform_upper = 1.0
+seeds = [22]
+
+[configurations.sc_ilp]
+algorithm = "Set Cover CSR"
+timeout = 30
+max_memory_mb = 4096
+
+[configurations.sc_ilp.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "ilp"
+reductions = true
+trimming = false
+
+[configurations.sc_ilp_no_reductions]
+algorithm = "Set Cover CSR"
+timeout = 30
+max_memory_mb = 4096
+
+[configurations.sc_ilp_no_reductions.params]
+local_search = false
+compute_shortest_paths = false
+reduction_type = "csr"
+solver = "ilp"
+reductions = false
+trimming = false
+
+[configurations.lazy_block_tree_ilp]
+algorithm = "Lazy Block Tree ILP"
+timeout = 30
+max_memory_mb = 4096
+
+[configurations.lazy_block_tree_ilp.params]
+reductions = true
+compute_shortest_paths = false
+intersection_index = "baseline"
+
+[configurations.lazy_block_tree_ilp_no_reductions]
+algorithm = "Lazy Block Tree ILP"
+timeout = 30
+max_memory_mb = 4096
+
+[configurations.lazy_block_tree_ilp_no_reductions.params]
+reductions = false
+compute_shortest_paths = false
+intersection_index = "baseline"

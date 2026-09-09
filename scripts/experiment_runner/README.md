@@ -1,5 +1,16 @@
 # Experiment configurations
 
+For a single server-ready thesis configuration, run:
+
+```sh
+uv run scripts/experiment_runner/run_configurations.py results/thesis-server \
+  -c scripts/experiment_runner/configurations.thesis.server.toml --no-repeat
+```
+
+This generates all synthetic inputs and runs 1,800 comparisons. Build the current
+experiment/generator binaries first; see [THESIS_EXPERIMENTS.md](THESIS_EXPERIMENTS.md)
+for build commands and the rationale behind the design.
+
 For the bounded thesis pilot and main comparison, see
 [THESIS_EXPERIMENTS.md](THESIS_EXPERIMENTS.md). These use cycles, stars, trees,
 and variable cacti with cycle-size bounds 2 and 16.
@@ -39,7 +50,7 @@ the usual `<output>/<algorithm configuration>/<dataset>/<instance>/res-<link>.tx
 layout, which is supported by `scripts/visualization/collect_results.py`.
 
 Each `[synthetic_datasets.<name>]` selects a `generator`: `cycle`, `star`, `tree`,
-`cactus`, or `cactus_variable`. Parameters are:
+`cactus`, `cactus_variable`, or `cactus_cycles`. Parameters are:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -50,6 +61,7 @@ Each `[synthetic_datasets.<name>]` selects a `generator`: `cycle`, `star`, `tree
 | `seeds` | `[42]` | Graph realizations; multiple seeds are allowed for trees and cacti only |
 | `cycle_length` | required for cactus | Length of each cactus cycle, at least 3 |
 | `cycle_mass` | required for cactus | Fraction in `[0, 1]` used to compute `floor(floor((n-1)*mass)/(length-1))` cycles |
+| `cycles` | required for cactus_cycles | Exact cycle count including bridges as length-two cycles: 1 through `n-1`, or 0 for a single-node graph |
 | `min_cycle_size` | required for cactus_variable | Inclusive lower bound, at least 2; size 2 adds a bridge |
 | `max_cycle_size` | required for cactus_variable | Inclusive upper bound, at least `min_cycle_size` |
 | `generation_timeout` | 300 | Seconds allowed for each graph or link generation command |
@@ -76,9 +88,46 @@ build/experiments/generate_datasets --type graph --generator cactus_variable \
   --nodes 100 --min-cycle-size 3 --max-cycle-size 8 --seed 42 --output datasets/variable_cacti
 ```
 
-Every algorithm configuration needs a `timeout`. Algorithm memory limits remain
-configured with `max_memory_mb`. Generation failures are reported separately from
-algorithm timeouts and do not establish an algorithm frontier.
+`cactus_cycles` generates exactly `n` vertices and `cycles` blocks, counting each
+bridge as a cycle of length two without storing parallel edges. It starts each
+block with one attachment vertex and one new vertex. Each remaining vertex chooses
+a block uniformly to extend; blocks that stay at size two become bridges.
+The blocks are shuffled, each attaches at a uniformly chosen existing
+vertex, and vertex labels are permuted. This takes linear time and space and does
+not sample uniformly from all cactus graphs. Cycle edges have weight 1 and bridges
+have weight 2. Setting `cycles = n-1` produces a tree, and `cycles = 1` produces
+a single cycle for `n >= 3` (a bridge for `n = 2`). Zero is valid only for `n = 1`.
+The same inputs and seed reproduce the same graph. For example:
+
+```sh
+build/experiments/generate_datasets --type graph --generator cactus_cycles \
+  --nodes 100 --cycles 12 --seed 42 --output datasets/counted_cacti
+```
+
+This writes `cactus_cycles_n100_q12_seed42.graph` and `.xml`. The GraphML file
+records the generator, node and edge counts, seed, total `cycles` including bridges,
+`proper_cycles` of length at least three, and `bridges`. Thus
+`cycles = proper_cycles + bridges`. In a
+synthetic dataset table, use `generator = "cactus_cycles"` and `cycles = 12` with
+`min_nodes >= 13` (or explicit `sizes` all at least 13). The cycle count stays
+fixed as the node count grows.
+
+Define shared algorithm limits once per configuration file:
+
+```toml
+[budget]
+timeout = 60
+max_memory_mb = 4096
+```
+
+`timeout` is in seconds and `max_memory_mb` is in MiB; both must be positive
+integers. These defaults apply to explicit configurations and configuration
+matrices. Individual configurations or matrices can override either limit.
+Existing files with only per-algorithm limits remain supported. Every algorithm
+needs an effective `timeout` for synthetic experiments. Generation limits are
+configured separately with `generation_timeout` and `generation_max_memory_mb`.
+Generation failures are reported separately from algorithm timeouts and do not
+establish an algorithm frontier.
 
 For each algorithm configuration, dataset, and link distribution family, the
 runner doubles the node count until a timeout, then bisects between the last

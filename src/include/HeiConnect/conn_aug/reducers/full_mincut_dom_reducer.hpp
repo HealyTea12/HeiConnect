@@ -327,6 +327,12 @@ private:
             {
                 if (candidate_edge != dominator_edge)
                 {
+                    // Equivalent constraints dominate each other; keep the smallest edge id.
+                    if (covering_links.size() == edge_to_links.at(candidate_edge).size()
+                        && candidate_edge < dominator_edge)
+                    {
+                        continue;
+                    }
                     dominated_edges.emplace_back(candidate_edge);
                 }
             }

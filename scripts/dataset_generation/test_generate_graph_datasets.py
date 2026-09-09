@@ -21,6 +21,15 @@ LINK_SPEC.loader.exec_module(LINK_GENERATOR)
 
 
 class CactusGenerationTest(unittest.TestCase):
+    def test_exact_cycle_count_is_forwarded_to_the_generator(self):
+        command = GENERATOR.graph_generator_command(
+            Path("generate_datasets"), Path("datasets/cacti"), 100, 43,
+            {"generator": "cactus_cycles", "cycles": 12},
+        )
+        self.assertEqual(command[command.index("--cycles") + 1], "12")
+        self.assertNotIn("--cycle-length", command)
+        self.assertNotIn("--min-cycle-size", command)
+
     def test_variable_cycle_bounds_are_forwarded_to_the_generator(self):
         command = GENERATOR.graph_generator_command(
             Path("generate_datasets"), Path("datasets/variable_cacti"), 100, 43,

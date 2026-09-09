@@ -39,10 +39,10 @@ void validate(const Config &config, const po::variables_map &values)
     if (config.output_type == OutputType::graph &&
         config.generator != "cycle" && config.generator != "star" &&
         config.generator != "tree" && config.generator != "cactus" &&
-        config.generator != "cactus_variable")
+        config.generator != "cactus_variable" && config.generator != "cactus_cycles")
     {
         throw po::invalid_option_value(
-            "graph generator must be 'cycle', 'star', 'tree', 'cactus', or 'cactus_variable'");
+            "graph generator must be 'cycle', 'star', 'tree', 'cactus', 'cactus_variable', or 'cactus_cycles'");
     }
     if (config.output_type == OutputType::links && config.generator != "complete")
     {
@@ -69,6 +69,19 @@ void validate(const Config &config, const po::variables_map &values)
                 throw po::invalid_option_value("cactus graphs require at least 1 node");
             if (config.min_cycle_size < 2 || config.max_cycle_size < config.min_cycle_size)
                 throw po::invalid_option_value("cycle sizes must satisfy 2 <= min-cycle-size <= max-cycle-size");
+        }
+        if (config.generator == "cactus_cycles")
+        {
+            if (!values.count("cycles"))
+                throw po::required_option("cycles");
+            if (config.nodes == 0)
+                throw po::invalid_option_value("cactus graphs require at least 1 node");
+            if (config.cycles > config.nodes - 1)
+                throw po::invalid_option_value("the requested cactus cycles require more than the available nodes");
+            if (config.cycles == 0 && config.nodes > 1)
+                throw po::invalid_option_value("a cactus with more than one node requires at least one cycle or bridge");
+            if (values.count("cycle-length") || values.count("min-cycle-size") || values.count("max-cycle-size"))
+                throw po::invalid_option_value("cactus_cycles determines cycle sizes automatically");
         }
         if (config.generator == "cactus")
         {
@@ -126,11 +139,11 @@ std::optional<Config> parse_config(int argc, char **argv)
     options.add_options()
         ("help,h", "show this help message")
         ("type,t", po::value<std::string>(), "output type: graph or links")
-        ("generator,g", po::value<std::string>(), "generator: cycle, star, tree, cactus, cactus_variable, or complete")
+        ("generator,g", po::value<std::string>(), "generator: cycle, star, tree, cactus, cactus_variable, cactus_cycles, or complete")
         ("output,o", po::value<std::string>(), "graph output directory or .links output file")
         ("input_graph,i", po::value<std::string>(), "base .graph file used to generate links")
         ("nodes,n", po::value<std::size_t>(), "number of nodes in the generated graph")
-        ("cycles", po::value<std::size_t>(), "number of cycles in a cactus graph")
+        ("cycles", po::value<std::size_t>(), "number of cycles in a cactus graph (includes bridges for cactus_cycles)")
         ("cycle-length", po::value<std::size_t>(), "length of every cactus cycle")
         ("min-cycle-size", po::value<std::size_t>(), "minimum sampled cycle size for cactus_variable (2 adds a bridge)")
         ("max-cycle-size", po::value<std::size_t>(), "maximum sampled cycle size for cactus_variable")

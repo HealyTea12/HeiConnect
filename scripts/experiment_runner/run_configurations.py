@@ -237,6 +237,17 @@ def load_configurations(path):
     with path.open("rb") as file:
         document = tomllib.load(file)
 
+    budget = document.get("budget", {})
+    if not isinstance(budget, dict):
+        raise ValueError("budget must be a TOML table")
+    for key, value in budget.items():
+        if key not in {"timeout", "max_memory_mb"}:
+            raise ValueError(f"unknown budget setting {key!r}")
+        try:
+            positive_integer(value)
+        except ValueError as error:
+            raise ValueError(f"budget.{key} {error}") from error
+
     configurations = document.get("configurations", {})
     if not isinstance(configurations, dict):
         raise ValueError("configurations must be a TOML table")
@@ -260,6 +271,8 @@ def load_configurations(path):
         validate_name(name, "configuration")
         if not isinstance(configuration, dict):
             raise ValueError(f"configuration {name!r} must be a TOML table")
+        for key, value in budget.items():
+            configuration.setdefault(key, value)
         if not isinstance(configuration.get("algorithm"), str):
             raise ValueError(f"configuration {name!r} requires an algorithm string")
         if configuration.get("timeout") is not None:
@@ -344,13 +357,13 @@ def validate_synthetic_datasets(datasets):
             "generator", "min_nodes", "max_nodes", "samples", "resolution",
             "seeds", "cycle_length", "cycle_mass", "generation_timeout",
             "generation_max_memory_mb",
-            "min_cycle_size", "max_cycle_size",
+            "min_cycle_size", "max_cycle_size", "cycles",
             "sizes", "seed_mode",
         }
         if set(settings) - allowed:
             raise ValueError(f"unknown synthetic settings for {name!r}: {set(settings) - allowed}")
         generator = settings.get("generator")
-        if not isinstance(generator, str) or generator not in {"cycle", "star", "tree", "cactus", "cactus_variable"}:
+        if not isinstance(generator, str) or generator not in {"cycle", "star", "tree", "cactus", "cactus_variable", "cactus_cycles"}:
             raise ValueError(f"unsupported synthetic generator for {name!r}")
         for key, default in {
             "min_nodes": 10, "samples": 10, "resolution": 1,
@@ -358,7 +371,7 @@ def validate_synthetic_datasets(datasets):
         }.items():
             settings.setdefault(key, default)
             positive_integer(settings[key])
-        minimum_nodes = {"cycle": 3, "star": 2, "tree": 2, "cactus": 1, "cactus_variable": 1}
+        minimum_nodes = {"cycle": 3, "star": 2, "tree": 2, "cactus": 1, "cactus_variable": 1, "cactus_cycles": 1}
         if "sizes" in settings:
             sizes = settings["sizes"]
             if not isinstance(sizes, list) or not sizes:
@@ -409,6 +422,18 @@ def validate_synthetic_datasets(datasets):
                 raise ValueError("cycle sizes must satisfy 2 <= min_cycle_size <= max_cycle_size")
         elif "min_cycle_size" in settings or "max_cycle_size" in settings:
             raise ValueError("min_cycle_size and max_cycle_size apply only to cactus_variable graphs")
+        if generator == "cactus_cycles":
+            cycles = settings.get("cycles")
+            if not isinstance(cycles, int) or isinstance(cycles, bool) or cycles < 0:
+                raise ValueError("cactus_cycles cycles must be a non-negative integer")
+            smallest_size = settings["sizes"][0] if "sizes" in settings else settings["min_nodes"]
+            if cycles > smallest_size - 1:
+                raise ValueError("the requested cactus cycles require more than the available nodes")
+            largest_size = settings["sizes"][-1] if "sizes" in settings else settings.get("max_nodes")
+            if cycles == 0 and largest_size != 1:
+                raise ValueError("zero cycles requires a dataset containing only the single-node graph")
+        elif "cycles" in settings:
+            raise ValueError("cycles applies only to cactus_cycles graphs")
         validated[name] = settings
     return validated
 
