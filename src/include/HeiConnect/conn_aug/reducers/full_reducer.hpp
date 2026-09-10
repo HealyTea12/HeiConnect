@@ -118,8 +118,9 @@ public:
         std::vector<bool> removable = std::vector<bool>(link_graph.num_edges(), false);
         // calculate all shortest distances between all pairs of nodes in the link graph
         auto distance_oracle_start = Clock::now();
+        // Augmentation links are undirected even when stored only once in the link graph.
         WeightedTableDistOracle<NodeID, LinkEdgeID, LinkDistance> distance_oracle(
-            link_graph,
+            link_graph.make_bidirectional(),
             m_config.compute_shortest_paths);
         auto distance_oracle_end = Clock::now();
         auto distance_func = [&](NodeID u, NodeID v) {
@@ -327,7 +328,7 @@ public:
                             continue;
                         }
 
-                        if (closed_cycle_distance[cycle_u][cycle_v] < distance_oracle.get_distance(u, v))
+                        if (closed_cycle_distance[cycle_u][cycle_v] < link_graph.weights[e])
                         {
                             removable[e] = true;
                         }

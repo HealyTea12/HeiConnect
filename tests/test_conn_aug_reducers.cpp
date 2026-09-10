@@ -3,6 +3,7 @@
 #include "HeiConnect/conn_aug/reducers/common.hpp"
 #include "HeiConnect/conn_aug/reducers/cycle_reducer.hpp"
 #include "HeiConnect/conn_aug/reducers/full_mincut_dom_reducer.hpp"
+#include "HeiConnect/conn_aug/reducers/full_reducer.hpp"
 #include "HeiConnect/data_structures/intersection_index/intersection_tree.hpp"
 #include "HeiConnect/data_structures/graph_utils.hpp"
 
@@ -225,6 +226,74 @@ TEST(ConnAugReducers, IntersectionTreeMatchesBaselineCycleReduction)
     EXPECT_EQ(
         baseline_result,
         cycle_domination_baseline(links, cycle_size, weighted_intersection_tree));
+}
+
+TEST(ConnAugReducers, FullReducerRemovesDominatedLinksOnCycle)
+{
+    const auto graph = create_cycle_graph_undirected(4);
+    const std::vector<std::tuple<size_t, size_t, double>> links{
+        {0, 1, 10.0}, {0, 2, 2.0}, {0, 3, 10.0},
+        {1, 2, 10.0}, {1, 3, 3.0}, {2, 3, 10.0}};
+
+    for (const auto index : {IntersectionIndexType::BASELINE,
+                            IntersectionIndexType::INTERSECTION_TREE,
+                            IntersectionIndexType::WEIGHTED_INTERSECTION_TREE})
+    {
+        for (const bool reverse_links : {false, true})
+        {
+            SCOPED_TRACE(static_cast<int>(index));
+            SCOPED_TRACE(reverse_links);
+            auto oriented_links = links;
+            if (reverse_links)
+            {
+                for (auto& [u, v, weight] : oriented_links)
+                {
+                    std::swap(u, v);
+                }
+            }
+            const auto link_graph = WeightedCRFGraph<>::vec_links_to_csr(oriented_links, 4);
+            ConnectivityAugmentationReductionConfig config;
+            config.intersection_index = index;
+            for (const bool projections : {false, true})
+            {
+                SCOPED_TRACE(projections);
+                config.run_project_in = projections;
+                config.run_project_out = projections;
+                FullReducer<> reducer(config);
+
+                const auto [reduced_graph, reduced_links] = reducer.run(graph, link_graph);
+
+                // The two crossing diagonals cost 5 and dominate all four links of cost 10.
+                EXPECT_EQ(reduced_graph.num_vertices(), 4);
+                EXPECT_EQ(reduced_links.num_edges(), 2);
+                EXPECT_EQ(reduced_links.weights, (std::vector<double>{2.0, 3.0}));
+            }
+        }
+    }
+}
+
+TEST(ConnAugReducers, FullReducerUsesUndirectedLinkPathsOnCycle)
+{
+    const auto graph = create_cycle_graph_undirected(4);
+    const auto links = WeightedCRFGraph<>::vec_links_to_csr(
+        {{0, 1, 2.0}, {0, 2, 3.0}, {1, 2, 10.0}, {2, 3, 1.0}, {1, 3, 6.0}}, 4);
+
+    for (const bool shortest_paths : {false, true})
+    {
+        SCOPED_TRACE(shortest_paths);
+        ConnectivityAugmentationReductionConfig config;
+        config.run_project_in = false;
+        config.run_project_out = false;
+        config.compute_shortest_paths = shortest_paths;
+        FullReducer<> reducer(config);
+
+        const auto [reduced_graph, reduced_links] = reducer.run(graph, links);
+
+        // The path 1 -> 0 -> 2 costs 5 and traverses the first link backwards.
+        // The link 1 -> 3 ties its alternative path's cost and must remain.
+        EXPECT_EQ(reduced_links.num_edges(), 4);
+        EXPECT_EQ(reduced_links.weights, (std::vector<double>{2.0, 3.0, 6.0, 1.0}));
+    }
 }
 
 TEST(ConnAugReducers, DistinguishesTouchingCrossingAndContainedIntervals)
